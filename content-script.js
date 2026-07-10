@@ -138,7 +138,7 @@
         ? /\/status\/\d+/.test(anchor.pathname)
         : /\/feed\/update\//.test(anchor.pathname) || /activity-\d+/.test(anchor.href),
     );
-    return normalizeHttpUrl(match?.href) || window.location.href;
+    return normalizeHttpUrl(match?.href);
   }
 
   function isVisibleInViewport(element) {
