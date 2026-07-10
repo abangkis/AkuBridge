@@ -14,6 +14,11 @@
   });
 
   function normalizeCapturePlan(payload = {}) {
+    const acquisitionRound = clampInteger(payload.acquisitionRound, 1, 2, 1);
+    const sameTabMutationAllowed =
+      acquisitionRound === 1 &&
+      payload.pendingContentPolicy === "reveal_if_present" &&
+      payload.sameTabMutationAllowed === true;
     return Object.freeze({
       source: payload.source,
       scrolls: clampInteger(payload.scrolls, 0, limits.maxScrolls, 0),
@@ -36,13 +41,8 @@
         limits.maxCaptureTimeoutMs,
       ),
       pendingContentPolicy:
-        payload.pendingContentPolicy === "reveal_if_present" &&
-        payload.sameTabMutationAllowed === true
-          ? "reveal_if_present"
-          : "detect_only",
-      sameTabMutationAllowed:
-        payload.pendingContentPolicy === "reveal_if_present" &&
-        payload.sameTabMutationAllowed === true,
+        sameTabMutationAllowed ? "reveal_if_present" : "detect_only",
+      sameTabMutationAllowed,
       pendingContentTimeoutMs: clampInteger(
         payload.pendingContentTimeoutMs,
         500,
@@ -67,6 +67,8 @@
         limits.maxBlockCharacters,
         limits.maxBlockCharacters,
       ),
+      acquisitionRound,
+      continuation: acquisitionRound === 2 ? normalizeContinuation(payload.continuation) : null,
       restoreScroll: true,
     });
   }
@@ -91,6 +93,25 @@
       afterFingerprint.length > 0 &&
       beforeFingerprint !== afterFingerprint
     );
+  }
+
+  function normalizeContinuation(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const anchorKeys = Array.isArray(value.anchorKeys)
+      ? value.anchorKeys
+          .filter((key) => typeof key === "string")
+          .map((key) => key.trim().slice(0, 500))
+          .filter(Boolean)
+          .slice(0, 3)
+      : [];
+    if (!Number.isFinite(value.startScrollY) || value.startScrollY < 0 || anchorKeys.length === 0) {
+      return null;
+    }
+    return Object.freeze({
+      startScrollY: Math.trunc(value.startScrollY),
+      anchorKeys: Object.freeze(anchorKeys),
+      settleMs: clampInteger(value.settleMs, 100, limits.maxScrollSettleMs, 900),
+    });
   }
 
   function clampInteger(value, minimum, maximum, fallback) {

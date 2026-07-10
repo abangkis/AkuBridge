@@ -45,6 +45,14 @@
       scrollToContext(scrollContext, { x: 0, y: 0 });
       await delay(120);
     }
+    const restorePosition = readScrollPosition(scrollContext);
+    if (plan.continuation) {
+      scrollToContext(scrollContext, {
+        x: restorePosition.x,
+        y: plan.continuation.startScrollY,
+      });
+      await delay(plan.continuation.settleMs);
+    }
     const captureStartPosition = readScrollPosition(scrollContext);
     const snapshots = [];
     const uniqueCandidates = new Set();
@@ -53,10 +61,22 @@
     let scrollStopReason = plan.scrolls === 0 ? "not_requested" : "budget_exhausted";
     let restoreAttempted = false;
     let restored = false;
+    let continuationAnchorMatched = false;
     try {
       for (let index = 0; index <= plan.scrolls; index += 1) {
         const snapshot = captureVisibleSnapshot(source, plan, scrollContext);
         snapshot.index = index;
+        if (index === 0 && plan.continuation) {
+          continuationAnchorMatched = snapshotMatchesContinuation(
+            snapshot,
+            plan.continuation.anchorKeys,
+          );
+          if (!continuationAnchorMatched) {
+            throw new Error(
+              `The ${source} follow-up frontier no longer matched the prior observation.`,
+            );
+          }
+        }
         snapshot.newCandidateCount = capturePolicy.countNewCandidates(
           snapshot.blocks,
           uniqueCandidates,
@@ -86,9 +106,9 @@
     } finally {
       if (plan.restoreScroll) {
         restoreAttempted = true;
-        scrollToContext(scrollContext, captureStartPosition);
+        scrollToContext(scrollContext, restorePosition);
         await delay(120);
-        restored = Math.abs(readScrollPosition(scrollContext).y - captureStartPosition.y) < 2;
+        restored = Math.abs(readScrollPosition(scrollContext).y - restorePosition.y) < 2;
       }
     }
 
@@ -119,12 +139,16 @@
         sameTabMutation: feedMutation,
         restorationScope: feedMutation ? "post_reveal_start" : "pre_run_position",
         preActionScrollY: Math.round(preActionPosition.y),
+        acquisitionRound: plan.acquisitionRound,
+        continuationRequested: Boolean(plan.continuation),
+        continuationAnchorMatched,
+        captureStartScrollY: Math.round(captureStartPosition.y),
         requestedScrolls: plan.scrolls,
         performedScrolls,
         snapshotCount: snapshots.length,
         scrollDeltas,
         scrollStopReason,
-        originalScrollY: Math.round(captureStartPosition.y),
+        originalScrollY: Math.round(restorePosition.y),
         finalScrollY,
         restoreAttempted,
         restored,
@@ -138,8 +162,8 @@
           plan.restoreScroll
             ? restored
               ? feedMutation
-                ? `Scroll position restored to the post-reveal baseline at ${Math.round(captureStartPosition.y)}; the pre-run feed view at ${Math.round(preActionPosition.y)} was intentionally replaced.`
-                : `Scroll position restored to ${Math.round(captureStartPosition.y)}.`
+                ? `Scroll position restored to the post-reveal baseline at ${Math.round(restorePosition.y)}; the pre-run feed view at ${Math.round(preActionPosition.y)} was intentionally replaced.`
+                : `Scroll position restored to ${Math.round(restorePosition.y)}.`
               : `Scroll restoration was attempted but ended at ${finalScrollY}.`
             : "Scroll restoration was not requested.",
           pendingNewContentSignal
@@ -147,6 +171,9 @@
               ? `Pending new content signal activated in the same source tab: ${pendingNewContentSignal.label}.`
               : `Pending new content signal detected: ${pendingNewContentSignal.label}. It was not activated.`
             : "No pending new content signal was detected.",
+          plan.continuation
+            ? `Provider-directed follow-up started at ${Math.round(captureStartPosition.y)} and matched a prior-observation frontier anchor.`
+            : "Initial acquisition round; no continuation frontier was requested.",
           ...snapshots.map(
             (snapshot) =>
               `${snapshot.adapterVersion}: ${snapshot.selectorCandidateCount} selector candidate(s), ${snapshot.visibleContainerCount} visible, ${snapshot.newCandidateCount} new.`,
@@ -350,6 +377,16 @@
       .map((element) => compactText(element.innerText).slice(0, 400))
       .filter(Boolean)
       .join("|");
+  }
+
+  function snapshotMatchesContinuation(snapshot, anchorKeys) {
+    const observed = new Set(snapshot.blocks.map(blockIdentity).filter(Boolean));
+    return anchorKeys.some((key) => observed.has(key));
+  }
+
+  function blockIdentity(block) {
+    if (block?.permalink) return block.permalink;
+    return compactText(block?.text).toLowerCase().slice(0, 300);
   }
 
   function sourceSelectors(source) {

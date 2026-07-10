@@ -68,6 +68,34 @@ test("fresh-content readiness requires a changed non-empty visible feed", () => 
   assert.equal(policy.hasChangedVisibleFeed("old post", "new post"), true);
 });
 
+test("Gate 0B.3 continuation is accepted only in round two and remains bounded", () => {
+  const policy = loadPolicy();
+  const continuation = {
+    startScrollY: 1_350.8,
+    anchorKeys: [" first ", "second", "third", "fourth"],
+    settleMs: 99_999,
+  };
+
+  const initial = policy.normalizeCapturePlan({
+    acquisitionRound: 1,
+    continuation,
+  });
+  assert.equal(initial.continuation, null);
+
+  const followUp = policy.normalizeCapturePlan({
+    acquisitionRound: 2,
+    continuation,
+    pendingContentPolicy: "reveal_if_present",
+    sameTabMutationAllowed: true,
+  });
+  assert.equal(followUp.acquisitionRound, 2);
+  assert.equal(followUp.continuation.startScrollY, 1_350);
+  assert.deepEqual([...followUp.continuation.anchorKeys], ["first", "second", "third"]);
+  assert.equal(followUp.continuation.settleMs, 2_000);
+  assert.equal(followUp.pendingContentPolicy, "detect_only");
+  assert.equal(followUp.sameTabMutationAllowed, false);
+});
+
 test("candidate accounting collapses repeated posts across snapshots", () => {
   const policy = loadPolicy();
   const seen = new Set();
