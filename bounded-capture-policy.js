@@ -7,6 +7,8 @@
     maxScrollFraction: 0.9,
     maxScrollSettleMs: 2_000,
     maxCaptureTimeoutMs: 45_000,
+    maxPendingContentTimeoutMs: 5_000,
+    maxPendingContentSettleMs: 2_000,
     maxBlocksPerSnapshot: 20,
     maxBlockCharacters: 4_000,
   });
@@ -32,6 +34,26 @@
         1_000,
         limits.maxCaptureTimeoutMs,
         limits.maxCaptureTimeoutMs,
+      ),
+      pendingContentPolicy:
+        payload.pendingContentPolicy === "reveal_if_present" &&
+        payload.sameTabMutationAllowed === true
+          ? "reveal_if_present"
+          : "detect_only",
+      sameTabMutationAllowed:
+        payload.pendingContentPolicy === "reveal_if_present" &&
+        payload.sameTabMutationAllowed === true,
+      pendingContentTimeoutMs: clampInteger(
+        payload.pendingContentTimeoutMs,
+        500,
+        limits.maxPendingContentTimeoutMs,
+        limits.maxPendingContentTimeoutMs,
+      ),
+      pendingContentSettleMs: clampInteger(
+        payload.pendingContentSettleMs,
+        100,
+        limits.maxPendingContentSettleMs,
+        700,
       ),
       maxBlocksPerSnapshot: clampInteger(
         payload.maxBlocksPerSnapshot,
@@ -61,6 +83,16 @@
     return count;
   }
 
+  function hasChangedVisibleFeed(beforeFingerprint, afterFingerprint) {
+    return (
+      typeof beforeFingerprint === "string" &&
+      beforeFingerprint.length > 0 &&
+      typeof afterFingerprint === "string" &&
+      afterFingerprint.length > 0 &&
+      beforeFingerprint !== afterFingerprint
+    );
+  }
+
   function clampInteger(value, minimum, maximum, fallback) {
     return Number.isInteger(value) ? Math.max(minimum, Math.min(maximum, value)) : fallback;
   }
@@ -75,5 +107,6 @@
     limits,
     normalizeCapturePlan,
     countNewCandidates,
+    hasChangedVisibleFeed,
   });
 })();

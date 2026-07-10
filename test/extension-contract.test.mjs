@@ -52,7 +52,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   );
 });
 
-test("AkuBridge uses LinkedIn's rendered scroll root and only detects pending new posts", () => {
+test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content activation", () => {
   const contentScript = fs.readFileSync(
     path.join(projectRoot, "content-script.js"),
     "utf8",
@@ -62,6 +62,10 @@ test("AkuBridge uses LinkedIn's rendered scroll root and only detects pending ne
   assert.match(contentScript, /isScrollableElement/);
   assert.match(contentScript, /pendingNewContent/);
   assert.match(contentScript, /Pending new content signal detected/);
-  assert.match(contentScript, /pendingNewContentSignal \? "not_activated" : "not_detected"/);
-  assert.doesNotMatch(contentScript, /pendingNewContentSignal\?\.click/);
+  assert.match(contentScript, /plan\.pendingContentPolicy === "reveal_if_present"/);
+  assert.match(contentScript, /signal\.element\.click\(\)/);
+  assert.match(contentScript, /evidence = "feed_fingerprint_changed"/);
+  assert.doesNotMatch(contentScript, /evidence = "signal_removed"/);
+  assert.match(contentScript, /restorationScope: feedMutation \? "post_reveal_start"/);
+  assert.equal(contentScript.match(/\.click\(\)/g)?.length, 1);
 });

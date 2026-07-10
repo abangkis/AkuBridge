@@ -24,13 +24,31 @@
     }
 
     const plan = capturePolicy.normalizeCapturePlan(payload);
-    const scrollContext = getScrollContext(source);
-    const originalPosition = readScrollPosition(scrollContext);
+    const startedAt = performance.now();
+    let scrollContext = getScrollContext(source);
+    const preActionPosition = readScrollPosition(scrollContext);
     const pendingNewContentSignal = detectPendingNewContent(source);
+    let pendingNewContentAction = pendingNewContentSignal ? "not_activated" : "not_detected";
+    let pendingContentActivationEvidence = "";
+    let feedMutation = false;
+    if (pendingNewContentSignal && plan.pendingContentPolicy === "reveal_if_present") {
+      const activation = await activatePendingNewContent(
+        pendingNewContentSignal,
+        source,
+        scrollContext,
+        plan,
+      );
+      pendingContentActivationEvidence = activation.evidence;
+      pendingNewContentAction = "activated";
+      feedMutation = true;
+      scrollContext = getScrollContext(source);
+      scrollToContext(scrollContext, { x: 0, y: 0 });
+      await delay(120);
+    }
+    const captureStartPosition = readScrollPosition(scrollContext);
     const snapshots = [];
     const uniqueCandidates = new Set();
     const scrollDeltas = [];
-    const startedAt = performance.now();
     let performedScrolls = 0;
     let scrollStopReason = plan.scrolls === 0 ? "not_requested" : "budget_exhausted";
     let restoreAttempted = false;
@@ -68,9 +86,9 @@
     } finally {
       if (plan.restoreScroll) {
         restoreAttempted = true;
-        scrollToContext(scrollContext, originalPosition);
+        scrollToContext(scrollContext, captureStartPosition);
         await delay(120);
-        restored = Math.abs(readScrollPosition(scrollContext).y - originalPosition.y) < 2;
+        restored = Math.abs(readScrollPosition(scrollContext).y - captureStartPosition.y) < 2;
       }
     }
 
@@ -94,13 +112,19 @@
         scrollContainer: describeScrollContext(scrollContext),
         pendingNewContent: Boolean(pendingNewContentSignal),
         pendingNewContentLabel: pendingNewContentSignal?.label ?? "",
-        pendingNewContentAction: pendingNewContentSignal ? "not_activated" : "not_detected",
+        pendingNewContentAction,
+        pendingContentActivationEvidence,
+        pendingContentPolicy: plan.pendingContentPolicy,
+        feedMutation,
+        sameTabMutation: feedMutation,
+        restorationScope: feedMutation ? "post_reveal_start" : "pre_run_position",
+        preActionScrollY: Math.round(preActionPosition.y),
         requestedScrolls: plan.scrolls,
         performedScrolls,
         snapshotCount: snapshots.length,
         scrollDeltas,
         scrollStopReason,
-        originalScrollY: Math.round(originalPosition.y),
+        originalScrollY: Math.round(captureStartPosition.y),
         finalScrollY,
         restoreAttempted,
         restored,
@@ -113,11 +137,15 @@
             : `${performedScrolls} of ${plan.scrolls} native scroll(s) performed; stop reason: ${scrollStopReason}.`,
           plan.restoreScroll
             ? restored
-              ? `Scroll position restored to ${Math.round(originalPosition.y)}.`
+              ? feedMutation
+                ? `Scroll position restored to the post-reveal baseline at ${Math.round(captureStartPosition.y)}; the pre-run feed view at ${Math.round(preActionPosition.y)} was intentionally replaced.`
+                : `Scroll position restored to ${Math.round(captureStartPosition.y)}.`
               : `Scroll restoration was attempted but ended at ${finalScrollY}.`
             : "Scroll restoration was not requested.",
           pendingNewContentSignal
-            ? `Pending new content signal detected: ${pendingNewContentSignal.label}. It was not activated.`
+            ? pendingNewContentAction === "activated"
+              ? `Pending new content signal activated in the same source tab: ${pendingNewContentSignal.label}.`
+              : `Pending new content signal detected: ${pendingNewContentSignal.label}. It was not activated.`
             : "No pending new content signal was detected.",
           ...snapshots.map(
             (snapshot) =>
@@ -129,15 +157,7 @@
   }
 
   function captureVisibleSnapshot(source, payload, scrollContext) {
-    const selectors =
-      source === "x"
-        ? ['article[data-testid="tweet"]', 'main article']
-        : [
-            '[data-testid="mainFeed"] [role="listitem"]',
-            '[data-view-name="feed-full-update"]',
-            '.feed-shared-update-v2',
-            'main article',
-          ];
+    const selectors = sourceSelectors(source);
     const selectorCandidates = uniqueElements(
       selectors.flatMap((selector) => [...document.querySelectorAll(selector)]),
     );
@@ -283,9 +303,64 @@
     for (const element of document.querySelectorAll('button,[role="button"]')) {
       if (!isVisibleInViewport(element)) continue;
       const label = compactText(element.innerText || element.textContent);
-      if (pattern.test(label)) return { label };
+      if (pattern.test(label)) return { label, element };
     }
     return null;
+  }
+
+  async function activatePendingNewContent(signal, source, scrollContext, plan) {
+    if (!signal.element?.isConnected || typeof signal.element.click !== "function") {
+      throw new Error("The pending new-content control was no longer available.");
+    }
+
+    const beforeFingerprint = visibleFeedFingerprint(source, scrollContext);
+    signal.element.click();
+    const deadline = Date.now() + plan.pendingContentTimeoutMs;
+    let changed = false;
+    let evidence = "";
+    while (Date.now() < deadline) {
+      await delay(100);
+      const currentContext = getScrollContext(source);
+      const afterFingerprint = visibleFeedFingerprint(source, currentContext);
+      if (capturePolicy.hasChangedVisibleFeed(beforeFingerprint, afterFingerprint)) {
+        changed = true;
+        evidence = "feed_fingerprint_changed";
+        break;
+      }
+    }
+    if (!changed) {
+      throw new Error(
+        `The ${source} pending-content control did not reveal a changed, visible feed within the bounded deadline.`,
+      );
+    }
+    await delay(plan.pendingContentSettleMs);
+    if (!sourceMatchesPage(source)) {
+      throw new Error(`The ${source} pending-content action left the approved source page.`);
+    }
+    return { evidence };
+  }
+
+  function visibleFeedFingerprint(source, scrollContext) {
+    const candidates = uniqueElements(
+      sourceSelectors(source).flatMap((selector) => [...document.querySelectorAll(selector)]),
+    )
+      .filter((element) => isVisibleInViewport(element, scrollContext))
+      .slice(0, 3);
+    return candidates
+      .map((element) => compactText(element.innerText).slice(0, 400))
+      .filter(Boolean)
+      .join("|");
+  }
+
+  function sourceSelectors(source) {
+    return source === "x"
+      ? ['article[data-testid="tweet"]', 'main article']
+      : [
+          '[data-testid="mainFeed"] [role="listitem"]',
+          '[data-view-name="feed-full-update"]',
+          '.feed-shared-update-v2',
+          'main article',
+        ];
   }
 
   function sourceMatchesPage(source) {

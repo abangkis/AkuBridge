@@ -25,6 +25,10 @@ test("native capture policy clamps every browser-movement budget", () => {
     scrollFraction: 0.1,
     scrollSettleMs: 99_999,
     captureTimeoutMs: 99_999,
+    pendingContentPolicy: "reveal_if_present",
+    sameTabMutationAllowed: true,
+    pendingContentTimeoutMs: 99_999,
+    pendingContentSettleMs: 99_999,
     maxBlocksPerSnapshot: 99,
     maxBlockCharacters: 99_999,
     restoreScroll: false,
@@ -34,10 +38,34 @@ test("native capture policy clamps every browser-movement budget", () => {
   assert.equal(plan.scrollFraction, 0.5);
   assert.equal(plan.scrollSettleMs, 2_000);
   assert.equal(plan.captureTimeoutMs, 45_000);
+  assert.equal(plan.pendingContentPolicy, "reveal_if_present");
+  assert.equal(plan.sameTabMutationAllowed, true);
+  assert.equal(plan.pendingContentTimeoutMs, 5_000);
+  assert.equal(plan.pendingContentSettleMs, 2_000);
   assert.equal(plan.maxBlocksPerSnapshot, 20);
   assert.equal(plan.maxBlockCharacters, 4_000);
   assert.equal(plan.restoreScroll, true);
   assert.equal(Object.isFrozen(plan), true);
+});
+
+test("fresh-content reveal fails closed without explicit same-tab mutation authority", () => {
+  const policy = loadPolicy();
+  const plan = policy.normalizeCapturePlan({
+    pendingContentPolicy: "reveal_if_present",
+    sameTabMutationAllowed: false,
+  });
+
+  assert.equal(plan.pendingContentPolicy, "detect_only");
+  assert.equal(plan.sameTabMutationAllowed, false);
+});
+
+test("fresh-content readiness requires a changed non-empty visible feed", () => {
+  const policy = loadPolicy();
+
+  assert.equal(policy.hasChangedVisibleFeed("old post", ""), false);
+  assert.equal(policy.hasChangedVisibleFeed("old post", "old post"), false);
+  assert.equal(policy.hasChangedVisibleFeed("", "new post"), false);
+  assert.equal(policy.hasChangedVisibleFeed("old post", "new post"), true);
 });
 
 test("candidate accounting collapses repeated posts across snapshots", () => {
