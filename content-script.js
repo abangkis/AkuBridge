@@ -6,6 +6,8 @@
     x: "x-dom-v1",
     linkedin: "linkedin-dom-v2",
   };
+  const capturePolicy = globalThis.AkuBoundedCapturePolicy;
+  if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== "AKU_BROWSER_COLLECT_VISIBLE") return undefined;
@@ -21,23 +23,60 @@
       throw new Error(`The active source page does not match ${source}.`);
     }
 
-    const originalPosition = { x: window.scrollX, y: window.scrollY };
+    const plan = capturePolicy.normalizeCapturePlan(payload);
+    const scrollContext = getScrollContext(source);
+    const originalPosition = readScrollPosition(scrollContext);
+    const pendingNewContentSignal = detectPendingNewContent(source);
     const snapshots = [];
+    const uniqueCandidates = new Set();
+    const scrollDeltas = [];
+    const startedAt = performance.now();
+    let performedScrolls = 0;
+    let scrollStopReason = plan.scrolls === 0 ? "not_requested" : "budget_exhausted";
+    let restoreAttempted = false;
+    let restored = false;
     try {
-      for (let index = 0; index <= payload.scrolls; index += 1) {
-        snapshots.push(captureVisibleSnapshot(source, payload));
-        if (index < payload.scrolls) {
-          window.scrollBy({ top: Math.max(320, window.innerHeight * 0.72), behavior: "instant" });
-          await delay(700);
+      for (let index = 0; index <= plan.scrolls; index += 1) {
+        const snapshot = captureVisibleSnapshot(source, plan, scrollContext);
+        snapshot.index = index;
+        snapshot.newCandidateCount = capturePolicy.countNewCandidates(
+          snapshot.blocks,
+          uniqueCandidates,
+        );
+        snapshots.push(snapshot);
+
+        if (index >= plan.scrolls) break;
+        if (performance.now() - startedAt >= plan.captureTimeoutMs) {
+          scrollStopReason = "deadline";
+          break;
         }
+
+        const beforeScrollY = readScrollPosition(scrollContext).y;
+        scrollByContext(
+          scrollContext,
+          Math.max(320, viewportHeight(scrollContext) * plan.scrollFraction),
+        );
+        await delay(plan.scrollSettleMs);
+        const delta = Math.round(readScrollPosition(scrollContext).y - beforeScrollY);
+        if (Math.abs(delta) < 2) {
+          scrollStopReason = "no_movement";
+          break;
+        }
+        performedScrolls += 1;
+        scrollDeltas.push(delta);
       }
     } finally {
-      if (payload.restoreScroll) {
-        window.scrollTo({ left: originalPosition.x, top: originalPosition.y, behavior: "instant" });
+      if (plan.restoreScroll) {
+        restoreAttempted = true;
+        scrollToContext(scrollContext, originalPosition);
+        await delay(120);
+        restored = Math.abs(readScrollPosition(scrollContext).y - originalPosition.y) < 2;
       }
     }
 
-    const candidateCount = snapshots.reduce((sum, snapshot) => sum + snapshot.blocks.length, 0);
+    const candidateCount = uniqueCandidates.size;
+    const observedBlockCount = snapshots.reduce((sum, snapshot) => sum + snapshot.blocks.length, 0);
+    const finalScrollY = Math.round(readScrollPosition(scrollContext).y);
     return {
       source,
       pageUrl: window.location.href,
@@ -48,20 +87,48 @@
         status: candidateCount > 0 ? "partial" : "unavailable",
         checkedThrough: new Date().toISOString(),
         candidateCount,
+        observedBlockCount,
+        browserAdapter: "aku-bridge",
+        captureMethod: "native_dom",
+        fallbackUsed: false,
+        scrollContainer: describeScrollContext(scrollContext),
+        pendingNewContent: Boolean(pendingNewContentSignal),
+        pendingNewContentLabel: pendingNewContentSignal?.label ?? "",
+        pendingNewContentAction: pendingNewContentSignal ? "not_activated" : "not_detected",
+        requestedScrolls: plan.scrolls,
+        performedScrolls,
+        snapshotCount: snapshots.length,
+        scrollDeltas,
+        scrollStopReason,
+        originalScrollY: Math.round(originalPosition.y),
+        finalScrollY,
+        restoreAttempted,
+        restored,
+        elapsedMs: Math.round(performance.now() - startedAt),
         notes: [
           `${snapshots.length} visible viewport snapshot(s).`,
           "No claim of full-feed coverage.",
-          payload.scrolls === 0 ? "No scrolling was performed." : "Scroll position was restored after capture.",
+          plan.scrolls === 0
+            ? "No scrolling was requested."
+            : `${performedScrolls} of ${plan.scrolls} native scroll(s) performed; stop reason: ${scrollStopReason}.`,
+          plan.restoreScroll
+            ? restored
+              ? `Scroll position restored to ${Math.round(originalPosition.y)}.`
+              : `Scroll restoration was attempted but ended at ${finalScrollY}.`
+            : "Scroll restoration was not requested.",
+          pendingNewContentSignal
+            ? `Pending new content signal detected: ${pendingNewContentSignal.label}. It was not activated.`
+            : "No pending new content signal was detected.",
           ...snapshots.map(
             (snapshot) =>
-              `${snapshot.adapterVersion}: ${snapshot.selectorCandidateCount} selector candidate(s), ${snapshot.visibleContainerCount} visible.`,
+              `${snapshot.adapterVersion}: ${snapshot.selectorCandidateCount} selector candidate(s), ${snapshot.visibleContainerCount} visible, ${snapshot.newCandidateCount} new.`,
           ),
         ],
       },
     };
   }
 
-  function captureVisibleSnapshot(source, payload) {
+  function captureVisibleSnapshot(source, payload, scrollContext) {
     const selectors =
       source === "x"
         ? ['article[data-testid="tweet"]', 'main article']
@@ -74,13 +141,16 @@
     const selectorCandidates = uniqueElements(
       selectors.flatMap((selector) => [...document.querySelectorAll(selector)]),
     );
-    const containers = selectorCandidates.filter(isVisibleInViewport);
+    const containers = selectorCandidates.filter((element) =>
+      isVisibleInViewport(element, scrollContext),
+    );
 
     const blocks = [];
     for (const container of containers) {
-      const block = extractBlock(container, source, payload.maxBlockCharacters);
+      const block = extractBlock(container, source, payload.maxBlockCharacters, scrollContext);
       if (block.text.length < 40) continue;
       if (blocks.some((existing) => existing.text === block.text)) continue;
+      block.feedPosition = selectorCandidates.indexOf(container) + 1;
       blocks.push(block);
       if (blocks.length >= payload.maxBlocksPerSnapshot) break;
     }
@@ -90,13 +160,13 @@
       selectorCandidateCount: selectorCandidates.length,
       visibleContainerCount: containers.length,
       capturedAt: new Date().toISOString(),
-      scrollY: Math.round(window.scrollY),
-      viewportHeight: Math.round(window.innerHeight),
+      scrollY: Math.round(readScrollPosition(scrollContext).y),
+      viewportHeight: Math.round(viewportHeight(scrollContext)),
       blocks,
     };
   }
 
-  function extractBlock(container, source, maxCharacters) {
+  function extractBlock(container, source, maxCharacters, scrollContext) {
     const text = compactText(container.innerText).slice(0, maxCharacters);
     const time = container.querySelector("time");
     const permalink = findPermalink(container, source, time);
@@ -106,7 +176,7 @@
       publishedAt: normalizeDate(time?.getAttribute("datetime")),
       permalink,
       links: [...container.querySelectorAll("a[href]")]
-        .filter(isVisibleInViewport)
+        .filter((element) => isVisibleInViewport(element, scrollContext))
         .map((anchor) => ({
           text: compactText(anchor.innerText).slice(0, 300),
           href: normalizeHttpUrl(anchor.href),
@@ -141,14 +211,81 @@
     return normalizeHttpUrl(match?.href);
   }
 
-  function isVisibleInViewport(element) {
+  function isVisibleInViewport(element, scrollContext = window) {
     if (!(element instanceof Element)) return false;
     const style = getComputedStyle(element);
     if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) {
       return false;
     }
     const rect = element.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < window.innerHeight;
+    const viewport =
+      scrollContext === window
+        ? { top: 0, right: window.innerWidth, bottom: window.innerHeight, left: 0 }
+        : scrollContext.getBoundingClientRect();
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      rect.bottom > viewport.top &&
+      rect.top < viewport.bottom &&
+      rect.right > viewport.left &&
+      rect.left < viewport.right
+    );
+  }
+
+  function getScrollContext(source) {
+    if (source !== "linkedin") return window;
+    const preferred = document.querySelector("#workspace");
+    if (isScrollableElement(preferred)) return preferred;
+
+    let element = document.querySelector('[data-testid="mainFeed"]') || document.querySelector("main");
+    while (element) {
+      if (isScrollableElement(element)) return element;
+      element = element.parentElement;
+    }
+    return window;
+  }
+
+  function isScrollableElement(element) {
+    if (!(element instanceof Element)) return false;
+    const overflowY = getComputedStyle(element).overflowY;
+    return /^(auto|scroll)$/.test(overflowY) && element.scrollHeight > element.clientHeight + 2;
+  }
+
+  function readScrollPosition(scrollContext) {
+    return scrollContext === window
+      ? { x: window.scrollX, y: window.scrollY }
+      : { x: scrollContext.scrollLeft, y: scrollContext.scrollTop };
+  }
+
+  function scrollByContext(scrollContext, top) {
+    scrollContext.scrollBy({ top, behavior: "instant" });
+  }
+
+  function scrollToContext(scrollContext, position) {
+    scrollContext.scrollTo({ left: position.x, top: position.y, behavior: "instant" });
+  }
+
+  function viewportHeight(scrollContext) {
+    return scrollContext === window ? window.innerHeight : scrollContext.clientHeight;
+  }
+
+  function describeScrollContext(scrollContext) {
+    if (scrollContext === window) return "window";
+    if (scrollContext.id) return `#${scrollContext.id}`;
+    return scrollContext.tagName.toLowerCase();
+  }
+
+  function detectPendingNewContent(source) {
+    const pattern =
+      source === "x"
+        ? /^(?:new posts?|show(?: \d+)? posts?)$/i
+        : /^(?:new posts?|show new posts?)$/i;
+    for (const element of document.querySelectorAll('button,[role="button"]')) {
+      if (!isVisibleInViewport(element)) continue;
+      const label = compactText(element.innerText || element.textContent);
+      if (pattern.test(label)) return { label };
+    }
+    return null;
   }
 
   function sourceMatchesPage(source) {

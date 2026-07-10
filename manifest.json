@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AkuBridge",
-  "version": "0.1.2",
+  "version": "0.2.1",
   "description": "Read-only, bounded browser observation bridge for AkuBrowser.",
   "permissions": ["tabs", "scripting"],
   "host_permissions": [
@@ -21,7 +21,7 @@
     },
     {
       "matches": ["https://x.com/*", "https://www.linkedin.com/*"],
-      "js": ["content-script.js"],
+      "js": ["bounded-capture-policy.js", "content-script.js"],
       "run_at": "document_idle"
     }
   ],

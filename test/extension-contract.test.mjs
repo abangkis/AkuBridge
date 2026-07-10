@@ -51,3 +51,17 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
     /normalizeHttpUrl\(match\?\.href\) \|\| window\.location\.href/,
   );
 });
+
+test("AkuBridge uses LinkedIn's rendered scroll root and only detects pending new posts", () => {
+  const contentScript = fs.readFileSync(
+    path.join(projectRoot, "content-script.js"),
+    "utf8",
+  );
+
+  assert.match(contentScript, /document\.querySelector\("#workspace"\)/);
+  assert.match(contentScript, /isScrollableElement/);
+  assert.match(contentScript, /pendingNewContent/);
+  assert.match(contentScript, /Pending new content signal detected/);
+  assert.match(contentScript, /pendingNewContentSignal \? "not_activated" : "not_detected"/);
+  assert.doesNotMatch(contentScript, /pendingNewContentSignal\?\.click/);
+});

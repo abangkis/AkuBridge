@@ -26,6 +26,12 @@ async function dispatchRun(message) {
   if (!command) throw new Error("No queued browser command was available for this run.");
 
   try {
+    if (command.type !== "collect_visible") {
+      throw new Error(`Unsupported browser command: ${command.type}.`);
+    }
+    if (command.payload.browserAdapter !== "aku-bridge") {
+      throw new Error("The browser command targeted an unsupported adapter.");
+    }
     const tab = await findOrOpenSourceTab(
       command.payload.source,
       command.payload.mode,
@@ -108,7 +114,10 @@ async function collectFromTab(tabId, payload) {
       payload,
     });
   } catch {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["content-script.js"] });
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["bounded-capture-policy.js", "content-script.js"],
+    });
     return chrome.tabs.sendMessage(tabId, {
       type: "AKU_BROWSER_COLLECT_VISIBLE",
       payload,
