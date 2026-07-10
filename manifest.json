@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "AkuBridge",
+  "version": "0.1.0",
+  "description": "Read-only, bounded browser observation bridge for AkuBrowser.",
+  "permissions": ["tabs", "scripting"],
+  "host_permissions": [
+    "http://127.0.0.1:47821/*",
+    "https://x.com/*",
+    "https://www.linkedin.com/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://127.0.0.1:47821/*"],
+      "js": ["aku-browser-tab-bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://x.com/*", "https://www.linkedin.com/*"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Open AkuBrowser"
+  }
+}

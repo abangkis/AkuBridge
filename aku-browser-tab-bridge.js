@@ -1,0 +1,42 @@
+(() => {
+  if (globalThis.__akuBrowserTabBridgeInstalled) return;
+  globalThis.__akuBrowserTabBridgeInstalled = true;
+
+  const allowedOrigin = "http://127.0.0.1:47821";
+  if (window.location.origin !== allowedOrigin) return;
+
+  window.addEventListener("message", async (event) => {
+    if (event.source !== window || event.origin !== allowedOrigin) return;
+    const message = event.data;
+    if (!message || typeof message !== "object") return;
+
+    if (message.type === "AKU_BROWSER_BRIDGE_PING") {
+      window.postMessage(
+        { type: "AKU_BROWSER_BRIDGE_READY" },
+        allowedOrigin,
+      );
+      return;
+    }
+
+    if (message.type !== "AKU_BROWSER_DISPATCH") return;
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: "AKU_BROWSER_DISPATCH",
+        endpoint: message.endpoint,
+        token: message.token,
+        runId: message.runId,
+      });
+      if (!response?.ok) {
+        throw new Error(response?.message || "AkuBridge rejected the dispatch.");
+      }
+    } catch (error) {
+      window.postMessage(
+        {
+          type: "AKU_BROWSER_BRIDGE_ERROR",
+          message: String(error?.message ?? error),
+        },
+        allowedOrigin,
+      );
+    }
+  });
+})();
