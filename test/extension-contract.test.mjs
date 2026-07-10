@@ -32,3 +32,18 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   assert.equal(source.includes("SIGNAL" + "_GATEWAY"), false);
   assert.equal(source.includes("X-" + "Signal-Bridge"), false);
 });
+
+test("AkuBridge recognizes the current LinkedIn feed container", () => {
+  const contentScript = fs.readFileSync(
+    path.join(projectRoot, "content-script.js"),
+    "utf8",
+  );
+
+  assert.match(
+    contentScript,
+    /\[data-testid="mainFeed"\] \[role="listitem"\]/,
+  );
+  assert.match(contentScript, /linkedin-dom-v2/);
+  assert.match(contentScript, /\[data-view-name="feed-full-update"\]/);
+  assert.match(contentScript, /\.feed-shared-update-v2/);
+});

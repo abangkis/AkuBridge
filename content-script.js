@@ -2,6 +2,11 @@
   if (globalThis.__akuBrowserSourceBridgeInstalled) return;
   globalThis.__akuBrowserSourceBridgeInstalled = true;
 
+  const SOURCE_ADAPTER_VERSIONS = {
+    x: "x-dom-v1",
+    linkedin: "linkedin-dom-v2",
+  };
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== "AKU_BROWSER_COLLECT_VISIBLE") return undefined;
     collectBoundedObservation(message.payload)
@@ -47,6 +52,10 @@
           `${snapshots.length} visible viewport snapshot(s).`,
           "No claim of full-feed coverage.",
           payload.scrolls === 0 ? "No scrolling was performed." : "Scroll position was restored after capture.",
+          ...snapshots.map(
+            (snapshot) =>
+              `${snapshot.adapterVersion}: ${snapshot.selectorCandidateCount} selector candidate(s), ${snapshot.visibleContainerCount} visible.`,
+          ),
         ],
       },
     };
@@ -56,9 +65,16 @@
     const selectors =
       source === "x"
         ? ['article[data-testid="tweet"]', 'main article']
-        : ['[data-view-name="feed-full-update"]', '.feed-shared-update-v2', 'main article'];
-    const containers = uniqueElements(selectors.flatMap((selector) => [...document.querySelectorAll(selector)]))
-      .filter(isVisibleInViewport);
+        : [
+            '[data-testid="mainFeed"] [role="listitem"]',
+            '[data-view-name="feed-full-update"]',
+            '.feed-shared-update-v2',
+            'main article',
+          ];
+    const selectorCandidates = uniqueElements(
+      selectors.flatMap((selector) => [...document.querySelectorAll(selector)]),
+    );
+    const containers = selectorCandidates.filter(isVisibleInViewport);
 
     const blocks = [];
     for (const container of containers) {
@@ -70,6 +86,9 @@
     }
 
     return {
+      adapterVersion: SOURCE_ADAPTER_VERSIONS[source] ?? "unknown-dom-v1",
+      selectorCandidateCount: selectorCandidates.length,
+      visibleContainerCount: containers.length,
       capturedAt: new Date().toISOString(),
       scrollY: Math.round(window.scrollY),
       viewportHeight: Math.round(window.innerHeight),
