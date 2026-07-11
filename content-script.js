@@ -29,18 +29,20 @@
       /\/login|\/uas\/login/i.test(window.location.pathname) ||
       Boolean(document.querySelector('input[name="session_key"], form[action*="login"]'))
     );
-    const candidates = filterSourceCandidates(source, uniqueElements(
-      sourceSelectors(source).flatMap((selector) => [...document.querySelectorAll(selector)]),
-    ));
+    const discovery = discoverSourceCandidates(source);
+    const candidates = discovery.candidates;
     const loading = Boolean(document.querySelector(
       '[aria-busy="true"], .artdeco-loader, [data-test-id*="loading" i]',
     ));
     const feedRoot = source === "linkedin"
       ? Boolean(document.querySelector('[data-testid="mainFeed"], #workspace main, main'))
       : Boolean(document.querySelector("main"));
-    const scrollContext = getScrollContext(source);
+    const scrollContext = getScrollContext(source, candidates);
     const visibleCandidates = candidates.filter((element) =>
       isVisibleInViewport(element, scrollContext),
+    );
+    const windowVisibleCandidates = candidates.filter((element) =>
+      isVisibleInViewport(element, window),
     );
     const state = loginRequired
       ? "login_required"
@@ -60,6 +62,10 @@
       visibleCandidates.length,
       loading,
       feedRoot,
+      describeScrollContext(scrollContext),
+      windowVisibleCandidates.length,
+      discovery.semanticCandidateCount,
+      discovery.actionAnchoredCandidateCount,
     );
   }
 
@@ -70,6 +76,10 @@
     visibleSelectorCandidateCount,
     loadingIndicator,
     feedRootPresent,
+    scrollContext = "window",
+    windowVisibleSelectorCandidateCount = 0,
+    semanticSelectorCandidateCount = 0,
+    actionAnchoredCandidateCount = 0,
   ) {
     return {
       state,
@@ -78,6 +88,10 @@
       visibleSelectorCandidateCount,
       loadingIndicator,
       feedRootPresent,
+      scrollContext,
+      windowVisibleSelectorCandidateCount,
+      semanticSelectorCandidateCount,
+      actionAnchoredCandidateCount,
       documentReadyState: document.readyState,
       checkedAt: new Date().toISOString(),
     };
@@ -276,10 +290,7 @@
   }
 
   function captureVisibleSnapshot(source, payload, scrollContext) {
-    const selectors = sourceSelectors(source);
-    const selectorCandidates = filterSourceCandidates(source, uniqueElements(
-      selectors.flatMap((selector) => [...document.querySelectorAll(selector)]),
-    ));
+    const selectorCandidates = discoverSourceCandidates(source).candidates;
     const containers = selectorCandidates.filter((element) =>
       isVisibleInViewport(element, scrollContext),
     );
@@ -384,17 +395,32 @@
     );
   }
 
-  function getScrollContext(source) {
+  function getScrollContext(source, knownCandidates = null) {
     if (source !== "linkedin") return window;
-    const preferred = document.querySelector("#workspace");
-    if (isScrollableElement(preferred)) return preferred;
+
+    const candidates = knownCandidates ?? discoverSourceCandidates(source).candidates;
+    for (const candidate of candidates.slice(0, 5)) {
+      const ancestor = nearestScrollableAncestor(candidate);
+      if (ancestor) return ancestor;
+    }
 
     let element = document.querySelector('[data-testid="mainFeed"]') || document.querySelector("main");
     while (element) {
       if (isScrollableElement(element)) return element;
       element = element.parentElement;
     }
+    const workspace = document.querySelector("#workspace");
+    if (isScrollableElement(workspace)) return workspace;
     return window;
+  }
+
+  function nearestScrollableAncestor(element) {
+    let current = element?.parentElement ?? null;
+    while (current) {
+      if (isScrollableElement(current)) return current;
+      current = current.parentElement;
+    }
+    return null;
   }
 
   function isScrollableElement(element) {
@@ -473,9 +499,7 @@
   }
 
   function visibleFeedFingerprint(source, scrollContext) {
-    const candidates = uniqueElements(
-      sourceSelectors(source).flatMap((selector) => [...document.querySelectorAll(selector)]),
-    )
+    const candidates = discoverSourceCandidates(source).candidates
       .filter((element) => isVisibleInViewport(element, scrollContext))
       .slice(0, 3);
     return candidates
@@ -522,6 +546,57 @@
         /\/feed\/update\/|activity-\d+/i.test(anchor.href),
       );
     });
+  }
+
+  function discoverSourceCandidates(source) {
+    const semantic = filterSourceCandidates(source, uniqueElements(
+      sourceSelectors(source).flatMap((selector) => [...document.querySelectorAll(selector)]),
+    ));
+    const actionAnchored = source === "linkedin"
+      ? linkedinActionAnchoredCandidates()
+      : [];
+    return {
+      candidates: uniqueElements([...semantic, ...actionAnchored]),
+      semanticCandidateCount: semantic.length,
+      actionAnchoredCandidateCount: actionAnchored.length,
+    };
+  }
+
+  function linkedinActionAnchoredCandidates() {
+    const main = document.querySelector("main");
+    if (!main) return [];
+    const actions = [...main.querySelectorAll('button,[role="button"]')]
+      .filter((element) => linkedinActionKind(element));
+    const candidates = [];
+    for (const action of actions) {
+      let current = action.parentElement;
+      while (current && current !== main && current !== document.body) {
+        const text = compactText(current.innerText);
+        const actionKinds = new Set(
+          [...current.querySelectorAll('button,[role="button"]')]
+            .map((element) => linkedinActionKind(element))
+            .filter(Boolean),
+        );
+        if (text.length >= 80 && actionKinds.size >= 2) {
+          candidates.push(current);
+          break;
+        }
+        current = current.parentElement;
+      }
+    }
+    return uniqueElements(candidates).filter((candidate) =>
+      !candidates.some((other) => other !== candidate && candidate.contains(other)),
+    );
+  }
+
+  function linkedinActionKind(element) {
+    const label = compactText(
+      element.getAttribute("aria-label") ||
+      element.getAttribute("title") ||
+      element.innerText,
+    );
+    const match = label.match(/^(like|comment|repost|send)(?:\b|$)/i);
+    return match?.[1]?.toLowerCase() ?? null;
   }
 
   function sourceMatchesPage(source) {

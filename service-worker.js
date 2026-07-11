@@ -50,12 +50,12 @@ async function dispatchRun(message) {
           backgroundAtDispatch: prepared.backgroundAtDispatch,
         },
       };
-      let response = await collectFromTab(prepared.tab.id, payload);
+      let response = await collectFromTabWithDeadline(prepared.tab.id, payload);
       if (!response?.ok) throw new Error(response?.message || "Source content script failed.");
       if (command.payload.source === "linkedin" && observationBlockCount(response.observation) === 0) {
         const activatedForRetry = await prepared.activateForRetry();
         const readiness = await waitForSourceReady(prepared.tab.id, "linkedin", 8_000);
-        response = await collectFromTab(prepared.tab.id, {
+        response = await collectFromTabWithDeadline(prepared.tab.id, {
           ...payload,
           pendingContentPolicy: "detect_only",
           sameTabMutationAllowed: false,
@@ -174,7 +174,11 @@ async function prepareSourceTab(tab, source, opened) {
       `${sourceLabel(source)} source readiness failed: ${readiness.state} ` +
       `(${readiness.selectorCandidateCount} selector candidates, ` +
       `${readiness.visibleSelectorCandidateCount ?? 0} visible, ` +
+      `${readiness.windowVisibleSelectorCandidateCount ?? 0} window-visible, ` +
+      `semantic=${readiness.semanticSelectorCandidateCount ?? 0}, ` +
+      `action=${readiness.actionAnchoredCandidateCount ?? 0}, ` +
       `loading=${readiness.loadingIndicator}, feedRoot=${readiness.feedRootPresent}, ` +
+      `scroll=${readiness.scrollContext ?? "unknown"}, ` +
       `document=${readiness.documentReadyState ?? "unknown"}).`,
     );
   }
@@ -197,6 +201,8 @@ async function waitForSourceReady(tabId, source, timeoutMs) {
     visibleSelectorCandidateCount: 0,
     loadingIndicator: false,
     feedRootPresent: false,
+    scrollContext: "unknown",
+    windowVisibleSelectorCandidateCount: 0,
   };
   while (Date.now() - startedAt < timeoutMs) {
     latest = await probeSourceReadiness(tabId, source);
@@ -269,6 +275,26 @@ async function collectFromTab(tabId, payload) {
       type: "AKU_BROWSER_COLLECT_VISIBLE",
       payload,
     });
+  }
+}
+
+async function collectFromTabWithDeadline(tabId, payload) {
+  const timeoutMs = Math.max(
+    5_000,
+    Math.min(60_000, Number(payload.captureTimeoutMs ?? 45_000) + 5_000),
+  );
+  let timeoutId;
+  try {
+    return await Promise.race([
+      collectFromTab(tabId, payload),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error("AkuBridge content capture exceeded its bounded response deadline."));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
