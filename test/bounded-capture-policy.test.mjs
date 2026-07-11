@@ -123,6 +123,23 @@ test("candidate accounting collapses repeated posts across snapshots", () => {
   );
 });
 
+test("platform identity normalizes X status and LinkedIn activity variants", () => {
+  const policy = loadPolicy();
+  assert.equal(
+    policy.platformIdFromCandidates("x", ["https://x.com/openai/status/2075000000000000000"]),
+    "x:status:2075000000000000000",
+  );
+  assert.equal(
+    policy.platformIdFromCandidates("linkedin", ["urn:li:activity:7412345678901234567"]),
+    "linkedin:activity:7412345678901234567",
+  );
+  assert.equal(
+    policy.platformIdFromCandidates("linkedin", ["urn:li:ugcPost:7412345678901234568"]),
+    "linkedin:ugcpost:7412345678901234568",
+  );
+  assert.equal(policy.platformIdFromCandidates("linkedin", ["unrelated"]), null);
+});
+
 test("the policy is loaded before the source content script", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"));
   const sourceEntry = manifest.content_scripts.find((entry) =>

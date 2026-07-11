@@ -95,6 +95,23 @@
     );
   }
 
+  function platformIdFromCandidates(source, values) {
+    for (const value of Array.isArray(values) ? values : []) {
+      const candidate = typeof value === "string" ? value : "";
+      if (!candidate) continue;
+      if (source === "x") {
+        const statusId = candidate.match(/\/status\/(\d+)/)?.[1];
+        if (statusId) return `x:status:${statusId}`;
+        continue;
+      }
+      const urn = candidate.match(/urn:li:(activity|ugcPost|share):(\d+)/i);
+      if (urn) return `linkedin:${urn[1].toLowerCase()}:${urn[2]}`;
+      const activity = candidate.match(/activity[-/:](\d+)/i);
+      if (activity) return `linkedin:activity:${activity[1]}`;
+    }
+    return null;
+  }
+
   function normalizeContinuation(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const anchorKeys = Array.isArray(value.anchorKeys)
@@ -129,5 +146,6 @@
     normalizeCapturePlan,
     countNewCandidates,
     hasChangedVisibleFeed,
+    platformIdFromCandidates,
   });
 })();

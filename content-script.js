@@ -222,6 +222,7 @@
       author: findAuthor(container, source),
       publishedAt: normalizeDate(time?.getAttribute("datetime")),
       permalink,
+      platformId: findPlatformId(container, source, permalink),
       links: [...container.querySelectorAll("a[href]")]
         .filter((element) => isVisibleInViewport(element, scrollContext))
         .map((anchor) => ({
@@ -256,6 +257,18 @@
         : /\/feed\/update\//.test(anchor.pathname) || /activity-\d+/.test(anchor.href),
     );
     return normalizeHttpUrl(match?.href);
+  }
+
+  function findPlatformId(container, source, permalink) {
+    const candidates = [
+      container.getAttribute("data-urn"),
+      container.getAttribute("data-id"),
+      ...[...container.querySelectorAll("[data-urn], [data-id]")]
+        .slice(0, 10)
+        .flatMap((element) => [element.getAttribute("data-urn"), element.getAttribute("data-id")]),
+      permalink,
+    ].filter(Boolean);
+    return capturePolicy.platformIdFromCandidates(source, candidates);
   }
 
   function isVisibleInViewport(element, scrollContext = window) {
@@ -385,6 +398,7 @@
   }
 
   function blockIdentity(block) {
+    if (block?.platformId) return block.platformId;
     if (block?.permalink) return block.permalink;
     return compactText(block?.text).toLowerCase().slice(0, 300);
   }
