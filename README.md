@@ -7,9 +7,12 @@ AkuBridge is the read-only Chrome extension used by AkuBrowser to collect a boun
 ```powershell
 npm install
 npm run check
+npm run package:verify
 ```
 
 Load this directory as an unpacked extension from `chrome://extensions` with Developer mode enabled.
+
+`package:verify` validates Manifest V3 references, local module imports, package/manifest version alignment, and emits a SHA-256 file manifest plus aggregate fingerprint. It does not write a package artifact or modify the installed extension.
 
 AkuBridge does not like, reply, follow, message, or post. For an initial capture, it follows the command's `openIfMissing` policy: the default AkuSidecar configuration may open one inactive canonical X or LinkedIn feed tab, while `fail_fast` requires an already-open eligible tab. Manual Live may use the active page for the selected source. A follow-up round never opens a replacement tab. Gate 0B permits at most two native scrolls and three viewports. Computer Use is not part of this native path.
 
