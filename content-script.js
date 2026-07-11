@@ -10,12 +10,78 @@
   if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === "AKU_BROWSER_PROBE_SOURCE_READY") {
+      sendResponse({ ok: true, readiness: probeSourceReadiness(message.source) });
+      return false;
+    }
     if (message?.type !== "AKU_BROWSER_COLLECT_VISIBLE") return undefined;
     collectBoundedObservation(message.payload)
       .then((observation) => sendResponse({ ok: true, observation }))
       .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
     return true;
   });
+
+  function probeSourceReadiness(source) {
+    if (!sourceMatchesPage(source)) {
+      return readiness("wrong_page", source, 0, 0, false, false);
+    }
+    const loginRequired = source === "linkedin" && (
+      /\/login|\/uas\/login/i.test(window.location.pathname) ||
+      Boolean(document.querySelector('input[name="session_key"], form[action*="login"]'))
+    );
+    const candidates = filterSourceCandidates(source, uniqueElements(
+      sourceSelectors(source).flatMap((selector) => [...document.querySelectorAll(selector)]),
+    ));
+    const loading = Boolean(document.querySelector(
+      '[aria-busy="true"], .artdeco-loader, [data-test-id*="loading" i]',
+    ));
+    const feedRoot = source === "linkedin"
+      ? Boolean(document.querySelector('[data-testid="mainFeed"], #workspace main, main'))
+      : Boolean(document.querySelector("main"));
+    const scrollContext = getScrollContext(source);
+    const visibleCandidates = candidates.filter((element) =>
+      isVisibleInViewport(element, scrollContext),
+    );
+    const state = loginRequired
+      ? "login_required"
+      : visibleCandidates.length > 0
+        ? "feed_ready"
+        : loading || document.readyState !== "complete"
+          ? "loading"
+          : candidates.length > 0
+            ? "feed_not_visible"
+          : feedRoot
+            ? "selector_mismatch"
+            : "page_shell";
+    return readiness(
+      state,
+      source,
+      candidates.length,
+      visibleCandidates.length,
+      loading,
+      feedRoot,
+    );
+  }
+
+  function readiness(
+    state,
+    source,
+    selectorCandidateCount,
+    visibleSelectorCandidateCount,
+    loadingIndicator,
+    feedRootPresent,
+  ) {
+    return {
+      state,
+      source,
+      selectorCandidateCount,
+      visibleSelectorCandidateCount,
+      loadingIndicator,
+      feedRootPresent,
+      documentReadyState: document.readyState,
+      checkedAt: new Date().toISOString(),
+    };
+  }
 
   async function collectBoundedObservation(payload) {
     const source = payload.source;
@@ -178,16 +244,42 @@
             (snapshot) =>
               `${snapshot.adapterVersion}: ${snapshot.selectorCandidateCount} selector candidate(s), ${snapshot.visibleContainerCount} visible, ${snapshot.newCandidateCount} new.`,
           ),
+          payload.sourceReadiness
+            ? `Source readiness: ${payload.sourceReadiness.state}; ${payload.sourceReadiness.selectorCandidateCount} selector candidate(s) after ${payload.sourceReadiness.waitMs ?? 0}ms.`
+            : null,
+          payload.tabAcquisition?.opened
+            ? "AkuBridge opened one inactive canonical source tab for this initial acquisition."
+            : null,
+          payload.tabAcquisition?.activatedForReadiness
+            ? "The source tab was temporarily activated for bounded feed readiness and the previous tab was restored."
+            : null,
+          payload.tabAcquisition?.backgroundAtDispatch
+            ? "The source tab was in the background when the command was dispatched."
+            : null,
         ],
+        sourceReadinessState: payload.sourceReadiness?.state ?? null,
+        sourceReadinessWaitMs: payload.sourceReadiness?.waitMs ?? 0,
+        sourceSelectorCandidateCount:
+          payload.sourceReadiness?.selectorCandidateCount ?? 0,
+        sourceVisibleSelectorCandidateCount:
+          payload.sourceReadiness?.visibleSelectorCandidateCount ?? 0,
+        sourceLoadingIndicator: payload.sourceReadiness?.loadingIndicator === true,
+        sourceFeedRootPresent: payload.sourceReadiness?.feedRootPresent === true,
+        sourceTabOpened: payload.tabAcquisition?.opened === true,
+        sourceTabActivatedForReadiness:
+          payload.tabAcquisition?.activatedForReadiness === true,
+        sourceTabBackgroundAtDispatch:
+          payload.tabAcquisition?.backgroundAtDispatch === true,
+        sourceReadinessRetryCount: payload.sourceReadinessRetryCount ?? 0,
       },
     };
   }
 
   function captureVisibleSnapshot(source, payload, scrollContext) {
     const selectors = sourceSelectors(source);
-    const selectorCandidates = uniqueElements(
+    const selectorCandidates = filterSourceCandidates(source, uniqueElements(
       selectors.flatMap((selector) => [...document.querySelectorAll(selector)]),
-    );
+    ));
     const containers = selectorCandidates.filter((element) =>
       isVisibleInViewport(element, scrollContext),
     );
@@ -410,8 +502,26 @@
           '[data-testid="mainFeed"] [role="listitem"]',
           '[data-view-name="feed-full-update"]',
           '.feed-shared-update-v2',
+          'main [role="listitem"]',
+          'main [data-urn*="activity"]',
+          'main [data-id*="activity"]',
           'main article',
         ];
+  }
+
+  function filterSourceCandidates(source, candidates) {
+    if (source !== "linkedin") return candidates;
+    return candidates.filter((element) => {
+      if (element.matches(
+        '[data-view-name="feed-full-update"], .feed-shared-update-v2, [data-urn*="activity"], [data-id*="activity"]',
+      )) return true;
+      if (element.querySelector(
+        '[data-view-name="feed-full-update"], .feed-shared-update-v2, [data-urn*="activity"], [data-id*="activity"]',
+      )) return true;
+      return [...element.querySelectorAll('a[href]')].some((anchor) =>
+        /\/feed\/update\/|activity-\d+/i.test(anchor.href),
+      );
+    });
   }
 
   function sourceMatchesPage(source) {

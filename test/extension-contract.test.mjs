@@ -70,3 +70,17 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
   assert.match(contentScript, /restorationScope: feedMutation \? "post_reveal_start"/);
   assert.equal(contentScript.match(/\.click\(\)/g)?.length, 1);
 });
+
+test("LinkedIn capture waits for feed readiness and permits only one evidence retry", () => {
+  const contentScript = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
+  const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
+
+  assert.match(contentScript, /AKU_BROWSER_PROBE_SOURCE_READY/);
+  assert.match(contentScript, /selector_mismatch/);
+  assert.match(contentScript, /login_required/);
+  assert.match(worker, /waitForSourceReady/);
+  assert.match(worker, /sourceReadinessRetryCount: 1/);
+  assert.match(worker, /pendingContentPolicy: "detect_only"/);
+  assert.match(worker, /restoreTabFocus/);
+  assert.equal(worker.match(/sourceReadinessRetryCount: 1/g)?.length, 1);
+});

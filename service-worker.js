@@ -32,20 +32,54 @@ async function dispatchRun(message) {
     if (command.payload.browserAdapter !== "aku-bridge") {
       throw new Error("The browser command targeted an unsupported adapter.");
     }
-    const tab = await findOrOpenSourceTab(
+    const prepared = await findOrOpenSourceTab(
       command.payload.source,
       command.payload.mode,
       command.payload.openIfMissing,
     );
-    const response = await collectFromTab(tab.id, command.payload);
-    if (!response?.ok) throw new Error(response?.message || "Source content script failed.");
-    await postBridgeResult(
-      message.endpoint,
-      message.token,
-      command.id,
-      "observation",
-      { runId: message.runId, observation: response.observation },
-    );
+    try {
+      const payload = {
+        ...command.payload,
+        ...(command.payload.source === "linkedin" && prepared.backgroundAtDispatch
+          ? { pendingContentPolicy: "detect_only", sameTabMutationAllowed: false }
+          : {}),
+        sourceReadiness: prepared.readiness,
+        tabAcquisition: {
+          opened: prepared.opened,
+          activatedForReadiness: prepared.activatedForReadiness,
+          backgroundAtDispatch: prepared.backgroundAtDispatch,
+        },
+      };
+      let response = await collectFromTab(prepared.tab.id, payload);
+      if (!response?.ok) throw new Error(response?.message || "Source content script failed.");
+      if (command.payload.source === "linkedin" && observationBlockCount(response.observation) === 0) {
+        const activatedForRetry = await prepared.activateForRetry();
+        const readiness = await waitForSourceReady(prepared.tab.id, "linkedin", 8_000);
+        response = await collectFromTab(prepared.tab.id, {
+          ...payload,
+          pendingContentPolicy: "detect_only",
+          sameTabMutationAllowed: false,
+          sourceReadiness: readiness,
+          sourceReadinessRetryCount: 1,
+          tabAcquisition: {
+            opened: prepared.opened,
+            activatedForReadiness:
+              prepared.activatedForReadiness || activatedForRetry,
+            backgroundAtDispatch: prepared.backgroundAtDispatch,
+          },
+        });
+        if (!response?.ok) throw new Error(response?.message || "Source readiness retry failed.");
+      }
+      await postBridgeResult(
+        message.endpoint,
+        message.token,
+        command.id,
+        "observation",
+        { runId: message.runId, observation: response.observation },
+      );
+    } finally {
+      await prepared.restoreFocus();
+    }
   } catch (error) {
     await postBridgeResult(
       message.endpoint,
@@ -95,16 +129,129 @@ async function findOrOpenSourceTab(source, mode, openIfMissing) {
   const patterns = source === "x" ? ["https://x.com/*"] : ["https://www.linkedin.com/*"];
   const tabs = await chrome.tabs.query({ url: patterns });
   const selected = chooseSourceTab(tabs, { source, mode });
-  if (selected) return selected;
+  let tab = selected;
+  let opened = false;
   if (!openIfMissing) {
-    const expectation = mode === "catch_up" ? ` feed tab (${expectedFeedUrl(source)})` : " tab";
-    throw new Error(`No open, rendered ${source}${expectation} was found.`);
+    if (!tab) {
+      const expectation = mode === "catch_up" ? ` feed tab (${expectedFeedUrl(source)})` : " tab";
+      throw new Error(`No open, rendered ${source}${expectation} was found.`);
+    }
+  } else if (!tab) {
+    const url = expectedFeedUrl(source);
+    tab = await chrome.tabs.create({ url, active: false });
+    opened = true;
+    await waitForTabComplete(tab.id, 20_000);
+    tab = await chrome.tabs.get(tab.id);
   }
+  return prepareSourceTab(tab, source, opened);
+}
 
-  const url = expectedFeedUrl(source);
-  const tab = await chrome.tabs.create({ url, active: false });
-  await waitForTabComplete(tab.id, 20_000);
-  return chrome.tabs.get(tab.id);
+async function prepareSourceTab(tab, source, opened) {
+  const startedAt = Date.now();
+  const backgroundAtDispatch = tab.active !== true;
+  let readiness = await waitForSourceReady(tab.id, source, source === "linkedin" ? 3_000 : 8_000);
+  let activatedForReadiness = false;
+  let previousActiveTabId = null;
+  const activate = async () => {
+    if (previousActiveTabId === null) {
+      previousActiveTabId = (await chrome.tabs.query({ active: true, windowId: tab.windowId }))[0]?.id ?? null;
+    }
+    if (previousActiveTabId !== tab.id) {
+      await chrome.tabs.update(tab.id, { active: true });
+      activatedForReadiness = true;
+      return true;
+    }
+    return false;
+  };
+  if (source === "linkedin" && readiness.state !== "feed_ready") {
+    await activate();
+    readiness = await waitForSourceReady(tab.id, source, 15_000);
+  }
+  readiness.waitMs = Date.now() - startedAt;
+  if (readiness.state !== "feed_ready") {
+    await restoreTabFocus(previousActiveTabId, tab.id);
+    throw new Error(
+      `${sourceLabel(source)} source readiness failed: ${readiness.state} ` +
+      `(${readiness.selectorCandidateCount} selector candidates, ` +
+      `${readiness.visibleSelectorCandidateCount ?? 0} visible, ` +
+      `loading=${readiness.loadingIndicator}, feedRoot=${readiness.feedRootPresent}, ` +
+      `document=${readiness.documentReadyState ?? "unknown"}).`,
+    );
+  }
+  return {
+    tab,
+    opened,
+    backgroundAtDispatch,
+    readiness,
+    activatedForReadiness,
+    activateForRetry: activate,
+    restoreFocus: () => restoreTabFocus(previousActiveTabId, tab.id),
+  };
+}
+
+async function waitForSourceReady(tabId, source, timeoutMs) {
+  const startedAt = Date.now();
+  let latest = {
+    state: "page_shell",
+    selectorCandidateCount: 0,
+    visibleSelectorCandidateCount: 0,
+    loadingIndicator: false,
+    feedRootPresent: false,
+  };
+  while (Date.now() - startedAt < timeoutMs) {
+    latest = await probeSourceReadiness(tabId, source);
+    if (["feed_ready", "login_required", "wrong_page"].includes(latest.state)) break;
+    await delay(250);
+  }
+  return { ...latest, waitMs: Date.now() - startedAt };
+}
+
+async function probeSourceReadiness(tabId, source) {
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, {
+      type: "AKU_BROWSER_PROBE_SOURCE_READY",
+      source,
+    });
+    if (response?.ok && response.readiness) return response.readiness;
+  } catch {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["bounded-capture-policy.js", "content-script.js"],
+    });
+  }
+  const response = await chrome.tabs.sendMessage(tabId, {
+    type: "AKU_BROWSER_PROBE_SOURCE_READY",
+    source,
+  });
+  return response?.readiness ?? {
+    state: "page_shell",
+    selectorCandidateCount: 0,
+    visibleSelectorCandidateCount: 0,
+  };
+}
+
+async function restoreTabFocus(previousActiveTabId, sourceTabId) {
+  if (!previousActiveTabId || previousActiveTabId === sourceTabId) return;
+  try {
+    await chrome.tabs.update(previousActiveTabId, { active: true });
+  } catch {
+    // The user may have closed or moved the previous tab during the bounded capture.
+  }
+}
+
+function observationBlockCount(observation) {
+  return (observation?.snapshots ?? []).reduce(
+    (sum, snapshot) => sum + (snapshot.blocks?.length ?? 0),
+    0,
+  );
+}
+
+function sourceLabel(source) {
+  return source === "linkedin" ? "LinkedIn" : "X";
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function collectFromTab(tabId, payload) {
