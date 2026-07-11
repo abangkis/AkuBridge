@@ -17,7 +17,14 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     "https://x.com/*",
   ]);
 
-  const source = ["service-worker.js", "content-script.js", "aku-browser-tab-bridge.js"]
+  const source = [
+    "service-worker.js",
+    "content-script.js",
+    "source-adapter-runtime.js",
+    "adapters/x-adapter.js",
+    "adapters/linkedin-adapter.js",
+    "aku-browser-tab-bridge.js",
+  ]
     .map((file) => fs.readFileSync(path.join(projectRoot, file), "utf8"))
     .join("\n");
   for (const forbidden of [
@@ -38,18 +45,26 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
     path.join(projectRoot, "content-script.js"),
     "utf8",
   );
+  const linkedInAdapter = fs.readFileSync(
+    path.join(projectRoot, "adapters", "linkedin-adapter.js"),
+    "utf8",
+  );
+  const xAdapter = fs.readFileSync(
+    path.join(projectRoot, "adapters", "x-adapter.js"),
+    "utf8",
+  );
 
   assert.match(
-    contentScript,
+    linkedInAdapter,
     /\[data-testid="mainFeed"\] \[role="listitem"\]/,
   );
-  assert.match(contentScript, /linkedin-dom-v2/);
+  assert.match(linkedInAdapter, /linkedin-dom-v2/);
   assert.match(contentScript, /platformId/);
   assert.match(contentScript, /findMedia/);
-  assert.match(contentScript, /tweetPhoto/);
+  assert.match(xAdapter, /tweetPhoto/);
   assert.match(contentScript, /video\[poster\]/);
-  assert.match(contentScript, /\[data-view-name="feed-full-update"\]/);
-  assert.match(contentScript, /\.feed-shared-update-v2/);
+  assert.match(linkedInAdapter, /\[data-view-name="feed-full-update"\]/);
+  assert.match(linkedInAdapter, /\.feed-shared-update-v2/);
   assert.doesNotMatch(
     contentScript,
     /normalizeHttpUrl\(match\?\.href\) \|\| window\.location\.href/,
@@ -61,13 +76,17 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
     path.join(projectRoot, "content-script.js"),
     "utf8",
   );
+  const linkedInAdapter = fs.readFileSync(
+    path.join(projectRoot, "adapters", "linkedin-adapter.js"),
+    "utf8",
+  );
 
   assert.match(contentScript, /document\.querySelector\("#workspace"\)/);
   assert.match(contentScript, /isScrollableElement/);
   assert.match(contentScript, /nearestScrollableAncestor/);
   assert.match(contentScript, /windowVisibleSelectorCandidateCount/);
-  assert.match(contentScript, /linkedinActionAnchoredCandidates/);
-  assert.match(contentScript, /actionKinds\.size >= 2/);
+  assert.match(linkedInAdapter, /actionAnchoredCandidates/);
+  assert.match(linkedInAdapter, /actionKinds\.size >= 2/);
   assert.match(contentScript, /pendingNewContent/);
   assert.match(contentScript, /Pending new content signal detected/);
   assert.match(contentScript, /plan\.pendingContentPolicy === "reveal_if_present"/);
@@ -102,4 +121,20 @@ test("initial stale-tab recovery is bounded and follow-up remains anchored", () 
   assert.match(worker, /acquisitionRound: command\.payload\.acquisitionRound/);
   assert.match(contentScript, /sourceTabRecoveryCount/);
   assert.match(contentScript, /discarded one stale initial tab reference/);
+});
+
+test("AkuBridge exposes additive read-only capabilities and structured failures", () => {
+  const tabBridge = fs.readFileSync(path.join(projectRoot, "aku-browser-tab-bridge.js"), "utf8");
+  const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
+  const runtimePolicy = fs.readFileSync(path.join(projectRoot, "bridge-runtime-policy.js"), "utf8");
+
+  assert.match(tabBridge, /AKU_BRIDGE_GET_CAPABILITIES/);
+  assert.match(tabBridge, /capabilities: response\.capabilities/);
+  assert.match(tabBridge, /capability handshake returned no capabilities/);
+  assert.match(tabBridge, /AKU_BROWSER_BRIDGE_ERROR/);
+  assert.match(worker, /authority: "read_only_bounded"/);
+  assert.match(worker, /captureLimits: \{ maxScrolls: 2, maxSnapshots: 3, maxBlocksPerSnapshot: 20 \}/);
+  assert.match(worker, /assertTabLease\(prepared\.lease, "before_capture"\)/);
+  assert.match(worker, /assertTabLease\(prepared\.lease, "after_capture"\)/);
+  assert.match(runtimePolicy, /serializeBridgeError/);
 });

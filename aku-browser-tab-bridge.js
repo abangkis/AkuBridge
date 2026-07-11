@@ -11,10 +11,29 @@
     if (!message || typeof message !== "object") return;
 
     if (message.type === "AKU_BROWSER_BRIDGE_PING") {
-      window.postMessage(
-        { type: "AKU_BROWSER_BRIDGE_READY" },
-        allowedOrigin,
-      );
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "AKU_BRIDGE_GET_CAPABILITIES",
+        });
+        if (!response?.capabilities) {
+          throw new Error("AkuBridge capability handshake returned no capabilities.");
+        }
+        window.postMessage(
+          {
+            type: "AKU_BROWSER_BRIDGE_READY",
+            capabilities: response.capabilities,
+          },
+          allowedOrigin,
+        );
+      } catch (error) {
+        window.postMessage(
+          {
+            type: "AKU_BROWSER_BRIDGE_ERROR",
+            message: String(error?.message ?? error),
+          },
+          allowedOrigin,
+        );
+      }
       return;
     }
 

@@ -165,8 +165,16 @@ test("the policy is loaded before the source content script", () => {
   const sourceEntry = manifest.content_scripts.find((entry) =>
     entry.matches.includes("https://x.com/*"),
   );
-  assert.deepEqual(sourceEntry.js, ["bounded-capture-policy.js", "content-script.js"]);
+  assert.deepEqual(sourceEntry.js, [
+    "bounded-capture-policy.js",
+    "source-adapter-runtime.js",
+    "adapters/x-adapter.js",
+    "adapters/linkedin-adapter.js",
+    "content-script.js",
+  ]);
 
   const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
-  assert.match(worker, /files: \["bounded-capture-policy\.js", "content-script\.js"\]/);
+  assert.match(worker, /const SOURCE_SCRIPT_FILES = \[/);
+  assert.match(worker, /"adapters\/x-adapter\.js"/);
+  assert.match(worker, /"adapters\/linkedin-adapter\.js"/);
 });

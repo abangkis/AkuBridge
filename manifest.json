@@ -21,7 +21,13 @@
     },
     {
       "matches": ["https://x.com/*", "https://www.linkedin.com/*"],
-      "js": ["bounded-capture-policy.js", "content-script.js"],
+      "js": [
+        "bounded-capture-policy.js",
+        "source-adapter-runtime.js",
+        "adapters/x-adapter.js",
+        "adapters/linkedin-adapter.js",
+        "content-script.js"
+      ],
       "run_at": "document_idle"
     }
   ],

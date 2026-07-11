@@ -1,22 +1,41 @@
 import { chooseSourceTab, expectedFeedUrl } from "./source-tab-policy.js";
 import { shouldRetrySourceTab } from "./tab-recovery-policy.js";
+import {
+  AkuBridgeError,
+  createCommandGuard,
+  createTabLease,
+  serializeBridgeError,
+  validateTabLease,
+} from "./bridge-runtime-policy.js";
 
 const AKU_BROWSER_ORIGIN = "http://127.0.0.1:47821";
 const BRIDGE_ID = "aku-bridge-chrome-mv3-v0";
 const BRIDGE_CONTRACT_VERSION = "aku-browser.bridge.v1";
+const commandGuard = createCommandGuard();
+const SOURCE_SCRIPT_FILES = [
+  "bounded-capture-policy.js",
+  "source-adapter-runtime.js",
+  "adapters/x-adapter.js",
+  "adapters/linkedin-adapter.js",
+  "content-script.js",
+];
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: `${AKU_BROWSER_ORIGIN}/`, active: true });
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "AKU_BRIDGE_GET_CAPABILITIES") {
+    sendResponse({ ok: true, capabilities: bridgeCapabilities() });
+    return false;
+  }
   if (message?.type !== "AKU_BROWSER_DISPATCH") return undefined;
   if (!sender.url?.startsWith(`${AKU_BROWSER_ORIGIN}/`)) {
     sendResponse({ ok: false, message: "Dispatch rejected: invalid AkuBrowser origin." });
     return false;
   }
   dispatchRun(message)
-    .then(() => sendResponse({ ok: true }))
+    .then(() => sendResponse({ ok: true, capabilities: bridgeCapabilities() }))
     .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
   return true;
 });
@@ -25,6 +44,9 @@ async function dispatchRun(message) {
   assertEndpoint(message.endpoint);
   const command = await claimCommand(message.endpoint, message.token, message.runId);
   if (!command) throw new Error("No queued browser command was available for this run.");
+  if (!commandGuard.begin(command.id)) {
+    throw new AkuBridgeError("duplicate_command", "dispatch", `AkuBridge rejected duplicate command ${command.id}.`);
+  }
 
   try {
     if (command.type !== "collect_visible") {
@@ -41,14 +63,16 @@ async function dispatchRun(message) {
       "observation",
       { runId: message.runId, observation },
     );
+    commandGuard.finish(command.id);
   } catch (error) {
     await postBridgeResult(
       message.endpoint,
       message.token,
       command.id,
       "failure",
-      { runId: message.runId, error: { message: String(error?.message ?? error) } },
+      { runId: message.runId, error: serializeBridgeError(error) },
     ).catch(() => undefined);
+    commandGuard.finish(command.id);
     throw error;
   }
 }
@@ -78,6 +102,7 @@ async function captureWithSourceTabRecovery(command) {
 }
 
 async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) {
+  await assertTabLease(prepared.lease, "before_capture");
   const payload = {
     ...command.payload,
     ...(command.payload.source === "linkedin" && prepared.backgroundAtDispatch
@@ -112,6 +137,7 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
     });
     if (!response?.ok) throw new Error(response?.message || "Source readiness retry failed.");
   }
+  await assertTabLease(prepared.lease, "after_capture");
   return response.observation;
 }
 
@@ -170,6 +196,7 @@ async function findOrOpenSourceTab(source, mode, openIfMissing) {
 }
 
 async function prepareSourceTab(tab, source, opened) {
+  const lease = createTabLease(tab, source, opened);
   const startedAt = Date.now();
   const backgroundAtDispatch = tab.active !== true;
   let readiness = await waitForSourceReady(tab.id, source, source === "linkedin" ? 3_000 : 8_000);
@@ -207,6 +234,7 @@ async function prepareSourceTab(tab, source, opened) {
   }
   return {
     tab,
+    lease,
     opened,
     backgroundAtDispatch,
     readiness,
@@ -214,6 +242,29 @@ async function prepareSourceTab(tab, source, opened) {
     activateForRetry: activate,
     restoreFocus: () => restoreTabFocus(previousActiveTabId, tab.id),
   };
+}
+
+async function assertTabLease(lease, stage) {
+  let tab;
+  try {
+    tab = await chrome.tabs.get(lease.tabId);
+  } catch (error) {
+    throw new AkuBridgeError(
+      "tab_stale",
+      stage,
+      `AkuBridge source tab lease expired: ${String(error?.message ?? error)}`,
+      { tabId: lease.tabId, source: lease.source },
+    );
+  }
+  const validation = validateTabLease(lease, tab);
+  if (!validation.valid) {
+    throw new AkuBridgeError(
+      validation.code,
+      stage,
+      `AkuBridge source tab lease failed: ${validation.reason}.`,
+      { tabId: lease.tabId, source: lease.source, boundUrl: lease.boundUrl, currentUrl: tab.url },
+    );
+  }
 }
 
 async function waitForSourceReady(tabId, source, timeoutMs) {
@@ -245,7 +296,7 @@ async function probeSourceReadiness(tabId, source) {
   } catch {
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["bounded-capture-policy.js", "content-script.js"],
+      files: SOURCE_SCRIPT_FILES,
     });
   }
   const response = await chrome.tabs.sendMessage(tabId, {
@@ -292,7 +343,7 @@ async function collectFromTab(tabId, payload) {
   } catch {
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["bounded-capture-policy.js", "content-script.js"],
+      files: SOURCE_SCRIPT_FILES,
     });
     return chrome.tabs.sendMessage(tabId, {
       type: "AKU_BROWSER_COLLECT_VISIBLE",
@@ -348,4 +399,18 @@ function assertEndpoint(endpoint) {
 async function responseError(response, fallback) {
   const payload = await response.json().catch(() => ({}));
   return payload.message || `${fallback} (${response.status})`;
+}
+
+function bridgeCapabilities() {
+  const manifest = chrome.runtime.getManifest();
+  return {
+    bridgeId: BRIDGE_ID,
+    extensionVersion: manifest.version,
+    contractVersion: BRIDGE_CONTRACT_VERSION,
+    manifestVersion: manifest.manifest_version,
+    sources: ["x", "linkedin"],
+    actions: ["probe_readiness", "collect_visible", "detect_pending_content"],
+    authority: "read_only_bounded",
+    captureLimits: { maxScrolls: 2, maxSnapshots: 3, maxBlocksPerSnapshot: 20 },
+  };
 }

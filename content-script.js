@@ -2,12 +2,10 @@
   if (globalThis.__akuBrowserSourceBridgeInstalled) return;
   globalThis.__akuBrowserSourceBridgeInstalled = true;
 
-  const SOURCE_ADAPTER_VERSIONS = {
-    x: "x-dom-v1",
-    linkedin: "linkedin-dom-v2",
-  };
   const capturePolicy = globalThis.AkuBoundedCapturePolicy;
+  const sourceAdapters = globalThis.AkuSourceAdapters;
   if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
+  if (!sourceAdapters) throw new Error("AkuBridge source-adapter runtime was not loaded.");
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "AKU_BROWSER_PROBE_SOURCE_READY") {
@@ -25,18 +23,14 @@
     if (!sourceMatchesPage(source)) {
       return readiness("wrong_page", source, 0, 0, false, false);
     }
-    const loginRequired = source === "linkedin" && (
-      /\/login|\/uas\/login/i.test(window.location.pathname) ||
-      Boolean(document.querySelector('input[name="session_key"], form[action*="login"]'))
-    );
+    const adapter = sourceAdapters.get(source);
+    const loginRequired = adapter.loginRequired?.() === true;
     const discovery = discoverSourceCandidates(source);
     const candidates = discovery.candidates;
     const loading = Boolean(document.querySelector(
       '[aria-busy="true"], .artdeco-loader, [data-test-id*="loading" i]',
     ));
-    const feedRoot = source === "linkedin"
-      ? Boolean(document.querySelector('[data-testid="mainFeed"], #workspace main, main'))
-      : Boolean(document.querySelector("main"));
+    const feedRoot = adapter.feedRootPresent?.() === true;
     const scrollContext = getScrollContext(source, candidates);
     const visibleCandidates = candidates.filter((element) =>
       isVisibleInViewport(element, scrollContext),
@@ -208,6 +202,8 @@
         observedBlockCount,
         browserAdapter: "aku-bridge",
         captureMethod: "native_dom",
+        adapterVersion: sourceAdapters.get(source).version,
+        adapterCapabilities: sourceAdapters.capabilities(),
         fallbackUsed: false,
         scrollContainer: describeScrollContext(scrollContext),
         pendingNewContent: Boolean(pendingNewContentSignal),
@@ -310,7 +306,7 @@
     }
 
     return {
-      adapterVersion: SOURCE_ADAPTER_VERSIONS[source] ?? "unknown-dom-v1",
+      adapterVersion: sourceAdapters.get(source).version ?? "unknown-dom-v1",
       selectorCandidateCount: selectorCandidates.length,
       visibleContainerCount: containers.length,
       capturedAt: new Date().toISOString(),
@@ -326,7 +322,7 @@
     const permalink = findPermalink(container, source, time);
     return {
       text,
-      author: findAuthor(container, source),
+      author: sourceAdapters.get(source).findAuthor(container, { compactText }),
       publishedAt: normalizeDate(time?.getAttribute("datetime")),
       permalink,
       platformId: findPlatformId(container, source, permalink),
@@ -343,28 +339,11 @@
     };
   }
 
-  function findAuthor(container, source) {
-    const selectors =
-      source === "x"
-        ? ['[data-testid="User-Name"]']
-        : ['.update-components-actor__name', '.feed-shared-actor__name', '[data-view-name="feed-actor-image"]'];
-    for (const selector of selectors) {
-      const value = compactText(container.querySelector(selector)?.innerText).slice(0, 300);
-      if (value) return value;
-    }
-    return "";
-  }
-
   function findMedia(container, source) {
     const candidates = [];
-    const imageSelector = source === "x" ? '[data-testid="tweetPhoto"] img' : "img";
-    for (const image of container.querySelectorAll(imageSelector)) {
-      if (
-        source === "linkedin" &&
-        image.closest(
-          '.update-components-actor, .feed-shared-actor, [data-view-name="feed-actor-image"]',
-        )
-      ) continue;
+    const adapter = sourceAdapters.get(source);
+    for (const image of container.querySelectorAll(adapter.imageSelector ?? "img")) {
+      if (adapter.shouldSkipImage?.(image)) continue;
       const rect = image.getBoundingClientRect();
       candidates.push({
         kind: "image",
@@ -491,10 +470,7 @@
   }
 
   function detectPendingNewContent(source) {
-    const pattern =
-      source === "x"
-        ? /^(?:new posts?|show(?: \d+)? posts?)$/i
-        : /^(?:new posts?|show new posts?)$/i;
+    const pattern = sourceAdapters.get(source).pendingContentPattern;
     for (const element of document.querySelectorAll('button,[role="button"]')) {
       if (!isVisibleInViewport(element)) continue;
       const label = compactText(element.innerText || element.textContent);
@@ -556,89 +532,12 @@
     return compactText(block?.text).toLowerCase().slice(0, 300);
   }
 
-  function sourceSelectors(source) {
-    return source === "x"
-      ? ['article[data-testid="tweet"]', 'main article']
-      : [
-          '[data-testid="mainFeed"] [role="listitem"]',
-          '[data-view-name="feed-full-update"]',
-          '.feed-shared-update-v2',
-          'main [role="listitem"]',
-          'main [data-urn*="activity"]',
-          'main [data-id*="activity"]',
-          'main article',
-        ];
-  }
-
-  function filterSourceCandidates(source, candidates) {
-    if (source !== "linkedin") return candidates;
-    return candidates.filter((element) => {
-      if (element.matches(
-        '[data-view-name="feed-full-update"], .feed-shared-update-v2, [data-urn*="activity"], [data-id*="activity"]',
-      )) return true;
-      if (element.querySelector(
-        '[data-view-name="feed-full-update"], .feed-shared-update-v2, [data-urn*="activity"], [data-id*="activity"]',
-      )) return true;
-      return [...element.querySelectorAll('a[href]')].some((anchor) =>
-        /\/feed\/update\/|activity-\d+/i.test(anchor.href),
-      );
-    });
-  }
-
   function discoverSourceCandidates(source) {
-    const semantic = filterSourceCandidates(source, uniqueElements(
-      sourceSelectors(source).flatMap((selector) => [...document.querySelectorAll(selector)]),
-    ));
-    const actionAnchored = source === "linkedin"
-      ? linkedinActionAnchoredCandidates()
-      : [];
-    return {
-      candidates: uniqueElements([...semantic, ...actionAnchored]),
-      semanticCandidateCount: semantic.length,
-      actionAnchoredCandidateCount: actionAnchored.length,
-    };
-  }
-
-  function linkedinActionAnchoredCandidates() {
-    const main = document.querySelector("main");
-    if (!main) return [];
-    const actions = [...main.querySelectorAll('button,[role="button"]')]
-      .filter((element) => linkedinActionKind(element));
-    const candidates = [];
-    for (const action of actions) {
-      let current = action.parentElement;
-      while (current && current !== main && current !== document.body) {
-        const text = compactText(current.innerText);
-        const actionKinds = new Set(
-          [...current.querySelectorAll('button,[role="button"]')]
-            .map((element) => linkedinActionKind(element))
-            .filter(Boolean),
-        );
-        if (text.length >= 80 && actionKinds.size >= 2) {
-          candidates.push(current);
-          break;
-        }
-        current = current.parentElement;
-      }
-    }
-    return uniqueElements(candidates).filter((candidate) =>
-      !candidates.some((other) => other !== candidate && candidate.contains(other)),
-    );
-  }
-
-  function linkedinActionKind(element) {
-    const label = compactText(
-      element.getAttribute("aria-label") ||
-      element.getAttribute("title") ||
-      element.innerText,
-    );
-    const match = label.match(/^(like|comment|repost|send)(?:\b|$)/i);
-    return match?.[1]?.toLowerCase() ?? null;
+    return sourceAdapters.get(source).discoverCandidates({ compactText, uniqueElements });
   }
 
   function sourceMatchesPage(source) {
-    if (source === "x") return window.location.hostname === "x.com";
-    return source === "linkedin" && window.location.hostname === "www.linkedin.com";
+    return sourceAdapters.get(source).matchesPage();
   }
 
   function normalizeHttpUrl(value) {
