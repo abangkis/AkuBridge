@@ -426,6 +426,7 @@ function bridgeCapabilities() {
   return {
     bridgeId: BRIDGE_ID,
     extensionVersion: manifest.version,
+    runtimeRevision: "bridge-diagnostics-v1",
     contractVersion: BRIDGE_CONTRACT_VERSION,
     manifestVersion: manifest.manifest_version,
     sources: ["x", "linkedin"],
