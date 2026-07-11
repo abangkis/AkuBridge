@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function loadPolicy() {
-  const context = {};
+  const context = { URL };
   context.globalThis = context;
   vm.runInNewContext(
     fs.readFileSync(path.join(projectRoot, "bounded-capture-policy.js"), "utf8"),
@@ -138,6 +138,26 @@ test("platform identity normalizes X status and LinkedIn activity variants", () 
     "linkedin:ugcpost:7412345678901234568",
   );
   assert.equal(policy.platformIdFromCandidates("linkedin", ["unrelated"]), null);
+});
+
+test("captured media is bounded to rendered source CDN images", () => {
+  const policy = loadPolicy();
+  const xMedia = policy.normalizeMediaCandidates("x", [
+    { url: "https://pbs.twimg.com/media/example.jpg#fragment", alt: "Diagram", width: 640, height: 360 },
+    { url: "https://evil.example/tracker.png", width: 640, height: 360 },
+    { url: "https://pbs.twimg.com/profile_images/avatar.jpg", width: 48, height: 48 },
+    { url: "https://pbs.twimg.com/media/example.jpg", width: 640, height: 360 },
+  ]);
+  assert.equal(xMedia.length, 1);
+  assert.equal(xMedia[0].url, "https://pbs.twimg.com/media/example.jpg");
+  assert.equal(xMedia[0].kind, "image");
+
+  const linkedInMedia = policy.normalizeMediaCandidates("linkedin", [
+    { url: "https://media.licdn.com/dms/image/example", kind: "video_poster", width: 800, height: 450 },
+  ]);
+  assert.equal(linkedInMedia.length, 1);
+  assert.equal(linkedInMedia[0].kind, "video_poster");
+  assert.equal(Object.isFrozen(linkedInMedia), true);
 });
 
 test("the policy is loaded before the source content script", () => {

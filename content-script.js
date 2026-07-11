@@ -326,6 +326,7 @@
       publishedAt: normalizeDate(time?.getAttribute("datetime")),
       permalink,
       platformId: findPlatformId(container, source, permalink),
+      media: findMedia(container, source),
       links: [...container.querySelectorAll("a[href]")]
         .filter((element) => isVisibleInViewport(element, scrollContext))
         .map((anchor) => ({
@@ -348,6 +349,38 @@
       if (value) return value;
     }
     return "";
+  }
+
+  function findMedia(container, source) {
+    const candidates = [];
+    const imageSelector = source === "x" ? '[data-testid="tweetPhoto"] img' : "img";
+    for (const image of container.querySelectorAll(imageSelector)) {
+      if (
+        source === "linkedin" &&
+        image.closest(
+          '.update-components-actor, .feed-shared-actor, [data-view-name="feed-actor-image"]',
+        )
+      ) continue;
+      const rect = image.getBoundingClientRect();
+      candidates.push({
+        kind: "image",
+        url: image.currentSrc || image.src,
+        alt: image.alt || "",
+        width: rect.width || image.naturalWidth,
+        height: rect.height || image.naturalHeight,
+      });
+    }
+    for (const video of container.querySelectorAll("video[poster]")) {
+      const rect = video.getBoundingClientRect();
+      candidates.push({
+        kind: "video_poster",
+        url: video.poster,
+        alt: video.getAttribute("aria-label") || "Video preview",
+        width: rect.width || video.videoWidth,
+        height: rect.height || video.videoHeight,
+      });
+    }
+    return capturePolicy.normalizeMediaCandidates(source, candidates);
   }
 
   function findPermalink(container, source, time) {

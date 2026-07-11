@@ -11,6 +11,7 @@
     maxPendingContentSettleMs: 2_000,
     maxBlocksPerSnapshot: 20,
     maxBlockCharacters: 4_000,
+    maxMediaPerBlock: 4,
   });
 
   function normalizeCapturePlan(payload = {}) {
@@ -112,6 +113,44 @@
     return null;
   }
 
+  function normalizeMediaCandidates(source, values) {
+    const seen = new Set();
+    const media = [];
+    for (const value of Array.isArray(values) ? values : []) {
+      if (!value || typeof value !== "object") continue;
+      const url = safeMediaUrl(source, value.url);
+      if (!url || seen.has(url)) continue;
+      const width = clampInteger(Math.round(value.width), 0, 8_192, 0);
+      const height = clampInteger(Math.round(value.height), 0, 8_192, 0);
+      if (width < 180 || height < 90) continue;
+      seen.add(url);
+      media.push(Object.freeze({
+        kind: value.kind === "video_poster" ? "video_poster" : "image",
+        url,
+        alt: typeof value.alt === "string" ? value.alt.trim().slice(0, 300) : "",
+        width,
+        height,
+      }));
+      if (media.length >= limits.maxMediaPerBlock) break;
+    }
+    return Object.freeze(media);
+  }
+
+  function safeMediaUrl(source, value) {
+    if (typeof value !== "string") return null;
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "https:") return null;
+      const host = url.hostname.toLowerCase();
+      if (source === "x" && !["pbs.twimg.com", "video.twimg.com"].includes(host)) return null;
+      if (source === "linkedin" && host !== "licdn.com" && !host.endsWith(".licdn.com")) return null;
+      url.hash = "";
+      return url.href;
+    } catch {
+      return null;
+    }
+  }
+
   function normalizeContinuation(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const anchorKeys = Array.isArray(value.anchorKeys)
@@ -147,5 +186,6 @@
     countNewCandidates,
     hasChangedVisibleFeed,
     platformIdFromCandidates,
+    normalizeMediaCandidates,
   });
 })();
