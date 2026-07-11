@@ -6,7 +6,7 @@
   "description": "AkuBridge read-only Chrome extension for AkuBrowser",
   "scripts": {
     "test": "node --test --test-isolation=none",
-    "check": "node --check service-worker.js && node --check bridge-runtime-policy.js && node --check source-tab-policy.js && node --check tab-recovery-policy.js && node --check bounded-capture-policy.js && node --check source-adapter-runtime.js && node --check adapters/x-adapter.js && node --check adapters/linkedin-adapter.js && node --check content-script.js && node --check aku-browser-tab-bridge.js && node --test --test-isolation=none",
+    "check": "node --check service-worker.js && node --check bridge-runtime-policy.js && node --check source-tab-policy.js && node --check source-tab-lifecycle-policy.js && node --check tab-recovery-policy.js && node --check bounded-capture-policy.js && node --check source-adapter-runtime.js && node --check adapters/x-adapter.js && node --check adapters/linkedin-adapter.js && node --check content-script.js && node --check aku-browser-tab-bridge.js && node --test --test-isolation=none",
     "package:verify": "node scripts/verify-extension-package.mjs"
   }
 }

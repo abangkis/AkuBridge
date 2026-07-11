@@ -9,19 +9,47 @@
     loginRequired: () => false,
     feedRootPresent: () => Boolean(document.querySelector("main")),
     discoverCandidates: ({ uniqueElements }) => {
-      const candidates = uniqueElements([
-        ...document.querySelectorAll('article[data-testid="tweet"]'),
-        ...document.querySelectorAll("main article"),
-      ]);
+      const primary = [...document.querySelectorAll('article[data-testid="tweet"]')];
+      const fallback = [...document.querySelectorAll("main article")];
+      const candidates = uniqueElements([...primary, ...fallback]);
       return {
         candidates,
         semanticCandidateCount: candidates.length,
         actionAnchoredCandidateCount: 0,
+        strategy: primary.length > 0 ? "tweet_testid" : fallback.length > 0 ? "main_article" : "none",
+        selectorCounts: { tweet_testid: primary.length, main_article: fallback.length },
       };
     },
     findAuthor: (container, { compactText }) =>
       compactText(container.querySelector('[data-testid="User-Name"]')?.innerText).slice(0, 300),
+    extractSemantics: (container, { compactText, normalizeHttpUrl }) => {
+      const socialContext = compactText(
+        container.querySelector('[data-testid="socialContext"]')?.innerText,
+      );
+      const quoted = container.querySelector('[role="link"][href*="/status/"] article, [data-testid="quoteTweet"]');
+      const reply = compactText(container.innerText).match(/^Replying to\b/i);
+      const relationshipType = quoted ? "quote" : socialContext ? "repost" : reply ? "reply" : "original";
+      const parentLink = [...container.querySelectorAll('a[href*="/status/"]')]
+        .map((anchor) => normalizeHttpUrl(anchor.href))
+        .find(Boolean) ?? null;
+      return {
+        contentKind: container.querySelector("video") ? "video" : "post",
+        relationshipType,
+        parentPermalink: relationshipType === "original" ? null : parentLink,
+        engagement: engagementCounts(container),
+      };
+    },
     imageSelector: '[data-testid="tweetPhoto"] img',
     pendingContentPattern: /^(?:new posts?|show(?: \d+)? posts?)$/i,
   });
+
+  function engagementCounts(container) {
+    const result = {};
+    for (const kind of ["reply", "retweet", "like", "bookmark"]) {
+      const value = container.querySelector(`[data-testid="${kind}"]`)?.getAttribute("aria-label") ?? "";
+      const count = value.match(/[\d,.]+/)?.[0];
+      if (count) result[kind === "retweet" ? "repost" : kind] = count;
+    }
+    return result;
+  }
 })();

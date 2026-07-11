@@ -33,6 +33,7 @@ test("adapter registry rejects duplicates and unknown sources", () => {
     matchesPage() { return true; },
     discoverCandidates() { return { candidates: [] }; },
     findAuthor() { return ""; },
+    extractSemantics() { return {}; },
   });
   assert.throws(() => context.AkuSourceAdapters.register({ source: "fixture" }), /already registered/);
   assert.throws(() => context.AkuSourceAdapters.get("missing"), /no loaded source adapter/);

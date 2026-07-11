@@ -1,6 +1,10 @@
 import { chooseSourceTab, expectedFeedUrl } from "./source-tab-policy.js";
 import { shouldRetrySourceTab } from "./tab-recovery-policy.js";
 import {
+  normalizeSourceTabLifecycle,
+  shouldCloseOpenedSourceTab,
+} from "./source-tab-lifecycle-policy.js";
+import {
   AkuBridgeError,
   createCommandGuard,
   createTabLease,
@@ -86,7 +90,16 @@ async function captureWithSourceTabRecovery(command) {
         command.payload.mode,
         command.payload.openIfMissing,
       );
-      return await capturePreparedSource(command, prepared, attempt);
+      const observation = await capturePreparedSource(command, prepared, attempt);
+      if (shouldCloseOpenedSourceTab({
+        opened: prepared.opened,
+        lifecycle: command.payload.tabLifecycle,
+        captureCompleted: true,
+      })) {
+        await chrome.tabs.remove(prepared.tab.id).catch(() => undefined);
+        observation.coverage.sourceTabClosedAfterCapture = true;
+      }
+      return observation;
     } catch (error) {
       if (!shouldRetrySourceTab({
         error,
@@ -103,6 +116,7 @@ async function captureWithSourceTabRecovery(command) {
 
 async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) {
   await assertTabLease(prepared.lease, "before_capture");
+  const tabLifecycle = normalizeSourceTabLifecycle(command.payload.tabLifecycle);
   const payload = {
     ...command.payload,
     ...(command.payload.source === "linkedin" && prepared.backgroundAtDispatch
@@ -114,6 +128,9 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
       activatedForReadiness: prepared.activatedForReadiness,
       backgroundAtDispatch: prepared.backgroundAtDispatch,
       recoveryCount: sourceTabRecoveryCount,
+      ownership: prepared.opened ? "managed" : "shared",
+      openedTabDisposition:
+        tabLifecycle.openedTabDisposition,
     },
   };
   let response = await collectFromTabWithDeadline(prepared.tab.id, payload);
@@ -133,6 +150,9 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
           prepared.activatedForReadiness || activatedForRetry,
         backgroundAtDispatch: prepared.backgroundAtDispatch,
         recoveryCount: sourceTabRecoveryCount,
+        ownership: prepared.opened ? "managed" : "shared",
+        openedTabDisposition:
+          tabLifecycle.openedTabDisposition,
       },
     });
     if (!response?.ok) throw new Error(response?.message || "Source readiness retry failed.");
@@ -409,7 +429,16 @@ function bridgeCapabilities() {
     contractVersion: BRIDGE_CONTRACT_VERSION,
     manifestVersion: manifest.manifest_version,
     sources: ["x", "linkedin"],
-    actions: ["probe_readiness", "collect_visible", "detect_pending_content"],
+    actions: [
+      "probe_readiness",
+      "collect_visible",
+      "detect_pending_content",
+      "report_adapter_health",
+      "extract_source_semantics",
+      "report_frontier",
+      "manage_source_tab_lifecycle",
+      "report_source_events",
+    ],
     authority: "read_only_bounded",
     captureLimits: { maxScrolls: 2, maxSnapshots: 3, maxBlocksPerSnapshot: 20 },
   };

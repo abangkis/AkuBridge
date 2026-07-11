@@ -10,7 +10,7 @@
     if (adapters.has(adapter.source)) {
       throw new Error(`AkuBridge source adapter already registered: ${adapter.source}.`);
     }
-    for (const method of ["matchesPage", "discoverCandidates", "findAuthor"]) {
+    for (const method of ["matchesPage", "discoverCandidates", "findAuthor", "extractSemantics"]) {
       if (typeof adapter[method] !== "function") {
         throw new Error(`AkuBridge ${adapter.source} adapter is missing ${method}().`);
       }
@@ -28,7 +28,15 @@
     return [...adapters.values()].map((adapter) => ({
       source: adapter.source,
       version: adapter.version,
-      actions: ["probe_readiness", "collect_visible", "detect_pending_content"],
+      actions: [
+        "probe_readiness",
+        "collect_visible",
+        "detect_pending_content",
+        "report_adapter_health",
+        "extract_source_semantics",
+        "report_frontier",
+        "report_source_events",
+      ],
     }));
   }
 

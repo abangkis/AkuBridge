@@ -188,6 +188,9 @@
 
     const candidateCount = uniqueCandidates.size;
     const observedBlockCount = snapshots.reduce((sum, snapshot) => sum + snapshot.blocks.length, 0);
+    const fieldCoverage = summarizeFieldCoverage(snapshots);
+    const lastSnapshot = snapshots.at(-1);
+    const frontierAnchorKeys = (lastSnapshot?.blocks ?? []).map(blockIdentity).filter(Boolean).slice(0, 20);
     const finalScrollY = Math.round(readScrollPosition(scrollContext).y);
     return {
       source,
@@ -204,6 +207,27 @@
         captureMethod: "native_dom",
         adapterVersion: sourceAdapters.get(source).version,
         adapterCapabilities: sourceAdapters.capabilities(),
+        adapterHealth: {
+          state: candidateCount > 0 ? "healthy" : "selector_mismatch",
+          strategies: [...new Set(snapshots.map((snapshot) => snapshot.selectorStrategy))],
+          selectorCounts: snapshots.at(-1)?.selectorCounts ?? {},
+          fieldCoverage,
+          domSignature: snapshots.map((snapshot) =>
+            `${snapshot.selectorStrategy}:${snapshot.selectorCandidateCount}:${snapshot.visibleContainerCount}`
+          ).join("|"),
+        },
+        frontier: {
+          scrollY: lastSnapshot?.scrollY ?? captureStartPosition.y,
+          anchorKeys: frontierAnchorKeys,
+          newCandidateCount: lastSnapshot?.newCandidateCount ?? 0,
+          hasMoreCandidateSignal:
+            scrollStopReason === "budget_exhausted" && (lastSnapshot?.newCandidateCount ?? 0) > 0,
+        },
+        sourceEvents: sourceEvents({
+          pendingNewContentSignal,
+          pendingNewContentAction,
+          candidateCount,
+        }),
         fallbackUsed: false,
         scrollContainer: describeScrollContext(scrollContext),
         pendingNewContent: Boolean(pendingNewContentSignal),
@@ -284,13 +308,18 @@
         sourceTabBackgroundAtDispatch:
           payload.tabAcquisition?.backgroundAtDispatch === true,
         sourceTabRecoveryCount: payload.tabAcquisition?.recoveryCount ?? 0,
+        sourceTabOwnership: payload.tabAcquisition?.ownership ?? "shared",
+        sourceTabOpenedDisposition:
+          payload.tabAcquisition?.openedTabDisposition ?? "preserve",
+        sourceTabClosedAfterCapture: false,
         sourceReadinessRetryCount: payload.sourceReadinessRetryCount ?? 0,
       },
     };
   }
 
   function captureVisibleSnapshot(source, payload, scrollContext) {
-    const selectorCandidates = discoverSourceCandidates(source).candidates;
+    const discovery = discoverSourceCandidates(source);
+    const selectorCandidates = discovery.candidates;
     const containers = selectorCandidates.filter((element) =>
       isVisibleInViewport(element, scrollContext),
     );
@@ -307,6 +336,8 @@
 
     return {
       adapterVersion: sourceAdapters.get(source).version ?? "unknown-dom-v1",
+      selectorStrategy: discovery.strategy ?? "unknown",
+      selectorCounts: discovery.selectorCounts ?? {},
       selectorCandidateCount: selectorCandidates.length,
       visibleContainerCount: containers.length,
       capturedAt: new Date().toISOString(),
@@ -320,12 +351,21 @@
     const text = compactText(container.innerText).slice(0, maxCharacters);
     const time = container.querySelector("time");
     const permalink = findPermalink(container, source, time);
+    const adapter = sourceAdapters.get(source);
+    const semantics = adapter.extractSemantics(container, {
+      compactText,
+      normalizeHttpUrl,
+    });
     return {
       text,
       author: sourceAdapters.get(source).findAuthor(container, { compactText }),
       publishedAt: normalizeDate(time?.getAttribute("datetime")),
       permalink,
       platformId: findPlatformId(container, source, permalink),
+      contentKind: semantics.contentKind ?? "post",
+      relationshipType: semantics.relationshipType ?? "original",
+      parentPermalink: normalizeHttpUrl(semantics.parentPermalink),
+      engagement: semantics.engagement ?? {},
       media: findMedia(container, source),
       links: [...container.querySelectorAll("a[href]")]
         .filter((element) => isVisibleInViewport(element, scrollContext))
@@ -530,6 +570,28 @@
     if (block?.platformId) return block.platformId;
     if (block?.permalink) return block.permalink;
     return compactText(block?.text).toLowerCase().slice(0, 300);
+  }
+
+  function summarizeFieldCoverage(snapshots) {
+    const blocks = snapshots.flatMap((snapshot) => snapshot.blocks);
+    const fields = ["author", "publishedAt", "permalink", "platformId", "contentKind"];
+    return Object.fromEntries(fields.map((field) => [
+      field,
+      { present: blocks.filter((block) => Boolean(block[field])).length, total: blocks.length },
+    ]));
+  }
+
+  function sourceEvents({ pendingNewContentSignal, pendingNewContentAction, candidateCount }) {
+    const events = [];
+    if (pendingNewContentSignal) {
+      events.push({
+        type: "source_new_content_available",
+        state: pendingNewContentAction,
+        label: pendingNewContentSignal.label,
+      });
+    }
+    if (candidateCount === 0) events.push({ type: "source_feed_unavailable", state: "observed" });
+    return events;
   }
 
   function discoverSourceCandidates(source) {

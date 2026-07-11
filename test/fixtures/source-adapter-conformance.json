@@ -1,0 +1,16 @@
+{
+  "x": {
+    "version": "x-dom-v1",
+    "selector": "article[data-testid=\"tweet\"]",
+    "strategy": "tweet_testid",
+    "contentKind": "post",
+    "relationshipType": "quote"
+  },
+  "linkedin": {
+    "version": "linkedin-dom-v2",
+    "selector": "[data-view-name=\"feed-full-update\"]",
+    "strategy": "[data-view-name=\"feed-full-update\"]",
+    "contentKind": "document",
+    "relationshipType": "repost"
+  }
+}

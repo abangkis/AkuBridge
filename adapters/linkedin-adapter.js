@@ -24,14 +24,43 @@
       document.querySelector('[data-testid="mainFeed"], #workspace main, main'),
     ),
     discoverCandidates: ({ compactText, uniqueElements }) => {
-      const semantic = filterCandidates(uniqueElements(
-        selectors.flatMap((selector) => [...document.querySelectorAll(selector)]),
-      ));
+      const selectorCounts = Object.fromEntries(
+        selectors.map((selector) => [selector, document.querySelectorAll(selector).length]),
+      );
+      const semantic = filterCandidates(uniqueElements(selectors.flatMap(
+        (selector) => [...document.querySelectorAll(selector)],
+      )));
       const actionAnchored = actionAnchoredCandidates(compactText, uniqueElements);
       return {
         candidates: uniqueElements([...semantic, ...actionAnchored]),
         semanticCandidateCount: semantic.length,
         actionAnchoredCandidateCount: actionAnchored.length,
+        strategy: selectors.find((selector) => selectorCounts[selector] > 0) ??
+          (actionAnchored.length > 0 ? "action_anchored" : "none"),
+        selectorCounts,
+      };
+    },
+    extractSemantics: (container, { compactText, normalizeHttpUrl }) => {
+      const text = compactText(container.innerText);
+      const relationshipType = /\breposted this\b/i.test(text)
+        ? "repost"
+        : /\breplied to\b/i.test(text)
+          ? "reply"
+          : "original";
+      const parentPermalink = relationshipType === "original"
+        ? null
+        : [...container.querySelectorAll('a[href]')]
+            .map((anchor) => normalizeHttpUrl(anchor.href))
+            .find((href) => /\/feed\/update\/|activity-\d+/i.test(href ?? "")) ?? null;
+      return {
+        contentKind: container.querySelector("video")
+          ? "video"
+          : container.querySelector('[data-test-document-container], iframe[title*="document" i]')
+            ? "document"
+            : "post",
+        relationshipType,
+        parentPermalink,
+        engagement: engagementCounts(container, compactText),
       };
     },
     findAuthor: (container, { compactText }) => {
@@ -98,5 +127,15 @@
       element.getAttribute("aria-label") || element.getAttribute("title") || element.innerText,
     );
     return label.match(/^(like|comment|repost|send)(?:\b|$)/i)?.[1]?.toLowerCase() ?? null;
+  }
+
+  function engagementCounts(container, compactText) {
+    const result = {};
+    for (const element of container.querySelectorAll('button,[role="button"]')) {
+      const label = compactText(element.getAttribute("aria-label") || element.innerText);
+      const match = label.match(/([\d,.]+)\s+(reactions?|comments?|reposts?)/i);
+      if (match) result[match[2].toLowerCase().replace(/s$/, "").replace("reaction", "like")] = match[1];
+    }
+    return result;
   }
 })();
