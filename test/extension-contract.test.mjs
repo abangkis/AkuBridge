@@ -93,3 +93,13 @@ test("LinkedIn capture waits for feed readiness and permits only one evidence re
   assert.match(worker, /restoreTabFocus/);
   assert.equal(worker.match(/sourceReadinessRetryCount: 1/g)?.length, 1);
 });
+
+test("initial stale-tab recovery is bounded and follow-up remains anchored", () => {
+  const contentScript = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
+  const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
+
+  assert.match(worker, /captureWithSourceTabRecovery/);
+  assert.match(worker, /acquisitionRound: command\.payload\.acquisitionRound/);
+  assert.match(contentScript, /sourceTabRecoveryCount/);
+  assert.match(contentScript, /discarded one stale initial tab reference/);
+});

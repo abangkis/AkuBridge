@@ -270,6 +270,9 @@
           payload.tabAcquisition?.backgroundAtDispatch
             ? "The source tab was in the background when the command was dispatched."
             : null,
+          payload.tabAcquisition?.recoveryCount > 0
+            ? "AkuBridge discarded one stale initial tab reference and rebound to a newly discovered eligible source tab."
+            : null,
         ],
         sourceReadinessState: payload.sourceReadiness?.state ?? null,
         sourceReadinessWaitMs: payload.sourceReadiness?.waitMs ?? 0,
@@ -284,6 +287,7 @@
           payload.tabAcquisition?.activatedForReadiness === true,
         sourceTabBackgroundAtDispatch:
           payload.tabAcquisition?.backgroundAtDispatch === true,
+        sourceTabRecoveryCount: payload.tabAcquisition?.recoveryCount ?? 0,
         sourceReadinessRetryCount: payload.sourceReadinessRetryCount ?? 0,
       },
     };

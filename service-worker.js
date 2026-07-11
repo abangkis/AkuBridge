@@ -1,4 +1,5 @@
 import { chooseSourceTab, expectedFeedUrl } from "./source-tab-policy.js";
+import { shouldRetrySourceTab } from "./tab-recovery-policy.js";
 
 const AKU_BROWSER_ORIGIN = "http://127.0.0.1:47821";
 const BRIDGE_ID = "aku-bridge-chrome-mv3-v0";
@@ -32,54 +33,14 @@ async function dispatchRun(message) {
     if (command.payload.browserAdapter !== "aku-bridge") {
       throw new Error("The browser command targeted an unsupported adapter.");
     }
-    const prepared = await findOrOpenSourceTab(
-      command.payload.source,
-      command.payload.mode,
-      command.payload.openIfMissing,
+    const observation = await captureWithSourceTabRecovery(command);
+    await postBridgeResult(
+      message.endpoint,
+      message.token,
+      command.id,
+      "observation",
+      { runId: message.runId, observation },
     );
-    try {
-      const payload = {
-        ...command.payload,
-        ...(command.payload.source === "linkedin" && prepared.backgroundAtDispatch
-          ? { pendingContentPolicy: "detect_only", sameTabMutationAllowed: false }
-          : {}),
-        sourceReadiness: prepared.readiness,
-        tabAcquisition: {
-          opened: prepared.opened,
-          activatedForReadiness: prepared.activatedForReadiness,
-          backgroundAtDispatch: prepared.backgroundAtDispatch,
-        },
-      };
-      let response = await collectFromTabWithDeadline(prepared.tab.id, payload);
-      if (!response?.ok) throw new Error(response?.message || "Source content script failed.");
-      if (command.payload.source === "linkedin" && observationBlockCount(response.observation) === 0) {
-        const activatedForRetry = await prepared.activateForRetry();
-        const readiness = await waitForSourceReady(prepared.tab.id, "linkedin", 8_000);
-        response = await collectFromTabWithDeadline(prepared.tab.id, {
-          ...payload,
-          pendingContentPolicy: "detect_only",
-          sameTabMutationAllowed: false,
-          sourceReadiness: readiness,
-          sourceReadinessRetryCount: 1,
-          tabAcquisition: {
-            opened: prepared.opened,
-            activatedForReadiness:
-              prepared.activatedForReadiness || activatedForRetry,
-            backgroundAtDispatch: prepared.backgroundAtDispatch,
-          },
-        });
-        if (!response?.ok) throw new Error(response?.message || "Source readiness retry failed.");
-      }
-      await postBridgeResult(
-        message.endpoint,
-        message.token,
-        command.id,
-        "observation",
-        { runId: message.runId, observation: response.observation },
-      );
-    } finally {
-      await prepared.restoreFocus();
-    }
   } catch (error) {
     await postBridgeResult(
       message.endpoint,
@@ -90,6 +51,68 @@ async function dispatchRun(message) {
     ).catch(() => undefined);
     throw error;
   }
+}
+
+async function captureWithSourceTabRecovery(command) {
+  for (let attempt = 0; ; attempt += 1) {
+    let prepared = null;
+    try {
+      prepared = await findOrOpenSourceTab(
+        command.payload.source,
+        command.payload.mode,
+        command.payload.openIfMissing,
+      );
+      return await capturePreparedSource(command, prepared, attempt);
+    } catch (error) {
+      if (!shouldRetrySourceTab({
+        error,
+        acquisitionRound: command.payload.acquisitionRound ?? 1,
+        attempt,
+      })) {
+        throw error;
+      }
+    } finally {
+      if (prepared) await prepared.restoreFocus();
+    }
+  }
+}
+
+async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) {
+  const payload = {
+    ...command.payload,
+    ...(command.payload.source === "linkedin" && prepared.backgroundAtDispatch
+      ? { pendingContentPolicy: "detect_only", sameTabMutationAllowed: false }
+      : {}),
+    sourceReadiness: prepared.readiness,
+    tabAcquisition: {
+      opened: prepared.opened,
+      activatedForReadiness: prepared.activatedForReadiness,
+      backgroundAtDispatch: prepared.backgroundAtDispatch,
+      recoveryCount: sourceTabRecoveryCount,
+    },
+  };
+  let response = await collectFromTabWithDeadline(prepared.tab.id, payload);
+  if (!response?.ok) throw new Error(response?.message || "Source content script failed.");
+  if (command.payload.source === "linkedin" && observationBlockCount(response.observation) === 0) {
+    const activatedForRetry = await prepared.activateForRetry();
+    const readiness = await waitForSourceReady(prepared.tab.id, "linkedin", 8_000);
+    response = await collectFromTabWithDeadline(prepared.tab.id, {
+      ...payload,
+      pendingContentPolicy: "detect_only",
+      sameTabMutationAllowed: false,
+      sourceReadiness: readiness,
+      sourceReadinessRetryCount: 1,
+      tabAcquisition: {
+        opened: prepared.opened,
+        activatedForReadiness:
+          prepared.activatedForReadiness || activatedForRetry,
+        backgroundAtDispatch: prepared.backgroundAtDispatch,
+        recoveryCount: sourceTabRecoveryCount,
+      },
+    });
+    if (!response?.ok) throw new Error(response?.message || "Source readiness retry failed.");
+  }
+  return response.observation;
 }
 
 async function claimCommand(endpoint, token, runId) {

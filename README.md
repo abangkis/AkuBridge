@@ -21,6 +21,8 @@ Gate 0B.3 may perform one additional one-scroll capture from a round-one frontie
 
 LinkedIn capture uses a bounded feed-readiness probe because a completed page shell may still contain no rendered feed. A background tab that is not ready may be activated temporarily and the prior active tab is restored afterward. LinkedIn temporarily uses detect-only pending-content behavior for reliability; X retains its validated reveal path. Zero evidence permits one same-tab readiness retry and then fails as source readiness without invoking reasoning.
 
+If Chrome invalidates a tab between discovery and initial capture, AkuBridge may discard that stale reference and perform exactly one fresh source-tab discovery. The normal `openIfMissing` policy still applies, and coverage records the recovery. Provider-directed follow-up never rebinds because its evidence frontier belongs to the original tab.
+
 ## Boundary
 
 AkuBridge communicates only with AkuSidecar at `http://127.0.0.1:47821` through the versioned local bridge contract. It does not import AkuSidecar source code.
