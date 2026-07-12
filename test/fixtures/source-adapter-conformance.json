@@ -7,7 +7,7 @@
     "relationshipType": "quote"
   },
   "linkedin": {
-    "version": "linkedin-dom-v2",
+    "version": "linkedin-dom-v3",
     "selector": "[data-view-name=\"feed-full-update\"]",
     "strategy": "[data-view-name=\"feed-full-update\"]",
     "contentKind": "document",

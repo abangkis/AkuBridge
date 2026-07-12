@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "x-source-presentation-v3";
+  const runtimeRevision = "source-presentation-v4";
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
     chrome.runtime.onMessage.removeListener(globalThis.__akuBrowserSourceBridgeMessageHandler);
@@ -362,10 +362,12 @@
   }
 
   function extractBlock(container, source, maxCharacters, scrollContext, recoveredPermalink = null) {
-    const text = compactText(container.innerText).slice(0, maxCharacters);
+    const adapter = sourceAdapters.get(source);
+    const text = compactText(
+      adapter.extractText?.(container, { compactText }) ?? container.innerText,
+    ).slice(0, maxCharacters);
     const time = container.querySelector("time");
     const permalink = findPermalink(container, source, time) ?? recoveredPermalink;
-    const adapter = sourceAdapters.get(source);
     const semantics = adapter.extractSemantics(container, {
       compactText,
       normalizeHttpUrl,
@@ -419,6 +421,11 @@
 
 
   function findAvatar(container, source) {
+    const adapterAvatar = sourceAdapters.get(source).findAvatar?.(container, {
+      compactText,
+      normalizeHttpUrl,
+    });
+    if (normalizeHttpUrl(adapterAvatar)) return normalizeHttpUrl(adapterAvatar);
     const selectors = source === "x"
       ? ['[data-testid="Tweet-User-Avatar"] img', '[data-testid="UserAvatar-Container-unknown"] img']
       : [

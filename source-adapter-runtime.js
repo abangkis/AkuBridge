@@ -1,5 +1,6 @@
 (() => {
-  if (globalThis.AkuSourceAdapters) return;
+  const runtimeRevision = "source-adapters-v3";
+  if (globalThis.AkuSourceAdapters?.runtimeRevision === runtimeRevision) return;
 
   const adapters = new Map();
 
@@ -40,5 +41,10 @@
     }));
   }
 
-  globalThis.AkuSourceAdapters = Object.freeze({ register, get, capabilities });
+  globalThis.AkuSourceAdapters = Object.freeze({
+    runtimeRevision,
+    register,
+    get,
+    capabilities,
+  });
 })();

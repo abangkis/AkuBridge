@@ -17,7 +17,7 @@ test("source adapters register independently behind one contract", () => {
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
       { source: "x", version: "x-dom-v1" },
-      { source: "linkedin", version: "linkedin-dom-v2" },
+      { source: "linkedin", version: "linkedin-dom-v3" },
     ],
   );
   assert.equal(context.AkuSourceAdapters.get("x").matchesPage(), true);
@@ -37,6 +37,16 @@ test("adapter registry rejects duplicates and unknown sources", () => {
   });
   assert.throws(() => context.AkuSourceAdapters.register({ source: "fixture" }), /already registered/);
   assert.throws(() => context.AkuSourceAdapters.get("missing"), /no loaded source adapter/);
+});
+
+test("a reinjected adapter runtime replaces the stale registry generation", () => {
+  const context = createBrowserContext();
+  const previous = { runtimeRevision: "stale-fixture" };
+  context.AkuSourceAdapters = previous;
+  runScript(context, "source-adapter-runtime.js");
+  assert.notEqual(context.AkuSourceAdapters, previous);
+  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v3");
+  assert.deepEqual([...context.AkuSourceAdapters.capabilities()], []);
 });
 
 function createBrowserContext() {

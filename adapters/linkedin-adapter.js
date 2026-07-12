@@ -14,7 +14,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v2",
+    version: "linkedin-dom-v3",
     matchesPage: () => window.location.hostname === "www.linkedin.com",
     loginRequired: () => (
       /\/login|\/uas\/login/i.test(window.location.pathname) ||
@@ -64,6 +64,10 @@
       };
     },
     findAuthor: (container, { compactText }) => {
+      const menuLabel = [...container.querySelectorAll('button[aria-label]')]
+        .map((button) => compactText(button.getAttribute("aria-label")))
+        .find((label) => /^Open control menu for post by\s+/i.test(label));
+      if (menuLabel) return menuLabel.replace(/^Open control menu for post by\s+/i, "").trim();
       for (const selector of [
         ".update-components-actor__name",
         ".feed-shared-actor__name",
@@ -76,6 +80,26 @@
         if (value) return value;
       }
       return "";
+    },
+    extractText: (container, { compactText }) =>
+      compactText(container.querySelector('[data-testid="expandable-text-box"]')?.innerText) ||
+      compactText(container.innerText),
+    findAvatar: (container, { compactText, normalizeHttpUrl }) => {
+      const author = [...container.querySelectorAll('button[aria-label]')]
+        .map((button) => compactText(button.getAttribute("aria-label")))
+        .find((label) => /^Open control menu for post by\s+/i.test(label))
+        ?.replace(/^Open control menu for post by\s+/i, "").trim();
+      if (!author) return null;
+      const authorLink = [...container.querySelectorAll('a[href]')].find((anchor) =>
+        compactText(anchor.innerText).includes(author),
+      );
+      const authorHref = normalizeHttpUrl(authorLink?.href);
+      if (!authorHref) return null;
+      const image = [...container.querySelectorAll('a[href]')]
+        .filter((anchor) => normalizeHttpUrl(anchor.href) === authorHref)
+        .map((anchor) => anchor.querySelector("img"))
+        .find(Boolean);
+      return normalizeHttpUrl(image?.currentSrc || image?.src);
     },
     imageSelector: "img",
     shouldSkipImage: (image) => Boolean(image.closest(
