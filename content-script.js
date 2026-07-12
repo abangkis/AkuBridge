@@ -357,6 +357,7 @@
     return {
       text,
       author: sourceAdapters.get(source).findAuthor(container, { compactText }),
+      avatarUrl: findAvatar(container, source),
       publishedAt: normalizeDate(time?.getAttribute("datetime")),
       permalink,
       platformId: findPlatformId(container, source, permalink),
@@ -375,6 +376,24 @@
         .filter((link, index, all) => all.findIndex((candidate) => candidate.href === link.href) === index)
         .slice(0, 10),
     };
+  }
+
+  function findAvatar(container, source) {
+    const selectors = source === "x"
+      ? ['[data-testid="Tweet-User-Avatar"] img', '[data-testid="UserAvatar-Container-unknown"] img']
+      : [
+          ".update-components-actor__avatar-image",
+          ".feed-shared-actor__avatar-image",
+          '[data-view-name="feed-actor-image"] img',
+          '.update-components-actor img',
+          '.feed-shared-actor img',
+        ];
+    for (const selector of selectors) {
+      const image = container.querySelector(selector);
+      const url = normalizeHttpUrl(image?.currentSrc || image?.src);
+      if (url) return url;
+    }
+    return null;
   }
 
   function findMedia(container, source) {
@@ -431,7 +450,18 @@
         ? /\/status\/\d+/.test(anchor.pathname)
         : /\/feed\/update\//.test(anchor.pathname) || /activity-\d+/.test(anchor.href),
     );
-    return normalizeHttpUrl(match?.href);
+    const linkedUrl = normalizeHttpUrl(match?.href);
+    if (linkedUrl || source !== "linkedin") return linkedUrl;
+    const activityId = [
+      container.getAttribute("data-urn"),
+      container.getAttribute("data-id"),
+      ...[...container.querySelectorAll("[data-urn], [data-id]")]
+        .slice(0, 20)
+        .flatMap((element) => [element.getAttribute("data-urn"), element.getAttribute("data-id")]),
+    ].filter(Boolean).map((value) => String(value).match(/activity(?::|-)(\d+)/i)?.[1]).find(Boolean);
+    return activityId
+      ? `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/`
+      : null;
   }
 
   function findPlatformId(container, source, permalink) {

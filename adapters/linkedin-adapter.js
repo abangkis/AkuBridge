@@ -67,6 +67,9 @@
       for (const selector of [
         ".update-components-actor__name",
         ".feed-shared-actor__name",
+        ".update-components-actor__title",
+        ".feed-shared-actor__title",
+        '[data-view-name="feed-actor-name"]',
         '[data-view-name="feed-actor-image"]',
       ]) {
         const value = compactText(container.querySelector(selector)?.innerText).slice(0, 300);
