@@ -33,7 +33,9 @@
         .map((anchor) => normalizeHttpUrl(anchor.href))
         .find(Boolean) ?? null;
       return {
-        contentKind: container.querySelector("video") ? "video" : "post",
+        contentKind: container.querySelector(
+          'video, [data-testid="videoPlayer"], [data-testid="videoComponent"]',
+        ) ? "video" : "post",
         relationshipType,
         parentPermalink: relationshipType === "original" ? null : parentLink,
         engagement: engagementCounts(container),

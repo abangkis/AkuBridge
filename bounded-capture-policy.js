@@ -151,6 +151,12 @@
     }
   }
 
+  function mediaUrlFromCssBackground(value) {
+    if (typeof value !== "string" || value === "none") return null;
+    const match = value.match(/url\((?:["']?)(https:\/\/[^"')]+)(?:["']?)\)/i);
+    return match?.[1] ?? null;
+  }
+
   function normalizeContinuation(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const anchorKeys = Array.isArray(value.anchorKeys)
@@ -187,5 +193,6 @@
     hasChangedVisibleFeed,
     platformIdFromCandidates,
     normalizeMediaCandidates,
+    mediaUrlFromCssBackground,
   });
 })();

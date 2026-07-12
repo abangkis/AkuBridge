@@ -160,6 +160,25 @@ test("captured media is bounded to rendered source CDN images", () => {
   assert.equal(Object.isFrozen(linkedInMedia), true);
 });
 
+test("X video thumbnails can be extracted from a bounded CSS background", () => {
+  const policy = loadPolicy();
+  assert.equal(
+    policy.mediaUrlFromCssBackground('url("https://pbs.twimg.com/ext_tw_video_thumb/example/pu/img/frame.jpg")'),
+    "https://pbs.twimg.com/ext_tw_video_thumb/example/pu/img/frame.jpg",
+  );
+  assert.equal(policy.mediaUrlFromCssBackground("none"), null);
+  assert.equal(policy.mediaUrlFromCssBackground('linear-gradient(red, blue)'), null);
+  const media = policy.normalizeMediaCandidates("x", [{
+    kind: "video_poster",
+    url: policy.mediaUrlFromCssBackground(
+      'url("https://pbs.twimg.com/ext_tw_video_thumb/example/pu/img/frame.jpg")',
+    ),
+    width: 640,
+    height: 360,
+  }]);
+  assert.equal(media[0].kind, "video_poster");
+});
+
 test("the policy is loaded before the source content script", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"));
   const sourceEntry = manifest.content_scripts.find((entry) =>

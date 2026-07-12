@@ -1,7 +1,7 @@
 {
   "name": "@aku-browser/bridge",
   "version": "0.5.0",
-  "akuRuntimeRevision": "bridge-diagnostics-v1",
+  "akuRuntimeRevision": "x-video-poster-v2",
   "private": true,
   "type": "module",
   "description": "AkuBridge read-only Chrome extension for AkuBrowser",

@@ -403,6 +403,24 @@
         height: rect.height || video.videoHeight,
       });
     }
+    if (source === "x") {
+      const backgroundElements = container.querySelectorAll([
+        '[data-testid="videoPlayer"][style*="background-image"]',
+        '[data-testid="videoPlayer"] [style*="background-image"]',
+        '[data-testid="videoComponent"][style*="background-image"]',
+        '[data-testid="videoComponent"] [style*="background-image"]',
+      ].join(","));
+      for (const element of backgroundElements) {
+        const rect = element.getBoundingClientRect();
+        candidates.push({
+          kind: "video_poster",
+          url: capturePolicy.mediaUrlFromCssBackground(getComputedStyle(element).backgroundImage),
+          alt: element.getAttribute("aria-label") || "Video preview",
+          width: rect.width,
+          height: rect.height,
+        });
+      }
+    }
     return capturePolicy.normalizeMediaCandidates(source, candidates);
   }
 
