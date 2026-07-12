@@ -63,6 +63,9 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /platformId/);
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
+  assert.match(xAdapter, /previewInterstitial/);
+  assert.match(contentScript, /x-source-presentation-v3/);
+  assert.match(contentScript, /removeListener/);
   assert.match(contentScript, /video\[poster\]/);
   assert.match(contentScript, /videoPlayer/);
   assert.match(contentScript, /mediaUrlFromCssBackground/);

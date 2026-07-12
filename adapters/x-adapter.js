@@ -41,7 +41,10 @@
         engagement: engagementCounts(container),
       };
     },
-    imageSelector: '[data-testid="tweetPhoto"] img',
+    imageSelector: [
+      '[data-testid="tweetPhoto"] img',
+      '[data-testid="previewInterstitial"] img[alt="Embedded video"]',
+    ].join(","),
     pendingContentPattern: /^(?:new posts?|show(?: \d+)? posts?)$/i,
   });
 

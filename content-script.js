@@ -1,13 +1,17 @@
 (() => {
-  if (globalThis.__akuBrowserSourceBridgeInstalled) return;
-  globalThis.__akuBrowserSourceBridgeInstalled = true;
+  const runtimeRevision = "x-source-presentation-v3";
+  if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
+  if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
+    chrome.runtime.onMessage.removeListener(globalThis.__akuBrowserSourceBridgeMessageHandler);
+  }
+  globalThis.__akuBrowserSourceBridgeRevision = runtimeRevision;
 
   const capturePolicy = globalThis.AkuBoundedCapturePolicy;
   const sourceAdapters = globalThis.AkuSourceAdapters;
   if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
   if (!sourceAdapters) throw new Error("AkuBridge source-adapter runtime was not loaded.");
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  const messageHandler = (message, _sender, sendResponse) => {
     if (message?.type === "AKU_BROWSER_PROBE_SOURCE_READY") {
       sendResponse({ ok: true, readiness: probeSourceReadiness(message.source) });
       return false;
@@ -17,7 +21,9 @@
       .then((observation) => sendResponse({ ok: true, observation }))
       .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
     return true;
-  });
+  };
+  globalThis.__akuBrowserSourceBridgeMessageHandler = messageHandler;
+  chrome.runtime.onMessage.addListener(messageHandler);
 
   function probeSourceReadiness(source) {
     if (!sourceMatchesPage(source)) {
@@ -437,7 +443,9 @@
       if (adapter.shouldSkipImage?.(image)) continue;
       const rect = image.getBoundingClientRect();
       candidates.push({
-        kind: "image",
+        kind: source === "x" && image.closest('[data-testid="previewInterstitial"]')
+          ? "video_poster"
+          : "image",
         url: image.currentSrc || image.src,
         alt: image.alt || "",
         width: rect.width || image.naturalWidth,
