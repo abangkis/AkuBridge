@@ -18,6 +18,7 @@ const BRIDGE_CONTRACT_VERSION = "aku-browser.bridge.v1";
 const commandGuard = createCommandGuard();
 const SOURCE_SCRIPT_FILES = [
   "bounded-capture-policy.js",
+  "linkedin-permalink-policy.js",
   "source-adapter-runtime.js",
   "adapters/x-adapter.js",
   "adapters/linkedin-adapter.js",

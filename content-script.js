@@ -138,7 +138,7 @@
     let continuationAnchorMatched = false;
     try {
       for (let index = 0; index <= plan.scrolls; index += 1) {
-        const snapshot = captureVisibleSnapshot(source, plan, scrollContext);
+        const snapshot = await captureVisibleSnapshot(source, plan, scrollContext);
         snapshot.index = index;
         if (index === 0 && plan.continuation) {
           continuationAnchorMatched = snapshotMatchesContinuation(
@@ -315,16 +315,26 @@
     };
   }
 
-  function captureVisibleSnapshot(source, payload, scrollContext) {
+  async function captureVisibleSnapshot(source, payload, scrollContext) {
     const discovery = discoverSourceCandidates(source);
     const selectorCandidates = discovery.candidates;
     const containers = selectorCandidates.filter((element) =>
       isVisibleInViewport(element, scrollContext),
     );
 
+    const recoveredPermalinks = source === "linkedin"
+      ? await recoverLinkedInPermalinks(containers.slice(0, payload.maxBlocksPerSnapshot))
+      : new WeakMap();
+
     const blocks = [];
     for (const container of containers) {
-      const block = extractBlock(container, source, payload.maxBlockCharacters, scrollContext);
+      const block = extractBlock(
+        container,
+        source,
+        payload.maxBlockCharacters,
+        scrollContext,
+        recoveredPermalinks.get(container),
+      );
       if (block.text.length < 40) continue;
       if (blocks.some((existing) => existing.text === block.text)) continue;
       block.feedPosition = selectorCandidates.indexOf(container) + 1;
@@ -345,10 +355,10 @@
     };
   }
 
-  function extractBlock(container, source, maxCharacters, scrollContext) {
+  function extractBlock(container, source, maxCharacters, scrollContext, recoveredPermalink = null) {
     const text = compactText(container.innerText).slice(0, maxCharacters);
     const time = container.querySelector("time");
-    const permalink = findPermalink(container, source, time);
+    const permalink = findPermalink(container, source, time) ?? recoveredPermalink;
     const adapter = sourceAdapters.get(source);
     const semantics = adapter.extractSemantics(container, {
       compactText,
@@ -377,6 +387,30 @@
         .slice(0, 10),
     };
   }
+
+  async function recoverLinkedInPermalinks(containers) {
+    const recovered = new WeakMap();
+    for (const container of containers) {
+      if (findPermalink(container, "linkedin", container.querySelector("time"))) continue;
+      const menuButton = container.querySelector(
+        'button[aria-label^="Open control menu for post by"]',
+      );
+      if (!menuButton) continue;
+      menuButton.click();
+      await delay(60);
+      const embedLink = [...document.querySelectorAll(
+        'a[href*="/preload/embed-modal/"][href*="targetUrn="]',
+      )].find((link) => isVisibleInViewport(link));
+      const canonical = globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEmbedHref(
+        embedLink?.href,
+      );
+      if (canonical) recovered.set(container, canonical);
+      menuButton.click();
+      await delay(20);
+    }
+    return recovered;
+  }
+
 
   function findAvatar(container, source) {
     const selectors = source === "x"

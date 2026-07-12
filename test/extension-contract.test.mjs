@@ -20,6 +20,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   const source = [
     "service-worker.js",
     "content-script.js",
+    "linkedin-permalink-policy.js",
     "source-adapter-runtime.js",
     "adapters/x-adapter.js",
     "adapters/linkedin-adapter.js",
@@ -100,7 +101,9 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
   assert.match(contentScript, /evidence = "feed_fingerprint_changed"/);
   assert.doesNotMatch(contentScript, /evidence = "signal_removed"/);
   assert.match(contentScript, /restorationScope: feedMutation \? "post_reveal_start"/);
-  assert.equal(contentScript.match(/\.click\(\)/g)?.length, 1);
+  assert.equal(contentScript.match(/signal\.element\.click\(\)/g)?.length, 1);
+  assert.equal(contentScript.match(/menuButton\.click\(\)/g)?.length, 2);
+  assert.doesNotMatch(contentScript, /(?:like|comment|repost|send)Button\.click\(\)/i);
 });
 
 test("LinkedIn capture waits for feed readiness and permits only one evidence retry", () => {

@@ -23,6 +23,7 @@
       "matches": ["https://x.com/*", "https://www.linkedin.com/*"],
       "js": [
         "bounded-capture-policy.js",
+        "linkedin-permalink-policy.js",
         "source-adapter-runtime.js",
         "adapters/x-adapter.js",
         "adapters/linkedin-adapter.js",
