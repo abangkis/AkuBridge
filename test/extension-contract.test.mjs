@@ -86,6 +86,10 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
   assert.match(contentScript, /document\.querySelector\("#workspace"\)/);
   assert.match(contentScript, /isScrollableElement/);
   assert.match(contentScript, /nearestScrollableAncestor/);
+  assert.match(contentScript, /scrollContext\.scrollTop \+= top/);
+  assert.match(contentScript, /window\.scrollTo\(window\.scrollX, window\.scrollY \+ top\)/);
+  assert.match(contentScript, /attempt < 3/);
+  assert.doesNotMatch(contentScript, /behavior: "instant"/);
   assert.match(contentScript, /windowVisibleSelectorCandidateCount/);
   assert.match(linkedInAdapter, /actionAnchoredCandidates/);
   assert.match(linkedInAdapter, /actionKinds\.size >= 2/);

@@ -180,9 +180,7 @@
     } finally {
       if (plan.restoreScroll) {
         restoreAttempted = true;
-        scrollToContext(scrollContext, restorePosition);
-        await delay(120);
-        restored = Math.abs(readScrollPosition(scrollContext).y - restorePosition.y) < 2;
+        restored = await restoreScrollContext(scrollContext, restorePosition);
       }
     }
 
@@ -510,11 +508,29 @@
   }
 
   function scrollByContext(scrollContext, top) {
-    scrollContext.scrollBy({ top, behavior: "instant" });
+    if (scrollContext === window) {
+      window.scrollTo(window.scrollX, window.scrollY + top);
+      return;
+    }
+    scrollContext.scrollTop += top;
   }
 
   function scrollToContext(scrollContext, position) {
-    scrollContext.scrollTo({ left: position.x, top: position.y, behavior: "instant" });
+    if (scrollContext === window) {
+      window.scrollTo(position.x, position.y);
+      return;
+    }
+    scrollContext.scrollLeft = position.x;
+    scrollContext.scrollTop = position.y;
+  }
+
+  async function restoreScrollContext(scrollContext, position) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      scrollToContext(scrollContext, position);
+      await delay(150 + attempt * 100);
+      if (Math.abs(readScrollPosition(scrollContext).y - position.y) < 2) return true;
+    }
+    return false;
   }
 
   function viewportHeight(scrollContext) {
