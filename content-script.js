@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v7";
+  const runtimeRevision = "source-fidelity-v8";
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
     chrome.runtime.onMessage.removeListener(globalThis.__akuBrowserSourceBridgeMessageHandler);
@@ -472,6 +472,7 @@
   }
 
   async function expandSourceContent(container, source) {
+    if (source === "x") return expandXSourceContent(container);
     if (source !== "linkedin") return { state: "not_applicable" };
     const contentRoot = findContentRoot(container, source);
     const button = contentRoot.querySelector('[data-testid="expandable-text-button"]')
@@ -492,6 +493,26 @@
     return {
       state: expanded ? "expanded" : "expand_failed",
       button,
+      contentRoot,
+      before,
+      expanded: Boolean(expanded),
+    };
+  }
+
+  async function expandXSourceContent(container) {
+    const contentRoot = findContentRoot(container, "x");
+    const button = container.querySelector('[data-testid="tweet-text-show-more-link"]');
+    if (!button) return { state: "already_complete" };
+    const before = cleanExpandedText(contentRoot.innerText);
+    button.click();
+    const expanded = await waitForValue(() => {
+      const current = cleanExpandedText(contentRoot.innerText);
+      return current.length > before.length && !container.querySelector(
+        '[data-testid="tweet-text-show-more-link"]',
+      ) ? current : null;
+    }, 12, 40);
+    return {
+      state: expanded ? "expanded_no_restore_control" : "expand_failed",
       contentRoot,
       before,
       expanded: Boolean(expanded),

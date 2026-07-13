@@ -4,7 +4,7 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v3",
+    version: "x-dom-v4",
     matchesPage: () => window.location.hostname === "x.com",
     loginRequired: () => false,
     feedRootPresent: () => Boolean(document.querySelector("main")),
