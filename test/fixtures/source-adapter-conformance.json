@@ -1,16 +1,18 @@
 {
   "x": {
-    "version": "x-dom-v1",
+    "version": "x-dom-v2",
     "selector": "article[data-testid=\"tweet\"]",
     "strategy": "tweet_testid",
     "contentKind": "post",
-    "relationshipType": "quote"
+    "relationshipType": "quote",
+    "avatarUrl": "https://pbs.twimg.com/profile_images/x-avatar.jpg"
   },
   "linkedin": {
-    "version": "linkedin-dom-v3",
+    "version": "linkedin-dom-v5",
     "selector": "[data-view-name=\"feed-full-update\"]",
     "strategy": "[data-view-name=\"feed-full-update\"]",
     "contentKind": "document",
-    "relationshipType": "repost"
+    "relationshipType": "original",
+    "avatarUrl": "https://media.licdn.com/dms/image/linkedin-avatar"
   }
 }

@@ -11,10 +11,13 @@ import {
   serializeBridgeError,
   validateTabLease,
 } from "./bridge-runtime-policy.js";
+import {
+  BRIDGE_CONTRACT_VERSION,
+  BRIDGE_ID,
+  createBridgeCapabilities,
+} from "./bridge-capabilities.js";
 
 const AKU_BROWSER_ORIGIN = "http://127.0.0.1:47821";
-const BRIDGE_ID = "aku-bridge-chrome-mv3-v0";
-const BRIDGE_CONTRACT_VERSION = "aku-browser.bridge.v1";
 const commandGuard = createCommandGuard();
 const SOURCE_SCRIPT_FILES = [
   "bounded-capture-policy.js",
@@ -423,25 +426,5 @@ async function responseError(response, fallback) {
 }
 
 function bridgeCapabilities() {
-  const manifest = chrome.runtime.getManifest();
-  return {
-    bridgeId: BRIDGE_ID,
-    extensionVersion: manifest.version,
-    runtimeRevision: "source-presentation-v4",
-    contractVersion: BRIDGE_CONTRACT_VERSION,
-    manifestVersion: manifest.manifest_version,
-    sources: ["x", "linkedin"],
-    actions: [
-      "probe_readiness",
-      "collect_visible",
-      "detect_pending_content",
-      "report_adapter_health",
-      "extract_source_semantics",
-      "report_frontier",
-      "manage_source_tab_lifecycle",
-      "report_source_events",
-    ],
-    authority: "read_only_bounded",
-    captureLimits: { maxScrolls: 2, maxSnapshots: 3, maxBlocksPerSnapshot: 20 },
-  };
+  return createBridgeCapabilities(chrome.runtime.getManifest());
 }

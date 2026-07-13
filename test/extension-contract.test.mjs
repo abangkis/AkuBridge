@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createBridgeCapabilities } from "../bridge-capabilities.js";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -10,6 +11,11 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   const manifest = JSON.parse(
     fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"),
   );
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
+  );
+  assert.equal(manifest.version, packageJson.version);
+  assert.equal(manifest.version, "0.5.4");
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:47821/*",
@@ -59,12 +65,12 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
     linkedInAdapter,
     /\[data-testid="mainFeed"\] \[role="listitem"\]/,
   );
-  assert.match(linkedInAdapter, /linkedin-dom-v3/);
+  assert.match(linkedInAdapter, /linkedin-dom-v5/);
   assert.match(contentScript, /platformId/);
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-presentation-v4/);
+  assert.match(contentScript, /source-presentation-v6/);
   assert.match(contentScript, /removeListener/);
   assert.match(contentScript, /video\[poster\]/);
   assert.match(contentScript, /videoPlayer/);
@@ -142,10 +148,14 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
 
   assert.match(tabBridge, /AKU_BRIDGE_GET_CAPABILITIES/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
+  const capabilities = createBridgeCapabilities({ version: "0.5.4", manifest_version: 3 });
+  assert.equal(capabilities.runtimeRevision, "source-presentation-v6");
+  assert.equal(capabilities.buildId, "aku-bridge-0.5.4-source-presentation-v6");
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v2", linkedin: "linkedin-dom-v5" });
   assert.match(tabBridge, /capability handshake returned no capabilities/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_ERROR/);
-  assert.match(worker, /authority: "read_only_bounded"/);
-  assert.match(worker, /captureLimits: \{ maxScrolls: 2, maxSnapshots: 3, maxBlocksPerSnapshot: 20 \}/);
+  assert.equal(capabilities.authority, "read_only_bounded");
+  assert.deepEqual(capabilities.captureLimits, { maxScrolls: 2, maxSnapshots: 3, maxBlocksPerSnapshot: 20 });
   assert.match(worker, /assertTabLease\(prepared\.lease, "before_capture"\)/);
   assert.match(worker, /assertTabLease\(prepared\.lease, "after_capture"\)/);
   assert.match(runtimePolicy, /serializeBridgeError/);

@@ -14,7 +14,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v3",
+    version: "linkedin-dom-v5",
     matchesPage: () => window.location.hostname === "www.linkedin.com",
     loginRequired: () => (
       /\/login|\/uas\/login/i.test(window.location.pathname) ||
@@ -84,21 +84,65 @@
     extractText: (container, { compactText }) =>
       compactText(container.querySelector('[data-testid="expandable-text-box"]')?.innerText) ||
       compactText(container.innerText),
-    findAvatar: (container, { compactText, normalizeHttpUrl }) => {
-      const author = [...container.querySelectorAll('button[aria-label]')]
-        .map((button) => compactText(button.getAttribute("aria-label")))
-        .find((label) => /^Open control menu for post by\s+/i.test(label))
-        ?.replace(/^Open control menu for post by\s+/i, "").trim();
-      if (!author) return null;
-      const authorLink = [...container.querySelectorAll('a[href]')].find((anchor) =>
-        compactText(anchor.innerText).includes(author),
+    extractPresentation: (container, { compactText, normalizeHttpUrl }) => {
+      const author = postAuthor(container, compactText);
+      const lines = String(container.innerText ?? "")
+        .split(/\n+/)
+        .map((line) => compactText(line))
+        .filter(Boolean);
+      const authorIndex = lines.findIndex((line) => line === author);
+      const beforeAuthor = authorIndex >= 0 ? lines.slice(0, authorIndex) : [];
+      const afterAuthor = authorIndex >= 0 ? lines.slice(authorIndex + 1) : [];
+      const socialContext = beforeAuthor.find((line) =>
+        /\b(?:likes?|reposted|commented on|celebrates?|supports?) this\b/i.test(line),
+      ) ?? "";
+      const connectionIndex = afterAuthor.findIndex((line) =>
+        /^(?:•\s*)?(?:1st|2nd|3rd\+?)$/i.test(line),
       );
-      const authorHref = normalizeHttpUrl(authorLink?.href);
-      if (!authorHref) return null;
-      const image = [...container.querySelectorAll('a[href]')]
-        .filter((anchor) => normalizeHttpUrl(anchor.href) === authorHref)
-        .map((anchor) => anchor.querySelector("img"))
-        .find(Boolean);
+      const connectionDegree = connectionIndex >= 0
+        ? afterAuthor[connectionIndex].replace(/^•\s*/, "")
+        : "";
+      const timestampText = afterAuthor.find((line) =>
+        /^\d+\s*(?:m|h|d|w|mo|yr)s?\b/i.test(line),
+      ) ?? "";
+      const timestampIndex = timestampText ? afterAuthor.indexOf(timestampText) : -1;
+      const headline = afterAuthor
+        .slice(connectionIndex >= 0 ? connectionIndex + 1 : 0, timestampIndex >= 0 ? timestampIndex : undefined)
+        .find((line) => !/^(?:Follow|Connect|\d+ followers?)$/i.test(line)) ?? "";
+      const attributionText = afterAuthor.find((line) =>
+        /\b(?:Promoted|Partnership with)\b/i.test(line) || /^with\s+.+?\s*[â€¢·]/i.test(line),
+      ) ?? "";
+      const socialAvatar = socialContext
+        ? [...container.querySelectorAll('a[href*="/in/"] img')]
+            .find((image) => {
+              const rect = image.getBoundingClientRect();
+              return rect.width > 0 && rect.width <= 36 && rect.height > 0 && rect.height <= 36;
+            })
+        : null;
+      return {
+        socialContext,
+        socialContextAvatarUrl: normalizeHttpUrl(socialAvatar?.currentSrc || socialAvatar?.src),
+        headline,
+        attributionText,
+        connectionDegree,
+        timestampText,
+        edited: /\bEdited\b/i.test(timestampText),
+        promoted: lines.some((line) => /\bPromoted\b/i.test(line)),
+      };
+    },
+    findAvatar: (container, { compactText, normalizeHttpUrl }) => {
+      const author = postAuthor(container, compactText);
+      const image = [...container.querySelectorAll('a[href] img')].find((candidate) => {
+        const alt = compactText(candidate.alt);
+        const rect = candidate.getBoundingClientRect();
+        return rect.width >= 40 && rect.height >= 40 && (
+          /^View company:/i.test(alt) ||
+          (/^View .+profile/i.test(alt) && (!author || alt.includes(author.replace(/\s+[\p{Regional_Indicator}\s]+$/u, ""))))
+        );
+      }) ?? [...container.querySelectorAll('a[href] img')].find((candidate) => {
+        const rect = candidate.getBoundingClientRect();
+        return rect.width >= 32 && rect.width <= 80 && rect.height >= 32 && rect.height <= 80;
+      });
       return normalizeHttpUrl(image?.currentSrc || image?.src);
     },
     imageSelector: "img",
@@ -107,6 +151,13 @@
     )),
     pendingContentPattern: /^(?:new posts?|show new posts?)$/i,
   });
+
+  function postAuthor(container, compactText) {
+    const label = [...container.querySelectorAll('button[aria-label]')]
+      .map((button) => compactText(button.getAttribute("aria-label")))
+      .find((value) => /^Open control menu for post by\s+/i.test(value));
+    return label?.replace(/^Open control menu for post by\s+/i, "").trim() ?? "";
+  }
 
   function filterCandidates(candidates) {
     return candidates.filter((element) => {

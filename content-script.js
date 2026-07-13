@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-presentation-v4";
+  const runtimeRevision = "source-presentation-v6";
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
     chrome.runtime.onMessage.removeListener(globalThis.__akuBrowserSourceBridgeMessageHandler);
@@ -383,6 +383,10 @@
       relationshipType: semantics.relationshipType ?? "original",
       parentPermalink: normalizeHttpUrl(semantics.parentPermalink),
       engagement: semantics.engagement ?? {},
+      presentation: adapter.extractPresentation?.(container, {
+        compactText,
+        normalizeHttpUrl,
+      }) ?? {},
       media: findMedia(container, source),
       links: [...container.querySelectorAll("a[href]")]
         .filter((element) => isVisibleInViewport(element, scrollContext))
@@ -427,7 +431,7 @@
     });
     if (normalizeHttpUrl(adapterAvatar)) return normalizeHttpUrl(adapterAvatar);
     const selectors = source === "x"
-      ? ['[data-testid="Tweet-User-Avatar"] img', '[data-testid="UserAvatar-Container-unknown"] img']
+      ? ['[data-testid="Tweet-User-Avatar"] img', '[data-testid^="UserAvatar-Container-"] img']
       : [
           ".update-components-actor__avatar-image",
           ".feed-shared-actor__avatar-image",

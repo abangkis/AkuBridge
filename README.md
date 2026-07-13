@@ -16,6 +16,8 @@ The adapter foundation separates X and LinkedIn DOM knowledge into source adapte
 
 `package:verify` validates Manifest V3 references, local module imports, package/manifest version alignment, and emits a SHA-256 file manifest plus aggregate fingerprint. It does not write a package artifact or modify the installed extension.
 
+Run `npm run version:patch` for every runtime change before reloading the unpacked extension. It advances and synchronizes `manifest.json`, `package.json`, and `package-lock.json`; the runtime heartbeat derives its build identity from that version and the runtime revision.
+
 AkuBridge does not like, reply, follow, message, or post. For an initial capture, it follows the command's `openIfMissing` policy: the default AkuSidecar configuration may open one inactive canonical X or LinkedIn feed tab, while `fail_fast` requires an already-open eligible tab. Manual Live may use the active page for the selected source. A follow-up round never opens a replacement tab. Gate 0B permits at most two native scrolls and three viewports. Computer Use is not part of this native path.
 
 Each captured evidence block may include up to four rendered content images or video posters for Source layout. AkuBridge excludes small images and LinkedIn actor avatars, accepts only the allowlisted X/LinkedIn media CDNs, and never downloads or transforms media itself.

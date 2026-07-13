@@ -4,7 +4,7 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v1",
+    version: "x-dom-v2",
     matchesPage: () => window.location.hostname === "x.com",
     loginRequired: () => false,
     feedRootPresent: () => Boolean(document.querySelector("main")),
@@ -22,6 +22,10 @@
     },
     findAuthor: (container, { compactText }) =>
       compactText(container.querySelector('[data-testid="User-Name"]')?.innerText).slice(0, 300),
+    findAvatar: (container, { normalizeHttpUrl }) => {
+      const image = container.querySelector('[data-testid^="UserAvatar-Container-"] img');
+      return normalizeHttpUrl(image?.currentSrc || image?.src);
+    },
     extractSemantics: (container, { compactText, normalizeHttpUrl }) => {
       const socialContext = compactText(
         container.querySelector('[data-testid="socialContext"]')?.innerText,
