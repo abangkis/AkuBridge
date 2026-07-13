@@ -43,7 +43,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ accepted: false, message: "reload_self rejected: invalid AkuBrowser origin." });
       return false;
     }
-    acceptReloadSelf(message)
+    acceptReloadSelf(message, sender.tab?.id)
       .then(() => {
         sendResponse({ accepted: true });
         chrome.runtime.reload();
@@ -65,7 +65,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-async function acceptReloadSelf(message) {
+async function acceptReloadSelf(message, akuBrowserTabId) {
   assertEndpoint(message.endpoint);
   if (typeof message.actionId !== "string" || !message.actionId) {
     throw new Error("reload_self requires an action ID.");
@@ -81,6 +81,13 @@ async function acceptReloadSelf(message) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.message || `reload_self acceptance failed with ${response.status}.`);
   }
+  if (!Number.isInteger(akuBrowserTabId)) {
+    throw new Error("reload_self requires the originating AkuBrowser tab ID.");
+  }
+  // Initiate navigation through Chrome rather than a page timer. Background
+  // timer throttling cannot delay this local-tab refresh, and the navigation
+  // continues while the extension runtime reloads immediately afterward.
+  await chrome.tabs.reload(akuBrowserTabId);
 }
 
 async function dispatchRun(message) {
