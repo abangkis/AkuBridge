@@ -223,7 +223,6 @@ async function prepareSourceTab(tab, source, opened) {
   const lease = createTabLease(tab, source, opened);
   const startedAt = Date.now();
   const backgroundAtDispatch = tab.active !== true;
-  let readiness = await waitForSourceReady(tab.id, source, source === "linkedin" ? 3_000 : 8_000);
   let activatedForReadiness = false;
   let previousActiveTabId = null;
   const activate = async () => {
@@ -237,12 +236,22 @@ async function prepareSourceTab(tab, source, opened) {
     }
     return false;
   };
+  if (source === "x" && backgroundAtDispatch) await activate();
+  let readiness = await waitForSourceReady(
+    tab.id,
+    source,
+    source === "linkedin" ? 3_000 : 12_000,
+    { requireVisualHydration: source === "x" },
+  );
   if (source === "linkedin" && readiness.state !== "feed_ready") {
     await activate();
     readiness = await waitForSourceReady(tab.id, source, 15_000);
   }
   readiness.waitMs = Date.now() - startedAt;
-  if (readiness.state !== "feed_ready") {
+  const captureReady = readiness.state === "feed_ready" && (
+    source !== "x" || readiness.visualHydrationReady === true
+  );
+  if (!captureReady) {
     await restoreTabFocus(previousActiveTabId, tab.id);
     throw new Error(
       `${sourceLabel(source)} source readiness failed: ${readiness.state} ` +
@@ -251,6 +260,9 @@ async function prepareSourceTab(tab, source, opened) {
       `${readiness.windowVisibleSelectorCandidateCount ?? 0} window-visible, ` +
       `semantic=${readiness.semanticSelectorCandidateCount ?? 0}, ` +
       `action=${readiness.actionAnchoredCandidateCount ?? 0}, ` +
+      `visual=${readiness.visualHydrationReady ?? "not_required"}, ` +
+      `avatar=${readiness.hydratedPrimaryAvatarCount ?? 0}/${readiness.primaryAvatarContainerCount ?? 0}, ` +
+      `media=${readiness.hydratedMediaContainerCount ?? 0}/${readiness.mediaContainerCount ?? 0}, ` +
       `loading=${readiness.loadingIndicator}, feedRoot=${readiness.feedRootPresent}, ` +
       `scroll=${readiness.scrollContext ?? "unknown"}, ` +
       `document=${readiness.documentReadyState ?? "unknown"}).`,
@@ -291,7 +303,12 @@ async function assertTabLease(lease, stage) {
   }
 }
 
-async function waitForSourceReady(tabId, source, timeoutMs) {
+async function waitForSourceReady(
+  tabId,
+  source,
+  timeoutMs,
+  { requireVisualHydration = false } = {},
+) {
   const startedAt = Date.now();
   let latest = {
     state: "page_shell",
@@ -304,7 +321,10 @@ async function waitForSourceReady(tabId, source, timeoutMs) {
   };
   while (Date.now() - startedAt < timeoutMs) {
     latest = await probeSourceReadiness(tabId, source);
-    if (["feed_ready", "login_required", "wrong_page"].includes(latest.state)) break;
+    if (latest.state === "feed_ready" && (
+      !requireVisualHydration || latest.visualHydrationReady === true
+    )) break;
+    if (["login_required", "wrong_page"].includes(latest.state)) break;
     await delay(250);
   }
   return { ...latest, waitMs: Date.now() - startedAt };

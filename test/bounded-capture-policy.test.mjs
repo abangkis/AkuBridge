@@ -182,6 +182,22 @@ test("X video thumbnails can be extracted from a bounded CSS background", () => 
   assert.equal(media[0].playbackMode, "native");
 });
 
+test("X photo backgrounds remain images when lazy img hydration is incomplete", () => {
+  const policy = loadPolicy();
+  const media = policy.normalizeMediaCandidates("x", [{
+    kind: "image",
+    url: policy.mediaUrlFromCssBackground(
+      'url("https://pbs.twimg.com/media/HNCOdOsacAI0xrI?format=png&name=small")',
+    ),
+    width: 680,
+    height: 513,
+  }]);
+  assert.equal(media.length, 1);
+  assert.equal(media[0].kind, "image");
+  assert.equal(media[0].posterUrl, null);
+  assert.equal(media[0].playbackMode, null);
+});
+
 test("X video playback remains inline only for an allowlisted stable CDN URL", () => {
   const policy = loadPolicy();
   const inline = policy.normalizeMediaCandidates("x", [{

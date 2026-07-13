@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v8";
+  const runtimeRevision = "source-fidelity-v15";
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
     chrome.runtime.onMessage.removeListener(globalThis.__akuBrowserSourceBridgeMessageHandler);
@@ -41,6 +41,7 @@
     const visibleCandidates = candidates.filter((element) =>
       isVisibleInViewport(element, scrollContext),
     );
+    const visualHydration = summarizeVisualHydration(source, visibleCandidates);
     const windowVisibleCandidates = candidates.filter((element) =>
       isVisibleInViewport(element, window),
     );
@@ -66,6 +67,7 @@
       windowVisibleCandidates.length,
       discovery.semanticCandidateCount,
       discovery.actionAnchoredCandidateCount,
+      visualHydration,
     );
   }
 
@@ -80,6 +82,7 @@
     windowVisibleSelectorCandidateCount = 0,
     semanticSelectorCandidateCount = 0,
     actionAnchoredCandidateCount = 0,
+    visualHydration = {},
   ) {
     return {
       state,
@@ -92,6 +95,7 @@
       windowVisibleSelectorCandidateCount,
       semanticSelectorCandidateCount,
       actionAnchoredCandidateCount,
+      ...visualHydration,
       documentReadyState: document.readyState,
       checkedAt: new Date().toISOString(),
     };
@@ -285,6 +289,9 @@
           payload.sourceReadiness
             ? `Source readiness: ${payload.sourceReadiness.state}; ${payload.sourceReadiness.selectorCandidateCount} selector candidate(s) after ${payload.sourceReadiness.waitMs ?? 0}ms.`
             : null,
+          payload.sourceReadiness?.visualHydrationRequired
+            ? `Source visual hydration: ${payload.sourceReadiness.visualHydrationReady ? "ready" : "incomplete"}; ${payload.sourceReadiness.hydratedPrimaryAvatarCount ?? 0}/${payload.sourceReadiness.primaryAvatarContainerCount ?? 0} primary avatar(s), ${payload.sourceReadiness.hydratedMediaContainerCount ?? 0}/${payload.sourceReadiness.mediaContainerCount ?? 0} media container(s).`
+            : null,
           payload.tabAcquisition?.opened
             ? "AkuBridge opened one inactive canonical source tab for this initial acquisition."
             : null,
@@ -306,6 +313,18 @@
           payload.sourceReadiness?.visibleSelectorCandidateCount ?? 0,
         sourceLoadingIndicator: payload.sourceReadiness?.loadingIndicator === true,
         sourceFeedRootPresent: payload.sourceReadiness?.feedRootPresent === true,
+        sourceVisualHydrationRequired:
+          payload.sourceReadiness?.visualHydrationRequired === true,
+        sourceVisualHydrationReady:
+          payload.sourceReadiness?.visualHydrationReady === true,
+        sourcePrimaryAvatarContainerCount:
+          payload.sourceReadiness?.primaryAvatarContainerCount ?? 0,
+        sourceHydratedPrimaryAvatarCount:
+          payload.sourceReadiness?.hydratedPrimaryAvatarCount ?? 0,
+        sourceMediaContainerCount:
+          payload.sourceReadiness?.mediaContainerCount ?? 0,
+        sourceHydratedMediaContainerCount:
+          payload.sourceReadiness?.hydratedMediaContainerCount ?? 0,
         sourceTabOpened: payload.tabAcquisition?.opened === true,
         sourceTabActivatedForReadiness:
           payload.tabAcquisition?.activatedForReadiness === true,
@@ -378,8 +397,8 @@
     contentExpansion = null,
   ) {
     const adapter = sourceAdapters.get(source);
-    const text = compactText(
-      adapter.extractText?.(container, { compactText }) ?? container.innerText,
+    const text = structuredText(
+      adapter.extractText?.(container, { compactText, structuredText }) ?? container,
     ).slice(0, maxCharacters);
     const time = container.querySelector("time");
     const directPermalink = findPermalinkDetails(container, source, time);
@@ -392,12 +411,20 @@
       compactText,
       normalizeHttpUrl,
     }) ?? {};
+    const quotedRoot = source === "x" ? findXQuotedPostContainer(container) : null;
+    const quotedPost = normalizeQuotedPost(adapter.extractQuotedPost?.(container, {
+      compactText,
+      normalizeHttpUrl,
+      structuredText,
+      findMedia: (root) => findMedia(root, source),
+    }));
     presentation.permalinkSource = directPermalink?.source ?? recoveredPermalink?.source ?? "unavailable";
     presentation.permalinkReason = permalink
       ? ""
       : recoveredPermalink?.reason ?? "No post permalink or recoverable LinkedIn target URN was exposed.";
     presentation.contentExpansion = contentExpansion?.state ?? "not_applicable";
     const contentRoot = findContentRoot(container, source);
+    const media = findMedia(container, source, { excludeRoot: quotedRoot });
     return {
       text,
       author: sourceAdapters.get(source).findAuthor(container, { compactText }),
@@ -405,12 +432,15 @@
       publishedAt: normalizeDate(time?.getAttribute("datetime")),
       permalink,
       platformId: findPlatformId(container, source, permalink),
-      contentKind: semantics.contentKind ?? "post",
+      contentKind: media.some((entry) => entry.kind === "video")
+        ? "video"
+        : semantics.contentKind ?? "post",
       relationshipType: semantics.relationshipType ?? "original",
       parentPermalink: normalizeHttpUrl(semantics.parentPermalink),
+      quotedPost,
       engagement: semantics.engagement ?? {},
       presentation,
-      media: findMedia(container, source),
+      media,
       links: [...contentRoot.querySelectorAll("a[href]")]
         .map((anchor) => ({
           text: compactText(anchor.innerText).slice(0, 300),
@@ -419,6 +449,30 @@
         .filter((link) => link.href)
         .filter((link, index, all) => all.findIndex((candidate) => candidate.href === link.href) === index)
         .slice(0, 10),
+    };
+  }
+
+  function normalizeQuotedPost(value) {
+    if (!value || typeof value !== "object") return null;
+    const text = structuredText(value.text).slice(0, 4_000);
+    if (!text) return null;
+    const links = Array.isArray(value.links)
+      ? value.links
+          .map((link) => ({
+            text: compactText(link?.text).slice(0, 300),
+            href: normalizeHttpUrl(link?.href),
+          }))
+          .filter((link) => link.href)
+          .slice(0, 10)
+      : [];
+    return {
+      author: compactText(value.author).slice(0, 300),
+      avatarUrl: normalizeHttpUrl(value.avatarUrl),
+      text,
+      permalink: normalizeHttpUrl(value.permalink),
+      publishedAt: normalizeDate(value.publishedAt),
+      links,
+      media: Array.isArray(value.media) ? value.media.slice(0, 4) : [],
     };
   }
 
@@ -571,45 +625,115 @@
         ];
     for (const selector of selectors) {
       const image = container.querySelector(selector);
-      const url = normalizeHttpUrl(image?.currentSrc || image?.src);
+      const url = normalizeHttpUrl(readImageUrl(image));
       if (url) return url;
+    }
+    if (source === "x") {
+      const avatarRoots = container.querySelectorAll(
+        '[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"]',
+      );
+      for (const avatarRoot of avatarRoots) {
+        const url = renderedBackgroundUrl(avatarRoot);
+        if (url) return url;
+      }
     }
     return null;
   }
 
-  function findMedia(container, source) {
+  function summarizeVisualHydration(source, candidates) {
+    if (source !== "x") {
+      return {
+        visualHydrationRequired: false,
+        visualHydrationReady: true,
+        primaryAvatarContainerCount: 0,
+        hydratedPrimaryAvatarCount: 0,
+        mediaContainerCount: 0,
+        hydratedMediaContainerCount: 0,
+      };
+    }
+    let primaryAvatarContainerCount = 0;
+    let hydratedPrimaryAvatarCount = 0;
+    let mediaContainerCount = 0;
+    let hydratedMediaContainerCount = 0;
+    for (const container of candidates.slice(0, 20)) {
+      const avatarRoot = container.querySelector(
+        '[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"]',
+      );
+      if (avatarRoot) {
+        primaryAvatarContainerCount += 1;
+        const imageUrl = readImageUrl(avatarRoot.querySelector("img"));
+        if (imageUrl || renderedBackgroundUrl(avatarRoot)) {
+          hydratedPrimaryAvatarCount += 1;
+        }
+      }
+      const mediaRoot = container.querySelector(
+        '[data-testid="tweetPhoto"], [data-testid="previewInterstitial"], '
+          + '[data-testid="videoPlayer"], [data-testid="videoComponent"], '
+          + 'div[aria-label*="Video" i]',
+      );
+      if (mediaRoot) {
+        mediaContainerCount += 1;
+        if (findMedia(container, source).length > 0) hydratedMediaContainerCount += 1;
+      }
+    }
+    return {
+      visualHydrationRequired: true,
+      visualHydrationReady:
+        primaryAvatarContainerCount > 0 &&
+        hydratedPrimaryAvatarCount === primaryAvatarContainerCount &&
+        hydratedMediaContainerCount === mediaContainerCount,
+      primaryAvatarContainerCount,
+      hydratedPrimaryAvatarCount,
+      mediaContainerCount,
+      hydratedMediaContainerCount,
+    };
+  }
+
+  function findMedia(container, source, { excludeRoot = null } = {}) {
     const candidates = [];
     const adapter = sourceAdapters.get(source);
     for (const image of container.querySelectorAll(adapter.imageSelector ?? "img")) {
+      if (excludeRoot?.contains?.(image)) continue;
       if (adapter.shouldSkipImage?.(image)) continue;
       const rect = image.getBoundingClientRect();
+      const videoRoot = source === "x" ? image.closest(
+        '[data-testid="previewInterstitial"], [data-testid="videoPlayer"], '
+          + '[data-testid="videoComponent"], [aria-label*="Video" i]',
+      ) : null;
+      const imageUrl = readImageUrl(image);
       candidates.push({
-        kind: source === "x" && image.closest('[data-testid="previewInterstitial"]')
+        kind: videoRoot
           ? "video"
           : source === "x" && /embedded video/i.test(image.alt || "")
             ? "video"
           : "image",
-        url: image.currentSrc || image.src,
-        posterUrl: image.currentSrc || image.src,
-        playbackMode: source === "x" && (
-          image.closest('[data-testid="previewInterstitial"]') || /embedded video/i.test(image.alt || "")
-        ) ? "native" : undefined,
+        url: imageUrl,
+        posterUrl: imageUrl,
+        playbackMode: source === "x" && (videoRoot || /embedded video/i.test(image.alt || ""))
+          ? "native"
+          : undefined,
         alt: image.alt || "",
         width: rect.width || image.naturalWidth,
         height: rect.height || image.naturalHeight,
       });
     }
-    for (const video of container.querySelectorAll("video[poster]")) {
+    for (const video of container.querySelectorAll("video")) {
+      if (excludeRoot?.contains?.(video)) continue;
       const rect = video.getBoundingClientRect();
       const playbackUrl = [
         video.currentSrc,
         video.src,
         ...[...video.querySelectorAll("source[src]")].map((sourceElement) => sourceElement.src),
       ].find((value) => /^https:\/\/video\.twimg\.com\//i.test(value ?? ""));
+      const posterUrl = [
+        video.poster,
+        video.getAttribute("poster"),
+        renderedBackgroundUrl(video),
+      ].map(normalizeHttpUrl).find(Boolean) ?? null;
       candidates.push({
         kind: "video",
-        url: video.poster,
-        posterUrl: video.poster,
+        url: posterUrl,
+        posterUrl,
         playbackUrl,
         playbackMode: playbackUrl ? "inline" : "native",
         alt: video.getAttribute("aria-label") || "Video preview",
@@ -618,20 +742,38 @@
       });
     }
     if (source === "x") {
-      const backgroundElements = container.querySelectorAll([
-        '[data-testid="videoPlayer"][style*="background-image"]',
-        '[data-testid="videoPlayer"] [style*="background-image"]',
-        '[data-testid="videoComponent"][style*="background-image"]',
-        '[data-testid="videoComponent"] [style*="background-image"]',
-      ].join(","));
-      for (const element of backgroundElements) {
+      const photoBackgrounds = container.querySelectorAll(
+        '[data-testid="tweetPhoto"] [style*="background-image"]',
+      );
+      for (const element of photoBackgrounds) {
+        if (excludeRoot?.contains?.(element)) continue;
         const rect = element.getBoundingClientRect();
+        const url = capturePolicy.mediaUrlFromCssBackground(
+          element.style.backgroundImage || getComputedStyle(element).backgroundImage,
+        );
+        candidates.push({
+          kind: "image",
+          url,
+          alt: element.closest('[data-testid="tweetPhoto"]')?.getAttribute("aria-label") || "Image",
+          width: rect.width,
+          height: rect.height,
+        });
+      }
+      const videoRoots = container.querySelectorAll([
+        '[data-testid="videoPlayer"]',
+        '[data-testid="videoComponent"]',
+        '[aria-label*="Video" i]',
+      ].join(","));
+      for (const videoRoot of videoRoots) {
+        if (excludeRoot?.contains?.(videoRoot)) continue;
+        const rect = videoRoot.getBoundingClientRect();
+        const posterUrl = renderedBackgroundUrl(videoRoot);
         candidates.push({
           kind: "video",
-          url: capturePolicy.mediaUrlFromCssBackground(getComputedStyle(element).backgroundImage),
-          posterUrl: capturePolicy.mediaUrlFromCssBackground(getComputedStyle(element).backgroundImage),
+          url: posterUrl,
+          posterUrl,
           playbackMode: "native",
-          alt: element.getAttribute("aria-label") || "Video preview",
+          alt: videoRoot.getAttribute("aria-label") || "Video preview",
           width: rect.width,
           height: rect.height,
         });
@@ -885,6 +1027,75 @@
     if (!value) return null;
     const time = Date.parse(value);
     return Number.isFinite(time) ? new Date(time).toISOString() : null;
+  }
+
+  function structuredText(value) {
+    if (typeof value === "string") return normalizeStructuredWhitespace(value);
+    if (!value || typeof value !== "object") return "";
+    if (!value.childNodes || value.childNodes.length === 0) {
+      return normalizeStructuredWhitespace(value.innerText || value.textContent || "");
+    }
+    return normalizeStructuredWhitespace(readStructuredNode(value));
+  }
+
+  function readStructuredNode(node) {
+    if (!node) return "";
+    if (node.nodeType === 3) return node.nodeValue || "";
+    if (node.nodeType !== 1) return "";
+    const tag = String(node.tagName || "").toLowerCase();
+    if (tag === "img") return node.getAttribute?.("alt") || "";
+    if (tag === "br") return "\n";
+    const body = [...(node.childNodes || [])].map(readStructuredNode).join("");
+    return ["div", "p", "li", "section", "article"].includes(tag) ? `${body}\n` : body;
+  }
+
+  function normalizeStructuredWhitespace(value) {
+    return String(value || "")
+      .replace(/\r\n?/g, "\n")
+      .split("\n")
+      .map((line) => line.replace(/[\t\f\v\u00a0 ]+/g, " ").trim())
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  function readImageUrl(image) {
+    return readImageUrls(image).map(normalizeHttpUrl).find(Boolean) ?? null;
+  }
+
+  function readImageUrls(image) {
+    if (!image) return [];
+    const srcsets = [image.srcset, image.getAttribute?.("srcset")].filter(Boolean);
+    const srcsetUrls = srcsets.flatMap((srcset) => String(srcset).split(",")
+      .map((candidate) => candidate.trim().split(/\s+/)[0])
+      .filter(Boolean));
+    return [...new Set([
+      image.currentSrc,
+      image.src,
+      image.getAttribute?.("src"),
+      ...srcsetUrls,
+    ].filter(Boolean))];
+  }
+
+  function renderedBackgroundUrl(root) {
+    if (!root) return null;
+    for (const element of [root, ...root.querySelectorAll("*")]) {
+      const backgroundImage = element.style?.backgroundImage || getComputedStyle(element).backgroundImage;
+      const url = normalizeHttpUrl(capturePolicy.mediaUrlFromCssBackground(backgroundImage));
+      if (url) return url;
+    }
+    return null;
+  }
+
+  function findXQuotedPostContainer(container) {
+    const explicit = container.querySelector('[data-testid="quoteTweet"]');
+    if (explicit) return explicit;
+    const textRoots = [...container.querySelectorAll('[data-testid="tweetText"]')];
+    for (const textRoot of textRoots.slice(1)) {
+      const quoted = textRoot.closest?.('[role="link"]');
+      if (quoted && quoted !== container) return quoted;
+    }
+    return null;
   }
 
   function compactText(value) {

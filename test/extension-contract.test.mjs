@@ -15,7 +15,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version, packageJson.version);
-  assert.equal(manifest.version, "0.5.6");
+  assert.equal(manifest.version, "0.5.13");
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:47821/*",
@@ -70,15 +70,28 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v8/);
+  assert.match(contentScript, /source-fidelity-v15/);
+  assert.match(contentScript, /tweetPhoto.*background-image/);
+  assert.match(contentScript, /UserAvatar-Container-/);
+  assert.match(contentScript, /renderedBackgroundUrl\(avatarRoot\)/);
   assert.match(contentScript, /tweet-text-show-more-link/);
   assert.match(contentScript, /expanded_no_restore_control/);
   assert.match(contentScript, /expandable-text-button/);
   assert.match(contentScript, /contentExpansion/);
   assert.match(linkedInAdapter, /contentRootSelector/);
   assert.match(contentScript, /removeListener/);
-  assert.match(contentScript, /video\[poster\]/);
+  assert.match(contentScript, /querySelectorAll\("video"\)/);
+  assert.match(contentScript, /renderedBackgroundUrl/);
   assert.match(contentScript, /videoPlayer/);
+  assert.match(contentScript, /structuredText/);
+  assert.match(contentScript, /summarizeVisualHydration/);
+  assert.match(contentScript, /hydratedPrimaryAvatarCount/);
+  assert.match(contentScript, /div\[aria-label\*="Video" i\]/);
+  assert.match(contentScript, /excludeRoot/);
+  assert.match(contentScript, /findXQuotedPostContainer/);
+  assert.doesNotMatch(contentScript, /container\.querySelectorAll\("img"\).*profile_images/s);
+  assert.match(contentScript, /media\.some\(\(entry\) => entry\.kind === "video"\)/);
+  assert.match(xAdapter, /videoComponent.*img/);
   assert.match(contentScript, /mediaUrlFromCssBackground/);
   assert.match(linkedInAdapter, /\[data-view-name="feed-full-update"\]/);
   assert.match(linkedInAdapter, /\.feed-shared-update-v2/);
@@ -136,6 +149,14 @@ test("LinkedIn capture waits for feed readiness and permits only one evidence re
   assert.equal(worker.match(/sourceReadinessRetryCount: 1/g)?.length, 1);
 });
 
+test("background X capture activates temporarily and waits for visual hydration", () => {
+  const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
+  assert.match(worker, /source === "x" && backgroundAtDispatch/);
+  assert.match(worker, /requireVisualHydration: source === "x"/);
+  assert.match(worker, /readiness\.visualHydrationReady === true/);
+  assert.match(worker, /restoreTabFocus/);
+});
+
 test("initial stale-tab recovery is bounded and follow-up remains anchored", () => {
   const contentScript = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
   const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
@@ -153,10 +174,10 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
 
   assert.match(tabBridge, /AKU_BRIDGE_GET_CAPABILITIES/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
-  const capabilities = createBridgeCapabilities({ version: "0.5.6", manifest_version: 3 });
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v8");
-  assert.equal(capabilities.buildId, "aku-bridge-0.5.6-source-fidelity-v8");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v4", linkedin: "linkedin-dom-v6" });
+  const capabilities = createBridgeCapabilities({ version: "0.5.13", manifest_version: 3 });
+  assert.equal(capabilities.runtimeRevision, "source-fidelity-v15");
+  assert.equal(capabilities.buildId, "aku-bridge-0.5.13-source-fidelity-v15");
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v11", linkedin: "linkedin-dom-v6" });
   assert.match(tabBridge, /capability handshake returned no capabilities/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_ERROR/);
   assert.equal(capabilities.authority, "read_only_bounded");

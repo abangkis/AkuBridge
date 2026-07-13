@@ -1,11 +1,32 @@
 {
   "x": {
-    "version": "x-dom-v4",
+    "version": "x-dom-v11",
     "selector": "article[data-testid=\"tweet\"]",
     "strategy": "tweet_testid",
     "contentKind": "post",
     "relationshipType": "quote",
-    "avatarUrl": "https://pbs.twimg.com/profile_images/x-avatar.jpg"
+    "text": "Author quoted a technical update.\n\n1 First item\n2 Second item",
+    "avatarUrl": "https://pbs.twimg.com/profile_images/x-avatar.jpg",
+    "quotedPost": {
+      "author": "Ian Bremmer @ianbremmer · 18h",
+      "avatarUrl": "https://pbs.twimg.com/profile_images/ian-avatar.jpg",
+      "text": "A quoted post body preserved as nested source evidence.",
+      "permalink": null,
+      "publishedAt": "2026-07-13T00:00:00.000Z",
+      "links": [],
+      "media": [
+        {
+          "kind": "video",
+          "url": "https://pbs.twimg.com/amplify_video_thumb/fixture/img/poster.jpg",
+          "posterUrl": "https://pbs.twimg.com/amplify_video_thumb/fixture/img/poster.jpg",
+          "playbackUrl": null,
+          "playbackMode": "native",
+          "alt": "Embedded video",
+          "width": 640,
+          "height": 360
+        }
+      ]
+    }
   },
   "linkedin": {
     "version": "linkedin-dom-v6",

@@ -16,7 +16,7 @@ test("source adapters register independently behind one contract", () => {
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v4" },
+      { source: "x", version: "x-dom-v11" },
       { source: "linkedin", version: "linkedin-dom-v6" },
     ],
   );
