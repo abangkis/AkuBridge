@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v15";
+  const runtimeRevision = "source-fidelity-v16";
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
     chrome.runtime.onMessage.removeListener(globalThis.__akuBrowserSourceBridgeMessageHandler);
@@ -669,7 +669,8 @@
       const mediaRoot = container.querySelector(
         '[data-testid="tweetPhoto"], [data-testid="previewInterstitial"], '
           + '[data-testid="videoPlayer"], [data-testid="videoComponent"], '
-          + 'div[aria-label*="Video" i]',
+          + 'div[aria-label*="Video" i], a[aria-label][href] img[src*="/card_img/"], '
+          + 'a[aria-label][href] [style*="/card_img/"]',
       );
       if (mediaRoot) {
         mediaContainerCount += 1;
@@ -755,6 +756,23 @@
           kind: "image",
           url,
           alt: element.closest('[data-testid="tweetPhoto"]')?.getAttribute("aria-label") || "Image",
+          width: rect.width,
+          height: rect.height,
+        });
+      }
+      const linkCardBackgrounds = container.querySelectorAll(
+        'a[aria-label][href] [style*="/card_img/"]',
+      );
+      for (const element of linkCardBackgrounds) {
+        if (excludeRoot?.contains?.(element)) continue;
+        const rect = element.getBoundingClientRect();
+        const url = capturePolicy.mediaUrlFromCssBackground(
+          element.style.backgroundImage || getComputedStyle(element).backgroundImage,
+        );
+        candidates.push({
+          kind: "image",
+          url,
+          alt: element.closest('a[aria-label][href]')?.getAttribute("aria-label") || "Link preview",
           width: rect.width,
           height: rect.height,
         });

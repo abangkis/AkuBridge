@@ -4,7 +4,7 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v11",
+    version: "x-dom-v12",
     matchesPage: () => window.location.hostname === "x.com",
     loginRequired: () => false,
     feedRootPresent: () => Boolean(document.querySelector("main")),
@@ -101,6 +101,7 @@
       '[data-testid="previewInterstitial"] img[alt="Embedded video"]',
       '[data-testid="videoPlayer"] img',
       '[data-testid="videoComponent"] img',
+      'a[aria-label][href] img[src*="/card_img/"]',
     ].join(","),
     pendingContentPattern: /^(?:new posts?|show(?: \d+)? posts?)$/i,
   });

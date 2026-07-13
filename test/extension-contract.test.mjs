@@ -15,7 +15,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version, packageJson.version);
-  assert.equal(manifest.version, "0.5.13");
+  assert.equal(manifest.version, "0.5.14");
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:47821/*",
@@ -70,7 +70,9 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v15/);
+  assert.match(contentScript, /source-fidelity-v16/);
+  assert.match(xAdapter, /img\[src\*="\/card_img\/"\]/);
+  assert.match(contentScript, /style\*="\/card_img\/"/);
   assert.match(contentScript, /tweetPhoto.*background-image/);
   assert.match(contentScript, /UserAvatar-Container-/);
   assert.match(contentScript, /renderedBackgroundUrl\(avatarRoot\)/);
@@ -174,10 +176,10 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
 
   assert.match(tabBridge, /AKU_BRIDGE_GET_CAPABILITIES/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
-  const capabilities = createBridgeCapabilities({ version: "0.5.13", manifest_version: 3 });
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v15");
-  assert.equal(capabilities.buildId, "aku-bridge-0.5.13-source-fidelity-v15");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v11", linkedin: "linkedin-dom-v6" });
+  const capabilities = createBridgeCapabilities({ version: "0.5.14", manifest_version: 3 });
+  assert.equal(capabilities.runtimeRevision, "source-fidelity-v16");
+  assert.equal(capabilities.buildId, "aku-bridge-0.5.14-source-fidelity-v16");
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v12", linkedin: "linkedin-dom-v6" });
   assert.match(tabBridge, /capability handshake returned no capabilities/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_ERROR/);
   assert.equal(capabilities.authority, "read_only_bounded");

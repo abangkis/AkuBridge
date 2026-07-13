@@ -198,6 +198,23 @@ test("X photo backgrounds remain images when lazy img hydration is incomplete", 
   assert.equal(media[0].playbackMode, null);
 });
 
+test("X link-card previews remain bounded presentation images", () => {
+  const policy = loadPolicy();
+  const media = policy.normalizeMediaCandidates("x", [{
+    kind: "image",
+    url: policy.mediaUrlFromCssBackground(
+      'url("https://pbs.twimg.com/card_img/2075272070611533824/V_6gmE5E?format=jpg&name=small")',
+    ),
+    alt: "openai.com OpenAI Build Week",
+    width: 564,
+    height: 295,
+  }]);
+  assert.equal(media.length, 1);
+  assert.equal(media[0].kind, "image");
+  assert.match(media[0].url, /pbs\.twimg\.com\/card_img\//);
+  assert.equal(media[0].alt, "openai.com OpenAI Build Week");
+});
+
 test("X video playback remains inline only for an allowlisted stable CDN URL", () => {
   const policy = loadPolicy();
   const inline = policy.normalizeMediaCandidates("x", [{
