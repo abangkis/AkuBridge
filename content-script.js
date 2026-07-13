@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-presentation-v6";
+  const runtimeRevision = "source-fidelity-v7";
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
     chrome.runtime.onMessage.removeListener(globalThis.__akuBrowserSourceBridgeMessageHandler);
@@ -334,13 +334,21 @@
 
     const blocks = [];
     for (const container of containers) {
-      const block = extractBlock(
-        container,
-        source,
-        payload.maxBlockCharacters,
-        scrollContext,
-        recoveredPermalinks.get(container),
-      );
+      const expansion = await expandSourceContent(container, source);
+      let block;
+      try {
+        block = extractBlock(
+          container,
+          source,
+          payload.maxBlockCharacters,
+          scrollContext,
+          recoveredPermalinks.get(container),
+          expansion,
+        );
+      } finally {
+        await restoreSourceContent(expansion);
+        if (block?.presentation) block.presentation.contentExpansion = expansion?.state ?? "not_applicable";
+      }
       if (block.text.length < 40) continue;
       if (blocks.some((existing) => existing.text === block.text)) continue;
       block.feedPosition = selectorCandidates.indexOf(container) + 1;
@@ -361,17 +369,35 @@
     };
   }
 
-  function extractBlock(container, source, maxCharacters, scrollContext, recoveredPermalink = null) {
+  function extractBlock(
+    container,
+    source,
+    maxCharacters,
+    scrollContext,
+    recoveredPermalink = null,
+    contentExpansion = null,
+  ) {
     const adapter = sourceAdapters.get(source);
     const text = compactText(
       adapter.extractText?.(container, { compactText }) ?? container.innerText,
     ).slice(0, maxCharacters);
     const time = container.querySelector("time");
-    const permalink = findPermalink(container, source, time) ?? recoveredPermalink;
+    const directPermalink = findPermalinkDetails(container, source, time);
+    const permalink = directPermalink?.url ?? recoveredPermalink?.url ?? null;
     const semantics = adapter.extractSemantics(container, {
       compactText,
       normalizeHttpUrl,
     });
+    const presentation = adapter.extractPresentation?.(container, {
+      compactText,
+      normalizeHttpUrl,
+    }) ?? {};
+    presentation.permalinkSource = directPermalink?.source ?? recoveredPermalink?.source ?? "unavailable";
+    presentation.permalinkReason = permalink
+      ? ""
+      : recoveredPermalink?.reason ?? "No post permalink or recoverable LinkedIn target URN was exposed.";
+    presentation.contentExpansion = contentExpansion?.state ?? "not_applicable";
+    const contentRoot = findContentRoot(container, source);
     return {
       text,
       author: sourceAdapters.get(source).findAuthor(container, { compactText }),
@@ -383,13 +409,9 @@
       relationshipType: semantics.relationshipType ?? "original",
       parentPermalink: normalizeHttpUrl(semantics.parentPermalink),
       engagement: semantics.engagement ?? {},
-      presentation: adapter.extractPresentation?.(container, {
-        compactText,
-        normalizeHttpUrl,
-      }) ?? {},
+      presentation,
       media: findMedia(container, source),
-      links: [...container.querySelectorAll("a[href]")]
-        .filter((element) => isVisibleInViewport(element, scrollContext))
+      links: [...contentRoot.querySelectorAll("a[href]")]
         .map((anchor) => ({
           text: compactText(anchor.innerText).slice(0, 300),
           href: normalizeHttpUrl(anchor.href),
@@ -403,24 +425,111 @@
   async function recoverLinkedInPermalinks(containers) {
     const recovered = new WeakMap();
     for (const container of containers) {
-      if (findPermalink(container, "linkedin", container.querySelector("time"))) continue;
+      if (findPermalinkDetails(container, "linkedin", container.querySelector("time"))) continue;
       const menuButton = container.querySelector(
         'button[aria-label^="Open control menu for post by"]',
       );
-      if (!menuButton) continue;
-      menuButton.click();
-      await delay(60);
-      const embedLink = [...document.querySelectorAll(
-        'a[href*="/preload/embed-modal/"][href*="targetUrn="]',
-      )].find((link) => isVisibleInViewport(link));
-      const canonical = globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEmbedHref(
-        embedLink?.href,
-      );
-      if (canonical) recovered.set(container, canonical);
-      menuButton.click();
-      await delay(20);
+      if (!menuButton) {
+        recovered.set(container, { url: null, source: "unavailable", reason: "Post control menu was not exposed." });
+        continue;
+      }
+      const previouslyVisible = new Set(visibleLinkedInEmbedLinks().map((link) => link.href));
+      let opened = false;
+      try {
+        menuButton.click();
+        opened = true;
+        const embedLink = await waitForValue(
+          () => visibleLinkedInEmbedLinks().find((link) => !previouslyVisible.has(link.href))
+            ?? visibleLinkedInEmbedLinks()[0]
+            ?? null,
+          12,
+          40,
+        );
+        const canonical = globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEmbedHref(
+          embedLink?.href,
+        );
+        recovered.set(container, canonical
+          ? { url: canonical, source: "embed_urn", reason: "" }
+          : { url: null, source: "unavailable", reason: "Embed target URN was not exposed after opening the post menu." });
+      } finally {
+        if (opened) {
+          menuButton.click();
+          await waitForValue(
+            () => visibleLinkedInEmbedLinks().length === 0 ? true : null,
+            6,
+            30,
+          );
+        }
+      }
     }
     return recovered;
+  }
+
+  function visibleLinkedInEmbedLinks() {
+    return [...document.querySelectorAll(
+      'a[href*="/preload/embed-modal/"][href*="targetUrn="]',
+    )].filter((link) => isVisibleInViewport(link));
+  }
+
+  async function expandSourceContent(container, source) {
+    if (source !== "linkedin") return { state: "not_applicable" };
+    const contentRoot = findContentRoot(container, source);
+    const button = contentRoot.querySelector('[data-testid="expandable-text-button"]')
+      ?? container.querySelector('[data-testid="expandable-text-button"]');
+    const label = compactText(button?.innerText || button?.textContent);
+    if (!button || !isExpansionControlLabel(label, "more")) {
+      return { state: "already_complete" };
+    }
+    const before = cleanExpandedText(contentRoot.innerText);
+    button.click();
+    const expanded = await waitForValue(() => {
+      const current = cleanExpandedText(contentRoot.innerText);
+      const currentLabel = compactText(button.innerText || button.textContent);
+      return current.length > before.length || isExpansionControlLabel(currentLabel, "less")
+        ? current
+        : null;
+    }, 10, 40);
+    return {
+      state: expanded ? "expanded" : "expand_failed",
+      button,
+      contentRoot,
+      before,
+      expanded: Boolean(expanded),
+    };
+  }
+
+  async function restoreSourceContent(expansion) {
+    if (!expansion?.expanded || !expansion.button) return;
+    const label = compactText(expansion.button.innerText || expansion.button.textContent);
+    if (isExpansionControlLabel(label, "less")) {
+      expansion.button.click();
+      const restored = await waitForValue(
+        () => cleanExpandedText(expansion.contentRoot.innerText).length <= expansion.before.length
+          ? true
+          : null,
+        8,
+        30,
+      );
+      expansion.state = restored ? "expanded_restored" : "expanded_restore_failed";
+    } else {
+      expansion.state = "expanded_no_restore_control";
+    }
+  }
+
+  function isExpansionControlLabel(value, direction) {
+    const text = compactText(value).replace(/^…\s*/, "");
+    return direction === "more"
+      ? /^(?:more|show more|see more)$/i.test(text)
+      : /^(?:less|show less|see less)$/i.test(text);
+  }
+
+  function cleanExpandedText(value) {
+    return compactText(value).replace(/(?:\s+|^)(?:…\s*)?(?:show |see )?(?:more|less)$/i, "").trim();
+  }
+
+  function findContentRoot(container, source) {
+    const selector = sourceAdapters.get(source).contentRootSelector;
+    return selector ? container.querySelector(selector) ?? container : container;
   }
 
 
@@ -455,9 +564,15 @@
       const rect = image.getBoundingClientRect();
       candidates.push({
         kind: source === "x" && image.closest('[data-testid="previewInterstitial"]')
-          ? "video_poster"
+          ? "video"
+          : source === "x" && /embedded video/i.test(image.alt || "")
+            ? "video"
           : "image",
         url: image.currentSrc || image.src,
+        posterUrl: image.currentSrc || image.src,
+        playbackMode: source === "x" && (
+          image.closest('[data-testid="previewInterstitial"]') || /embedded video/i.test(image.alt || "")
+        ) ? "native" : undefined,
         alt: image.alt || "",
         width: rect.width || image.naturalWidth,
         height: rect.height || image.naturalHeight,
@@ -465,9 +580,17 @@
     }
     for (const video of container.querySelectorAll("video[poster]")) {
       const rect = video.getBoundingClientRect();
+      const playbackUrl = [
+        video.currentSrc,
+        video.src,
+        ...[...video.querySelectorAll("source[src]")].map((sourceElement) => sourceElement.src),
+      ].find((value) => /^https:\/\/video\.twimg\.com\//i.test(value ?? ""));
       candidates.push({
-        kind: "video_poster",
+        kind: "video",
         url: video.poster,
+        posterUrl: video.poster,
+        playbackUrl,
+        playbackMode: playbackUrl ? "inline" : "native",
         alt: video.getAttribute("aria-label") || "Video preview",
         width: rect.width || video.videoWidth,
         height: rect.height || video.videoHeight,
@@ -483,8 +606,10 @@
       for (const element of backgroundElements) {
         const rect = element.getBoundingClientRect();
         candidates.push({
-          kind: "video_poster",
+          kind: "video",
           url: capturePolicy.mediaUrlFromCssBackground(getComputedStyle(element).backgroundImage),
+          posterUrl: capturePolicy.mediaUrlFromCssBackground(getComputedStyle(element).backgroundImage),
+          playbackMode: "native",
           alt: element.getAttribute("aria-label") || "Video preview",
           width: rect.width,
           height: rect.height,
@@ -495,8 +620,12 @@
   }
 
   function findPermalink(container, source, time) {
+    return findPermalinkDetails(container, source, time)?.url ?? null;
+  }
+
+  function findPermalinkDetails(container, source, time) {
     const timedLink = time?.closest("a[href]")?.href;
-    if (normalizeHttpUrl(timedLink)) return normalizeHttpUrl(timedLink);
+    if (normalizeHttpUrl(timedLink)) return { url: normalizeHttpUrl(timedLink), source: "time_anchor" };
     const anchors = [...container.querySelectorAll("a[href]")];
     const match = anchors.find((anchor) =>
       source === "x"
@@ -504,7 +633,9 @@
         : /\/feed\/update\//.test(anchor.pathname) || /activity-\d+/.test(anchor.href),
     );
     const linkedUrl = normalizeHttpUrl(match?.href);
-    if (linkedUrl || source !== "linkedin") return linkedUrl;
+    if (linkedUrl || source !== "linkedin") {
+      return linkedUrl ? { url: linkedUrl, source: "direct_anchor" } : null;
+    }
     const activityId = [
       container.getAttribute("data-urn"),
       container.getAttribute("data-id"),
@@ -513,7 +644,7 @@
         .flatMap((element) => [element.getAttribute("data-urn"), element.getAttribute("data-id")]),
     ].filter(Boolean).map((value) => String(value).match(/activity(?::|-)(\d+)/i)?.[1]).find(Boolean);
     return activityId
-      ? `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/`
+      ? { url: `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/`, source: "dom_urn" }
       : null;
   }
 
@@ -745,5 +876,14 @@
 
   function delay(milliseconds) {
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  }
+
+  async function waitForValue(read, attempts, intervalMs) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const value = read();
+      if (value) return value;
+      await delay(intervalMs);
+    }
+    return null;
   }
 })();

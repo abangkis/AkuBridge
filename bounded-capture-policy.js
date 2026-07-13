@@ -118,15 +118,24 @@
     const media = [];
     for (const value of Array.isArray(values) ? values : []) {
       if (!value || typeof value !== "object") continue;
-      const url = safeMediaUrl(source, value.url);
+      const kind = value.kind === "video" || value.kind === "video_poster" ? "video" : "image";
+      const url = safeMediaUrl(source, value.posterUrl || value.url);
       if (!url || seen.has(url)) continue;
+      const playbackUrl = kind === "video" ? safeMediaUrl(source, value.playbackUrl) : null;
       const width = clampInteger(Math.round(value.width), 0, 8_192, 0);
       const height = clampInteger(Math.round(value.height), 0, 8_192, 0);
       if (width < 180 || height < 90) continue;
       seen.add(url);
       media.push(Object.freeze({
-        kind: value.kind === "video_poster" ? "video_poster" : "image",
+        kind,
         url,
+        posterUrl: kind === "video" ? url : null,
+        playbackUrl,
+        playbackMode: kind === "video" && playbackUrl && value.playbackMode !== "native"
+          ? "inline"
+          : kind === "video"
+            ? "native"
+            : null,
         alt: typeof value.alt === "string" ? value.alt.trim().slice(0, 300) : "",
         width,
         height,

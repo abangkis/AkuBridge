@@ -156,7 +156,9 @@ test("captured media is bounded to rendered source CDN images", () => {
     { url: "https://media.licdn.com/dms/image/example", kind: "video_poster", width: 800, height: 450 },
   ]);
   assert.equal(linkedInMedia.length, 1);
-  assert.equal(linkedInMedia[0].kind, "video_poster");
+  assert.equal(linkedInMedia[0].kind, "video");
+  assert.equal(linkedInMedia[0].posterUrl, "https://media.licdn.com/dms/image/example");
+  assert.equal(linkedInMedia[0].playbackMode, "native");
   assert.equal(Object.isFrozen(linkedInMedia), true);
 });
 
@@ -169,14 +171,40 @@ test("X video thumbnails can be extracted from a bounded CSS background", () => 
   assert.equal(policy.mediaUrlFromCssBackground("none"), null);
   assert.equal(policy.mediaUrlFromCssBackground('linear-gradient(red, blue)'), null);
   const media = policy.normalizeMediaCandidates("x", [{
-    kind: "video_poster",
+    kind: "video",
     url: policy.mediaUrlFromCssBackground(
       'url("https://pbs.twimg.com/ext_tw_video_thumb/example/pu/img/frame.jpg")',
     ),
     width: 640,
     height: 360,
   }]);
-  assert.equal(media[0].kind, "video_poster");
+  assert.equal(media[0].kind, "video");
+  assert.equal(media[0].playbackMode, "native");
+});
+
+test("X video playback remains inline only for an allowlisted stable CDN URL", () => {
+  const policy = loadPolicy();
+  const inline = policy.normalizeMediaCandidates("x", [{
+    kind: "video",
+    posterUrl: "https://pbs.twimg.com/amplify_video_thumb/example/img/frame.jpg",
+    playbackUrl: "https://video.twimg.com/amplify_video/example/vid/avc1/1280x720/clip.mp4",
+    playbackMode: "inline",
+    width: 640,
+    height: 360,
+  }]);
+  assert.equal(inline[0].playbackMode, "inline");
+  assert.match(inline[0].playbackUrl, /^https:\/\/video\.twimg\.com\//);
+
+  const native = policy.normalizeMediaCandidates("x", [{
+    kind: "video",
+    posterUrl: "https://pbs.twimg.com/amplify_video_thumb/example/img/frame.jpg",
+    playbackUrl: "blob:https://x.com/fixture",
+    playbackMode: "inline",
+    width: 640,
+    height: 360,
+  }]);
+  assert.equal(native[0].playbackUrl, null);
+  assert.equal(native[0].playbackMode, "native");
 });
 
 test("the policy is loaded before the source content script", () => {

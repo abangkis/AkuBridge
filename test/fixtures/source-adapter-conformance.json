@@ -1,6 +1,6 @@
 {
   "x": {
-    "version": "x-dom-v2",
+    "version": "x-dom-v3",
     "selector": "article[data-testid=\"tweet\"]",
     "strategy": "tweet_testid",
     "contentKind": "post",
@@ -8,7 +8,7 @@
     "avatarUrl": "https://pbs.twimg.com/profile_images/x-avatar.jpg"
   },
   "linkedin": {
-    "version": "linkedin-dom-v5",
+    "version": "linkedin-dom-v6",
     "selector": "[data-view-name=\"feed-full-update\"]",
     "strategy": "[data-view-name=\"feed-full-update\"]",
     "contentKind": "document",

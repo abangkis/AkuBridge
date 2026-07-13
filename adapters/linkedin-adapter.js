@@ -14,7 +14,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v5",
+    version: "linkedin-dom-v6",
     matchesPage: () => window.location.hostname === "www.linkedin.com",
     loginRequired: () => (
       /\/login|\/uas\/login/i.test(window.location.pathname) ||
@@ -81,9 +81,11 @@
       }
       return "";
     },
+    contentRootSelector: '[data-testid="expandable-text-box"]',
     extractText: (container, { compactText }) =>
-      compactText(container.querySelector('[data-testid="expandable-text-box"]')?.innerText) ||
-      compactText(container.innerText),
+      stripExpansionControl(
+        compactText(container.querySelector('[data-testid="expandable-text-box"]')?.innerText),
+      ) || compactText(container.innerText),
     extractPresentation: (container, { compactText, normalizeHttpUrl }) => {
       const author = postAuthor(container, compactText);
       const lines = String(container.innerText ?? "")
@@ -215,5 +217,11 @@
       if (match) result[match[2].toLowerCase().replace(/s$/, "").replace("reaction", "like")] = match[1];
     }
     return result;
+  }
+
+  function stripExpansionControl(value) {
+    return String(value ?? "")
+      .replace(/(?:\s+|^)(?:…\s*)?(?:show |see )?(?:more|less)$/i, "")
+      .trim();
   }
 })();
