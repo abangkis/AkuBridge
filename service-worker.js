@@ -18,6 +18,7 @@ import {
 } from "./bridge-capabilities.js";
 
 const AKU_BROWSER_ORIGIN = "http://127.0.0.1:47821";
+const X_BACKGROUND_PROBE_TIMEOUT_MS = 1_000;
 const commandGuard = createCommandGuard();
 const SOURCE_SCRIPT_FILES = [
   "bounded-capture-policy.js",
@@ -270,21 +271,37 @@ async function prepareSourceTab(tab, source, opened) {
     }
     return false;
   };
-  if (source === "x" && backgroundAtDispatch) await activate();
-  let readiness = await waitForSourceReady(
-    tab.id,
-    source,
-    source === "linkedin" ? 3_000 : 12_000,
-    { requireVisualHydration: source === "x" },
-  );
+  let readiness;
+  if (source === "x" && backgroundAtDispatch) {
+    readiness = await waitForSourceReady(
+      tab.id,
+      source,
+      X_BACKGROUND_PROBE_TIMEOUT_MS,
+      { requireVisualHydration: true },
+    );
+    if (!isSourceCaptureReady(readiness, source) && !isTerminalReadiness(readiness)) {
+      await activate();
+      readiness = await waitForSourceReady(
+        tab.id,
+        source,
+        12_000,
+        { requireVisualHydration: true },
+      );
+    }
+  } else {
+    readiness = await waitForSourceReady(
+      tab.id,
+      source,
+      source === "linkedin" ? 3_000 : 12_000,
+      { requireVisualHydration: source === "x" },
+    );
+  }
   if (source === "linkedin" && readiness.state !== "feed_ready") {
     await activate();
     readiness = await waitForSourceReady(tab.id, source, 15_000);
   }
   readiness.waitMs = Date.now() - startedAt;
-  const captureReady = readiness.state === "feed_ready" && (
-    source !== "x" || readiness.visualHydrationReady === true
-  );
+  const captureReady = isSourceCaptureReady(readiness, source);
   if (!captureReady) {
     await restoreTabFocus(previousActiveTabId, tab.id);
     throw new Error(
@@ -312,6 +329,16 @@ async function prepareSourceTab(tab, source, opened) {
     activateForRetry: activate,
     restoreFocus: () => restoreTabFocus(previousActiveTabId, tab.id),
   };
+}
+
+function isSourceCaptureReady(readiness, source) {
+  return readiness.state === "feed_ready" && (
+    source !== "x" || readiness.visualHydrationReady === true
+  );
+}
+
+function isTerminalReadiness(readiness) {
+  return ["login_required", "wrong_page"].includes(readiness.state);
 }
 
 async function assertTabLease(lease, stage) {
