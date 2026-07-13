@@ -19,6 +19,8 @@ import {
 
 const AKU_BROWSER_ORIGIN = "http://127.0.0.1:47821";
 const X_BACKGROUND_PROBE_TIMEOUT_MS = 1_000;
+const PENDING_SELF_RELOAD_KEY = "akuBridgePendingSelfReload";
+const PENDING_SELF_RELOAD_MAX_AGE_MS = 30_000;
 const commandGuard = createCommandGuard();
 const SOURCE_SCRIPT_FILES = [
   "bounded-capture-policy.js",
@@ -28,6 +30,10 @@ const SOURCE_SCRIPT_FILES = [
   "adapters/linkedin-adapter.js",
   "content-script.js",
 ];
+
+void resumePendingSelfReload().catch((error) => {
+  console.error("AkuBridge could not resume the pending AkuBrowser tab reload.", error);
+});
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: `${AKU_BROWSER_ORIGIN}/`, active: true });
@@ -70,24 +76,46 @@ async function acceptReloadSelf(message, akuBrowserTabId) {
   if (typeof message.actionId !== "string" || !message.actionId) {
     throw new Error("reload_self requires an action ID.");
   }
-  const response = await fetch(
-    `${message.endpoint}/api/operations/bridge/actions/${encodeURIComponent(message.actionId)}/accept`,
-    {
-      method: "POST",
-      headers: bridgeHeaders(message.token),
-    },
-  );
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.message || `reload_self acceptance failed with ${response.status}.`);
-  }
   if (!Number.isInteger(akuBrowserTabId)) {
     throw new Error("reload_self requires the originating AkuBrowser tab ID.");
   }
-  // Initiate navigation through Chrome rather than a page timer. Background
-  // timer throttling cannot delay this local-tab refresh, and the navigation
-  // continues while the extension runtime reloads immediately afterward.
-  await chrome.tabs.reload(akuBrowserTabId);
+  await chrome.storage.local.set({
+    [PENDING_SELF_RELOAD_KEY]: {
+      tabId: akuBrowserTabId,
+      requestedAt: Date.now(),
+    },
+  });
+  try {
+    const response = await fetch(
+      `${message.endpoint}/api/operations/bridge/actions/${encodeURIComponent(message.actionId)}/accept`,
+      {
+        method: "POST",
+        headers: bridgeHeaders(message.token),
+      },
+    );
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.message || `reload_self acceptance failed with ${response.status}.`);
+    }
+  } catch (error) {
+    await chrome.storage.local.remove(PENDING_SELF_RELOAD_KEY);
+    throw error;
+  }
+}
+
+async function resumePendingSelfReload() {
+  const stored = await chrome.storage.local.get(PENDING_SELF_RELOAD_KEY);
+  const pending = stored[PENDING_SELF_RELOAD_KEY];
+  if (!pending) return;
+  await chrome.storage.local.remove(PENDING_SELF_RELOAD_KEY);
+  if (
+    !Number.isInteger(pending.tabId) ||
+    !Number.isFinite(pending.requestedAt) ||
+    Date.now() - pending.requestedAt > PENDING_SELF_RELOAD_MAX_AGE_MS
+  ) return;
+  // The new extension runtime owns this navigation, so the injected content
+  // script remains valid and can publish the post-reload heartbeat.
+  await chrome.tabs.reload(pending.tabId);
 }
 
 async function dispatchRun(message) {

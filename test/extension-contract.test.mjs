@@ -15,8 +15,8 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version, packageJson.version);
-  assert.equal(manifest.version, "0.5.17");
-  assert.deepEqual(manifest.permissions.sort(), ["scripting", "tabs"]);
+  assert.equal(manifest.version, "0.5.18");
+  assert.deepEqual(manifest.permissions.sort(), ["scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:47821/*",
     "https://www.linkedin.com/*",
@@ -70,7 +70,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v19/);
+  assert.match(contentScript, /source-fidelity-v20/);
   assert.match(xAdapter, /img\[src\*="\/card_img\/"\]/);
   assert.match(contentScript, /style\*="\/card_img\/"/);
   assert.match(contentScript, /tweetPhoto.*background-image/);
@@ -183,13 +183,15 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /AKU_BRIDGE_GET_CAPABILITIES/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
-  const capabilities = createBridgeCapabilities({ version: "0.5.17", manifest_version: 3 });
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v19");
-  assert.equal(capabilities.buildId, "aku-bridge-0.5.17-source-fidelity-v19");
+  const capabilities = createBridgeCapabilities({ version: "0.5.18", manifest_version: 3 });
+  assert.equal(capabilities.runtimeRevision, "source-fidelity-v20");
+  assert.equal(capabilities.buildId, "aku-bridge-0.5.18-source-fidelity-v20");
   assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v12", linkedin: "linkedin-dom-v6" });
   assert.ok(capabilities.actions.includes("reload_self"));
   assert.match(tabBridge, /capability handshake returned no capabilities/);
-  assert.match(worker, /chrome\.tabs\.reload\(akuBrowserTabId\)/);
+  assert.match(worker, /chrome\.storage\.local\.set/);
+  assert.match(worker, /resumePendingSelfReload/);
+  assert.match(worker, /chrome\.tabs\.reload\(pending\.tabId\)/);
   assert.doesNotMatch(tabBridge, /setTimeout[\s\S]*location\.reload/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_ERROR/);
   assert.equal(capabilities.authority, "read_only_bounded");

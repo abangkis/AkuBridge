@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "AkuBridge",
-  "version": "0.5.17",
+  "version": "0.5.18",
   "description": "Read-only, bounded browser observation bridge for AkuBrowser.",
   "permissions": [
     "tabs",
-    "scripting"
+    "scripting",
+    "storage"
   ],
   "host_permissions": [
     "http://127.0.0.1:47821/*",
