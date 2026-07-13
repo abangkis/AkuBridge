@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v20";
+  const runtimeRevision = "source-fidelity-v21";
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
     chrome.runtime.onMessage.removeListener(globalThis.__akuBrowserSourceBridgeMessageHandler);
@@ -1129,11 +1129,14 @@
   }
 
   async function waitForValue(read, attempts, intervalMs) {
+    const deadlineAtMs = Date.now() + attempts * intervalMs;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const value = read();
       if (value) return value;
-      await delay(intervalMs);
+      const remainingMs = deadlineAtMs - Date.now();
+      if (remainingMs <= 0) return null;
+      await delay(Math.min(intervalMs, remainingMs));
     }
-    return null;
+    return read() || null;
   }
 })();

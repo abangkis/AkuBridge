@@ -1,7 +1,7 @@
 {
   "name": "@aku-browser/bridge",
-  "version": "0.5.18",
-  "akuRuntimeRevision": "source-fidelity-v20",
+  "version": "0.5.19",
+  "akuRuntimeRevision": "source-fidelity-v21",
   "private": true,
   "type": "module",
   "description": "AkuBridge read-only Chrome extension for AkuBrowser",
