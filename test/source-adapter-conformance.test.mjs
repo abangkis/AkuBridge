@@ -48,24 +48,43 @@ for (const source of ["x", "linkedin"]) {
       assert.deepEqual(JSON.parse(JSON.stringify(quotedPost)), fixture.quotedPost);
     }
     if (source === "linkedin") {
+      assert.equal(
+        adapter.extractText(candidate, {
+          compactText,
+          structuredText: (value) => value?.innerText ?? "",
+        }),
+        "A complete LinkedIn post body.\n\nSecond paragraph.",
+      );
       const presentation = adapter.extractPresentation(candidate, { compactText, normalizeHttpUrl });
       assert.equal(presentation.socialContext, "Reza Lesmana likes this");
       assert.equal(presentation.headline, "Cybersecurity Leader | Executive");
       assert.equal(presentation.attributionText, "with Cassie Dell - Promoted - Partnership with LinkedIn");
       assert.equal(presentation.connectionDegree, "2nd");
-      assert.equal(presentation.timestampText, "12h · Edited ·");
+      assert.equal(presentation.timestampText, "12h · Edited");
       assert.equal(presentation.edited, true);
       assert.equal(presentation.promoted, true);
+      assert.deepEqual(JSON.parse(JSON.stringify(presentation.attachment)), {
+        kind: "job",
+        title: "Management Intern",
+        subtitle: "Kargo Technologies",
+        detail: "Singapore (On-site)",
+        actionLabel: "View job",
+        footnote: "10 school alumni work here",
+        url: "https://www.linkedin.com/jobs/view/4439405587/",
+        imageUrl: "https://media.licdn.com/dms/image/job-logo",
+        verified: true,
+      });
+      assert.deepEqual(JSON.parse(JSON.stringify(semantics.engagement)), { like: "53", repost: "1" });
       const collaborativeAvatar = syntheticImage(
         "https://media.licdn.com/dms/image/linkedin-collaborative-avatar",
         "",
-        32,
+        48,
       );
       const collaborativeCandidate = {
         ...candidate,
         querySelectorAll(selector) {
           if (selector === 'button[aria-label]') return [];
-          if (selector === 'a[href] img') return [socialAvatarForTest(), collaborativeAvatar];
+          if (selector === 'a[href*="/in/"] img') return [socialAvatarForTest(), collaborativeAvatar];
           return [];
         },
       };
@@ -95,6 +114,15 @@ function syntheticCandidate(source) {
     : syntheticImage("https://media.licdn.com/dms/image/linkedin-avatar", "View Dr. Semi Yulianto’s profile", 48);
   const socialAvatar = syntheticImage("https://media.licdn.com/dms/image/context-avatar", "", 24);
   const menuButton = { getAttribute: (name) => name === "aria-label" ? "Open control menu for post by Dr. Semi Yulianto" : null };
+  const reactionButton = syntheticActionButton("Reaction button state: no reaction", "53");
+  const repostButton = syntheticActionButton("Repost", "1");
+  const linkedinText = { innerText: "A complete LinkedIn post body.\n\nSecond paragraph." };
+  const jobLogo = syntheticImage("https://media.licdn.com/dms/image/job-logo", "", 48);
+  const linkedinAttachment = {
+    href: "https://www.linkedin.com/jobs/view/4439405587/",
+    innerText: "Management Intern (Verified job)\nManagement Intern\nKargo Technologies\nSingapore (On-site)\nView job\n10 school alumni work here",
+    querySelectorAll: (selector) => selector === "img" ? [jobLogo] : [],
+  };
   const quotedAvatar = syntheticImage("https://pbs.twimg.com/profile_images/ian-avatar.jpg", "", 32);
   const quotedTime = {
     getAttribute: (name) => name === "datetime" ? "2026-07-13T00:00:00.000Z" : null,
@@ -132,15 +160,28 @@ function syntheticCandidate(source) {
       if (source === "x" && selector.includes("quoteTweet")) return null;
       if (source === "x" && selector.includes("UserAvatar-Container")) return mainAvatar;
       if (source === "linkedin" && selector.includes("document")) return {};
+      if (source === "linkedin" && selector === '[data-testid="expandable-text-box"]') return linkedinText;
+      if (source === "linkedin" && selector === 'a[href*="/jobs/view/"]') return linkedinAttachment;
       return null;
     },
     querySelectorAll(selector) {
       if (source === "x" && selector === '[data-testid="tweetText"]') return [mainText, quotedText];
       if (source === "x" && selector === 'a[href*="/status/"]') return [];
-      if (source === "linkedin" && selector === "button[aria-label]") return [menuButton];
+      if (source === "linkedin" && selector === "button[aria-label]") return [menuButton, reactionButton, repostButton];
+      if (source === "linkedin" && selector === 'button,[role="button"]') return [menuButton, reactionButton, repostButton];
       if (source === "linkedin" && selector === 'a[href] img') return [socialAvatar, mainAvatar];
       if (source === "linkedin" && selector === 'a[href*="/in/"] img') return [socialAvatar, mainAvatar];
       return [];
+    },
+  };
+}
+
+function syntheticActionButton(ariaLabel, innerText) {
+  return {
+    innerText,
+    getAttribute(name) {
+      if (name === "aria-label") return ariaLabel;
+      return null;
     },
   };
 }

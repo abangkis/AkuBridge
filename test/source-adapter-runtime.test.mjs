@@ -17,7 +17,7 @@ test("source adapters register independently behind one contract", () => {
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
       { source: "x", version: "x-dom-v12" },
-      { source: "linkedin", version: "linkedin-dom-v6" },
+      { source: "linkedin", version: "linkedin-dom-v7" },
     ],
   );
   assert.equal(context.AkuSourceAdapters.get("x").matchesPage(), true);

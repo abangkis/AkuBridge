@@ -14,7 +14,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v6",
+    version: "linkedin-dom-v7",
     matchesPage: () => window.location.hostname === "www.linkedin.com",
     loginRequired: () => (
       /\/login|\/uas\/login/i.test(window.location.pathname) ||
@@ -82,10 +82,12 @@
       return "";
     },
     contentRootSelector: '[data-testid="expandable-text-box"]',
-    extractText: (container, { compactText }) =>
-      stripExpansionControl(
-        compactText(container.querySelector('[data-testid="expandable-text-box"]')?.innerText),
-      ) || compactText(container.innerText),
+    extractText: (container, { compactText, structuredText }) => {
+      const read = typeof structuredText === "function" ? structuredText : compactText;
+      return stripExpansionControl(
+        read(container.querySelector('[data-testid="expandable-text-box"]')),
+      ) || read(container);
+    },
     extractPresentation: (container, { compactText, normalizeHttpUrl }) => {
       const author = postAuthor(container, compactText);
       const lines = String(container.innerText ?? "")
@@ -99,20 +101,21 @@
         /\b(?:likes?|reposted|commented on|celebrates?|supports?) this\b/i.test(line),
       ) ?? "";
       const connectionIndex = afterAuthor.findIndex((line) =>
-        /^(?:•\s*)?(?:1st|2nd|3rd\+?)$/i.test(line),
+        /^(?:[\u2022\u00b7]\s*)?(?:1st|2nd|3rd\+?)$/i.test(line),
       );
       const connectionDegree = connectionIndex >= 0
-        ? afterAuthor[connectionIndex].replace(/^•\s*/, "")
+        ? afterAuthor[connectionIndex].replace(/^[\u2022\u00b7]\s*/, "")
         : "";
-      const timestampText = afterAuthor.find((line) =>
+      const timestampLine = afterAuthor.find((line) =>
         /^\d+\s*(?:m|h|d|w|mo|yr)s?\b/i.test(line),
       ) ?? "";
-      const timestampIndex = timestampText ? afterAuthor.indexOf(timestampText) : -1;
+      const timestampText = timestampLine.replace(/\s*[\u2022\u00b7]\s*$/, "");
+      const timestampIndex = timestampLine ? afterAuthor.indexOf(timestampLine) : -1;
       const headline = afterAuthor
         .slice(connectionIndex >= 0 ? connectionIndex + 1 : 0, timestampIndex >= 0 ? timestampIndex : undefined)
         .find((line) => !/^(?:Follow|Connect|\d+ followers?)$/i.test(line)) ?? "";
       const attributionText = afterAuthor.find((line) =>
-        /\b(?:Promoted|Partnership with)\b/i.test(line) || /^with\s+.+?\s*[â€¢·]/i.test(line),
+        /\b(?:Promoted|Partnership with)\b/i.test(line) || /^with\s+.+?\s*[\u2022\u00b7]/i.test(line),
       ) ?? "";
       const socialAvatar = socialContext
         ? [...container.querySelectorAll('a[href*="/in/"] img')]
@@ -130,20 +133,21 @@
         timestampText,
         edited: /\bEdited\b/i.test(timestampText),
         promoted: lines.some((line) => /\bPromoted\b/i.test(line)),
+        attachment: extractLinkedInAttachment(container, { compactText, normalizeHttpUrl }),
       };
     },
     findAvatar: (container, { compactText, normalizeHttpUrl }) => {
       const author = postAuthor(container, compactText);
-      const image = [...container.querySelectorAll('a[href] img')].find((candidate) => {
+      const image = [...container.querySelectorAll('a[href*="/in/"] img')].find((candidate) => {
         const alt = compactText(candidate.alt);
         const rect = candidate.getBoundingClientRect();
         return rect.width >= 40 && rect.height >= 40 && (
-          /^View company:/i.test(alt) ||
-          (/^View .+profile/i.test(alt) && (!author || alt.includes(author.replace(/\s+[\p{Regional_Indicator}\s]+$/u, ""))))
+          /^View .+profile/i.test(alt) &&
+          (!author || alt.includes(author.replace(/\s+[\p{Regional_Indicator}\s]+$/u, "")))
         );
-      }) ?? [...container.querySelectorAll('a[href] img')].find((candidate) => {
+      }) ?? [...container.querySelectorAll('a[href*="/in/"] img')].find((candidate) => {
         const rect = candidate.getBoundingClientRect();
-        return rect.width >= 32 && rect.width <= 80 && rect.height >= 32 && rect.height <= 80;
+        return rect.width >= 40 && rect.width <= 80 && rect.height >= 40 && rect.height <= 80;
       });
       return normalizeHttpUrl(image?.currentSrc || image?.src);
     },
@@ -213,10 +217,58 @@
     const result = {};
     for (const element of container.querySelectorAll('button,[role="button"]')) {
       const label = compactText(element.getAttribute("aria-label") || element.innerText);
+      const visibleCount = compactText(element.innerText).match(/[\d,.]+(?:[KMB])?/i)?.[0] ?? "";
+      if (/^Reaction button state:/i.test(label) && visibleCount) {
+        result.like = visibleCount;
+        continue;
+      }
+      if (/^Comment\b/i.test(label) && visibleCount) {
+        result.comment = visibleCount;
+        continue;
+      }
+      if (/^Repost\b/i.test(label) && visibleCount) {
+        result.repost = visibleCount;
+        continue;
+      }
       const match = label.match(/([\d,.]+)\s+(reactions?|comments?|reposts?)/i);
       if (match) result[match[2].toLowerCase().replace(/s$/, "").replace("reaction", "like")] = match[1];
     }
     return result;
+  }
+
+  function extractLinkedInAttachment(container, { compactText, normalizeHttpUrl }) {
+    const link = container.querySelector('a[href*="/jobs/view/"]');
+    const url = normalizeHttpUrl(link?.href);
+    if (!link || !url) return null;
+    const lines = String(link.innerText ?? "")
+      .split(/\n+/)
+      .map((line) => compactText(line))
+      .filter(Boolean);
+    const verified = lines.some((line) => /\bVerified job\b/i.test(line));
+    const actionLabel = lines.find((line) => /^View job$/i.test(line)) ?? "View job";
+    const footnote = lines.find((line) => /\balumni\b|\bwork here\b/i.test(line)) ?? "";
+    const details = lines
+      .filter((line) => line !== actionLabel && line !== footnote)
+      .map((line) => line.replace(/\s*\(Verified job\)\s*$/i, "").trim())
+      .filter(Boolean);
+    const title = details[0] ?? "LinkedIn job";
+    const distinctDetails = details.slice(1).filter((line) => line !== title);
+    const images = [...link.querySelectorAll("img")].sort((left, right) => {
+      const leftRect = left.getBoundingClientRect();
+      const rightRect = right.getBoundingClientRect();
+      return (rightRect.width * rightRect.height) - (leftRect.width * leftRect.height);
+    });
+    return {
+      kind: "job",
+      title,
+      subtitle: distinctDetails[0] ?? "",
+      detail: distinctDetails[1] ?? "",
+      actionLabel,
+      footnote,
+      url,
+      imageUrl: normalizeHttpUrl(images[0]?.currentSrc || images[0]?.src),
+      verified,
+    };
   }
 
   function stripExpansionControl(value) {
