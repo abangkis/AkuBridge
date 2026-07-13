@@ -37,6 +37,33 @@
       return;
     }
 
+    if (message.type === "AKU_BROWSER_BRIDGE_RELOAD_SELF") {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "AKU_BRIDGE_RELOAD_SELF",
+          actionId: message.actionId,
+          endpoint: message.endpoint,
+          token: message.token,
+        });
+        if (!response?.accepted) {
+          throw new Error(response?.message || "AkuBridge rejected reload_self.");
+        }
+      } catch (error) {
+        // A disconnected port is expected once chrome.runtime.reload() begins.
+        // Sidecar determines success only from the post-reload build heartbeat.
+        if (!String(error?.message ?? error).includes("Extension context invalidated")) {
+          window.postMessage(
+            {
+              type: "AKU_BROWSER_BRIDGE_ERROR",
+              message: String(error?.message ?? error),
+            },
+            allowedOrigin,
+          );
+        }
+      }
+      return;
+    }
+
     if (message.type !== "AKU_BROWSER_DISPATCH") return;
     try {
       const response = await chrome.runtime.sendMessage({

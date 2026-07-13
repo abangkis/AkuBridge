@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v16";
+  const runtimeRevision = "source-fidelity-v17";
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
     chrome.runtime.onMessage.removeListener(globalThis.__akuBrowserSourceBridgeMessageHandler);

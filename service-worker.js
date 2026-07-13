@@ -37,6 +37,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true, capabilities: bridgeCapabilities() });
     return false;
   }
+  if (message?.type === "AKU_BRIDGE_RELOAD_SELF") {
+    if (!sender.url?.startsWith(`${AKU_BROWSER_ORIGIN}/`)) {
+      sendResponse({ accepted: false, message: "reload_self rejected: invalid AkuBrowser origin." });
+      return false;
+    }
+    acceptReloadSelf(message)
+      .then(() => {
+        sendResponse({ accepted: true });
+        chrome.runtime.reload();
+      })
+      .catch((error) => sendResponse({
+        accepted: false,
+        message: String(error?.message ?? error),
+      }));
+    return true;
+  }
   if (message?.type !== "AKU_BROWSER_DISPATCH") return undefined;
   if (!sender.url?.startsWith(`${AKU_BROWSER_ORIGIN}/`)) {
     sendResponse({ ok: false, message: "Dispatch rejected: invalid AkuBrowser origin." });
@@ -47,6 +63,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
   return true;
 });
+
+async function acceptReloadSelf(message) {
+  assertEndpoint(message.endpoint);
+  if (typeof message.actionId !== "string" || !message.actionId) {
+    throw new Error("reload_self requires an action ID.");
+  }
+  const response = await fetch(
+    `${message.endpoint}/api/operations/bridge/actions/${encodeURIComponent(message.actionId)}/accept`,
+    {
+      method: "POST",
+      headers: bridgeHeaders(message.token),
+    },
+  );
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.message || `reload_self acceptance failed with ${response.status}.`);
+  }
+}
 
 async function dispatchRun(message) {
   assertEndpoint(message.endpoint);
