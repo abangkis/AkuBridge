@@ -16,8 +16,8 @@ test("source adapters register independently behind one contract", () => {
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v13" },
-      { source: "linkedin", version: "linkedin-dom-v10" },
+      { source: "x", version: "x-dom-v14" },
+      { source: "linkedin", version: "linkedin-dom-v12" },
     ],
   );
   assert.equal(context.AkuSourceAdapters.get("x").matchesPage(), true);
@@ -34,6 +34,11 @@ test("adapter registry rejects duplicates and unknown sources", () => {
     version: "fixture-v1",
     qualityProfile: "social-post-v1",
     qualitySelectors: {},
+    freshness: {
+      version: "fixture-freshness-v1",
+      revealObservationMs: 5_000,
+      pendingContentPattern: /new posts/i,
+    },
     matchesPage() { return true; },
     discoverCandidates() { return { candidates: [] }; },
     findAuthor() { return ""; },
@@ -49,7 +54,7 @@ test("a reinjected adapter runtime replaces the stale registry generation", () =
   context.AkuSourceAdapters = previous;
   runScript(context, "source-adapter-runtime.js");
   assert.notEqual(context.AkuSourceAdapters, previous);
-  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v5");
+  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v6");
   assert.deepEqual([...context.AkuSourceAdapters.capabilities()], []);
 });
 
@@ -68,8 +73,8 @@ test("the complete adapter bundle can replace its current registry generation", 
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v13" },
-      { source: "linkedin", version: "linkedin-dom-v10" },
+      { source: "x", version: "x-dom-v14" },
+      { source: "linkedin", version: "linkedin-dom-v12" },
     ],
   );
 });

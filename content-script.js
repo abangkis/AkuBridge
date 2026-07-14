@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v35";
+  const runtimeRevision = "source-fidelity-v38";
   const LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000;
   const LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS = 50;
   const LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8;
@@ -13,9 +13,11 @@
   const capturePolicy = globalThis.AkuBoundedCapturePolicy;
   const qualityPolicy = globalThis.AkuCaptureQualityPolicy;
   const sourceAdapters = globalThis.AkuSourceAdapters;
+  const freshnessRuntime = globalThis.AkuSourceFreshnessRuntime;
   if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
   if (!qualityPolicy) throw new Error("AkuBridge capture-quality policy was not loaded.");
   if (!sourceAdapters) throw new Error("AkuBridge source-adapter runtime was not loaded.");
+  if (!freshnessRuntime) throw new Error("AkuBridge source-freshness runtime was not loaded.");
   updateCaptureProgress("idle");
 
   const messageHandler = (message, _sender, sendResponse) => {
@@ -26,6 +28,16 @@
     if (message?.type === "AKU_BROWSER_PROBE_SOURCE_READY") {
       sendResponse({ ok: true, readiness: probeSourceReadiness(message.source) });
       return false;
+    }
+    if (message?.type === "AKU_BROWSER_PROBE_SOURCE_FRESHNESS") {
+      sendResponse({ ok: true, freshness: freshnessRuntime.probe(message.source) });
+      return false;
+    }
+    if (message?.type === "AKU_BROWSER_REVEAL_PENDING_CONTENT") {
+      freshnessRuntime.reveal(message.source, message.options)
+        .then((freshness) => sendResponse({ ok: true, freshness }))
+        .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+      return true;
     }
     if (message?.type !== "AKU_BROWSER_COLLECT_VISIBLE") return undefined;
     collectBoundedObservation(message.payload)
@@ -129,21 +141,23 @@
       plan.captureTimeoutMs - CAPTURE_DEADLINE_RESERVE_MS,
     );
     let scrollContext = getScrollContext(source);
-    const preActionPosition = readScrollPosition(scrollContext);
-    const pendingNewContentSignal = detectPendingNewContent(source);
-    let pendingNewContentAction = pendingNewContentSignal ? "not_activated" : "not_detected";
-    let pendingContentActivationEvidence = "";
-    let feedMutation = false;
-    if (pendingNewContentSignal && plan.pendingContentPolicy === "reveal_if_present") {
-      const activation = await activatePendingNewContent(
-        pendingNewContentSignal,
-        source,
-        scrollContext,
-        plan,
-      );
-      pendingContentActivationEvidence = activation.evidence;
-      pendingNewContentAction = "activated";
-      feedMutation = true;
+    const sourceFreshness = payload.sourceFreshness ?? await recoverActiveTabFreshness(source, plan);
+    const currentPosition = readScrollPosition(scrollContext);
+    const preActionPosition = {
+      x: currentPosition.x,
+      y: sourceFreshness.feedMutation && Number.isFinite(sourceFreshness.preActionScrollY)
+        ? sourceFreshness.preActionScrollY
+        : currentPosition.y,
+    };
+    const pendingNewContentSignal = sourceFreshness.pendingContentDetected
+      ? { label: sourceFreshness.pendingContentLabel }
+      : null;
+    const pendingNewContentAction = sourceFreshness.pendingContentAction;
+    const pendingContentActivationEvidence = sourceFreshness.feedMutation
+      ? sourceFreshness.evidence
+      : "";
+    const feedMutation = sourceFreshness.feedMutation === true;
+    if (feedMutation) {
       scrollContext = getScrollContext(source);
       scrollToContext(scrollContext, { x: 0, y: 0 });
       await delay(120);
@@ -275,6 +289,7 @@
           ).join("|"),
         },
         captureQuality,
+        sourceFreshness,
         frontier: {
           scrollY: lastSnapshot?.scrollY ?? captureStartPosition.y,
           anchorKeys: frontierAnchorKeys,
@@ -353,6 +368,8 @@
           payload.tabAcquisition?.backgroundAtDispatch
             ? "The source tab was in the background when the command was dispatched."
             : null,
+          `Source freshness: ${sourceFreshness.outcome}; verification=${sourceFreshness.verification}; ` +
+            `wake=${sourceFreshness.wakeAttempted}; probes=${sourceFreshness.probeCount}.`,
           payload.tabAcquisition?.recoveryCount > 0
             ? "AkuBridge discarded one stale initial tab reference and rebound to a newly discovered eligible source tab."
             : null,
@@ -1154,56 +1171,56 @@
     return scrollContext.tagName.toLowerCase();
   }
 
-  function detectPendingNewContent(source) {
-    const pattern = sourceAdapters.get(source).pendingContentPattern;
-    for (const element of document.querySelectorAll('button,[role="button"]')) {
-      if (!isVisibleInViewport(element)) continue;
-      const label = compactText(element.innerText || element.textContent);
-      if (pattern.test(label)) return { label, element };
+  async function recoverActiveTabFreshness(source, plan) {
+    const probe = freshnessRuntime.probe(source);
+    if (probe.pendingContentDetected && plan.pendingContentPolicy === "reveal_if_present") {
+      const revealed = await freshnessRuntime.reveal(source, {
+        timeoutMs: plan.pendingContentTimeoutMs,
+        settleMs: plan.pendingContentSettleMs,
+      });
+      return {
+        policyVersion: "source-freshness-recovery-v1",
+        adapterFreshnessVersion: probe.strategy.version,
+        source,
+        status: "ready",
+        outcome: "pending_content_revealed",
+        verification: "feed_change",
+        evidence: revealed.evidence,
+        backgroundAtDispatch: false,
+        opened: false,
+        wakeAttempted: false,
+        activated: false,
+        probeCount: 1,
+        pendingContentDetected: true,
+        pendingContentLabel: revealed.label,
+        pendingContentAction: "activated",
+        feedChanged: true,
+        feedMutation: true,
+        waitMs: 0,
+        preActionScrollY: revealed.preActionScrollY,
+      };
     }
-    return null;
-  }
-
-  async function activatePendingNewContent(signal, source, scrollContext, plan) {
-    if (!signal.element?.isConnected || typeof signal.element.click !== "function") {
-      throw new Error("The pending new-content control was no longer available.");
-    }
-
-    const beforeFingerprint = visibleFeedFingerprint(source, scrollContext);
-    signal.element.click();
-    const deadline = Date.now() + plan.pendingContentTimeoutMs;
-    let changed = false;
-    let evidence = "";
-    while (Date.now() < deadline) {
-      await delay(100);
-      const currentContext = getScrollContext(source);
-      const afterFingerprint = visibleFeedFingerprint(source, currentContext);
-      if (capturePolicy.hasChangedVisibleFeed(beforeFingerprint, afterFingerprint)) {
-        changed = true;
-        evidence = "feed_fingerprint_changed";
-        break;
-      }
-    }
-    if (!changed) {
-      throw new Error(
-        `The ${source} pending-content control did not reveal a changed, visible feed within the bounded deadline.`,
-      );
-    }
-    await delay(plan.pendingContentSettleMs);
-    if (!sourceMatchesPage(source)) {
-      throw new Error(`The ${source} pending-content action left the approved source page.`);
-    }
-    return { evidence };
-  }
-
-  function visibleFeedFingerprint(source, scrollContext) {
-    const candidates = discoverSourceCandidates(source).candidates
-      .filter((element) => isVisibleInViewport(element, scrollContext))
-      .slice(0, 3);
-    return candidates
-      .map((element) => compactText(element.innerText).slice(0, 400))
-      .filter(Boolean)
-      .join("|");
+    return {
+      policyVersion: "source-freshness-recovery-v1",
+      adapterFreshnessVersion: probe.strategy.version,
+      source,
+      status: "ready",
+      outcome: "active_feed_ready",
+      verification: "active_dispatch",
+      evidence: "active_at_dispatch",
+      backgroundAtDispatch: false,
+      opened: false,
+      wakeAttempted: false,
+      activated: false,
+      probeCount: 1,
+      pendingContentDetected: probe.pendingContentDetected,
+      pendingContentLabel: probe.pendingContentLabel,
+      pendingContentAction: probe.pendingContentDetected ? "not_activated" : "not_detected",
+      feedChanged: false,
+      feedMutation: false,
+      waitMs: 0,
+      preActionScrollY: probe.scrollY,
+    };
   }
 
   function snapshotMatchesContinuation(snapshot, anchorKeys) {

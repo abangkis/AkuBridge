@@ -14,7 +14,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v10",
+    version: "linkedin-dom-v12",
     qualityProfile: "social-post-v1",
     qualitySelectors: Object.freeze({
       author: 'button[aria-label^="Open control menu for post by"], '
@@ -29,6 +29,17 @@
         + 'video, [data-test-document-container], '
         + 'iframe[title*="document" i]',
       timestamp: "time",
+    }),
+    freshness: Object.freeze({
+      version: "linkedin-freshness-v2",
+      wakeWhenBackground: true,
+      settledWakeIsCurrent: true,
+      wakeObservationMs: 4_000,
+      probeIntervalMs: 250,
+      revealSupported: true,
+      revealObservationMs: 12_000,
+      rejectInsideFeedCandidate: true,
+      pendingContentPattern: /^(?:new posts?|show new posts?)$/i,
     }),
     matchesPage: () => window.location.hostname === "www.linkedin.com",
     loginRequired: () => (
@@ -176,7 +187,6 @@
     shouldSkipImage: (image) => Boolean(image.closest(
       '.update-components-actor, .feed-shared-actor, [data-view-name="feed-actor-image"]',
     )),
-    pendingContentPattern: /^(?:new posts?|show new posts?)$/i,
   });
 
   function postAuthor(container, compactText) {

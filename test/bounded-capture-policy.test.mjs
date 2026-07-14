@@ -253,6 +253,7 @@ test("the policy is loaded before the source content script", () => {
     "source-adapter-runtime.js",
     "adapters/x-adapter.js",
     "adapters/linkedin-adapter.js",
+    "source-freshness-runtime.js",
     "content-script.js",
   ]);
 
@@ -263,4 +264,5 @@ test("the policy is loaded before the source content script", () => {
   assert.match(worker, /"linkedin-timestamp-policy\.js"/);
   assert.match(worker, /"adapters\/x-adapter\.js"/);
   assert.match(worker, /"adapters\/linkedin-adapter\.js"/);
+  assert.match(worker, /"source-freshness-runtime\.js"/);
 });

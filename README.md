@@ -10,11 +10,12 @@ or validate the complete bridge observation by themselves.
 
 ```mermaid
 flowchart LR
-    DOM["Rendered source DOM"] --> XA["X adapter<br/>x-dom-v13"]
-    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v10"]
+    DOM["Rendered source DOM"] --> XA["X adapter<br/>x-dom-v14<br/>x-freshness-v1"]
+    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v12<br/>linkedin-freshness-v2"]
     XA --> R["Source-adapter registry"]
     LA --> R
-    R --> C["Shared content runtime"]
+    R --> F["Generic freshness recovery<br/>wake -> reveal -> proof"]
+    F --> C["Shared content runtime"]
     C --> Q["Generic quality evaluator<br/>social-post-v1"]
     Q --> P["Bounded retry/capture policy"]
     P --> O["Canonical observation<br/>quality reports + adapterHealth"]
@@ -24,7 +25,7 @@ flowchart LR
 
 The source adapters own page matching, feed-root and candidate discovery,
 source-native text/author/presentation/relationship extraction, media
-selectors and exclusions, and pending-content labels. The shared content
+selectors and exclusions, and a versioned freshness strategy. The shared content
 runtime owns canonical block assembly, URL/date/media normalization, bounded
 snapshot collection, scrolling and restoration, field-presence diagnostics,
 and extension messaging. Trusted `social-post-v1` policy requires text,
@@ -41,8 +42,10 @@ navigation, source changes, or deadline. A final `retryable` report is not
 allowed across the Bridge boundary. Sidecar validates report consistency,
 removes invalid candidates, and sends only admitted evidence to reasoning.
 
-The normative architecture and third-source extension requirements are in
-`AkuBrowser/docs/source-adapter-quality-design.md`.
+The normative parser/quality architecture is in
+`AkuBrowser/docs/source-adapter-quality-design.md`; stale-tab behavior and the
+third-source freshness interface are in
+`AkuBrowser/contracts/source-freshness-recovery-v1.md`.
 
 ## Development
 
@@ -101,11 +104,21 @@ Source adapters also emit bounded health diagnostics, source-native content/rela
 
 Tabs opened by AkuBridge are distinguished from shared user tabs. Both are preserved by default. The lifecycle contract can close only an explicitly managed tab opened by the same successful acquisition; it never closes a pre-existing user tab.
 
-Gate 0B.2 may activate one allowlisted visible `New posts`/`Show posts` control in the same development source tab. The revealed latest feed becomes the new scroll-restoration baseline, and coverage records that the former feed view was changed.
+Before Gate 0B.2 capture, the generic freshness engine temporarily activates a
+background X or LinkedIn tab, waits through the adapter-declared wake window,
+and handles either an automatically changed feed or one allowlisted visible
+`New posts`/`Show posts` control. The revealed latest feed becomes the new
+scroll-restoration baseline, and `coverage.sourceFreshness` records the state,
+proof, wait, activation, and mutation without exposing raw fingerprints.
 
 Gate 0B.3 may perform one additional one-scroll capture from a round-one frontier supplied by AkuSidecar. The first follow-up snapshot must match a prior permalink or normalized-text anchor; fresh-content activation is disabled and the pre-follow-up position is restored.
 
-LinkedIn capture uses a bounded feed-readiness probe because a completed page shell may still contain no rendered feed. A background tab that is not ready may be activated temporarily and the prior active tab is restored afterward. LinkedIn temporarily uses detect-only pending-content behavior for reliability; X retains its validated reveal path. Zero evidence permits one same-tab readiness retry and then fails as source readiness without invoking reasoning.
+LinkedIn capture still uses a bounded feed-readiness probe because a completed
+page shell may contain no rendered feed. Freshness is a separate generic stage:
+both X and LinkedIn now wake stale background tabs and support adapter-owned
+pending-content reveal. Reveal failure stops at `source_freshness`; it is never
+retried as detect-only capture. If the user changes tabs during acquisition,
+focus restoration yields to that user action.
 
 If Chrome invalidates a tab between discovery and initial capture, AkuBridge may discard that stale reference and perform exactly one fresh source-tab discovery. The normal `openIfMissing` policy still applies, and coverage records the recovery. Provider-directed follow-up never rebinds because its evidence frontier belongs to the original tab.
 

@@ -15,7 +15,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version, packageJson.version);
-  assert.equal(manifest.version, "0.5.33");
+  assert.equal(manifest.version, "0.5.36");
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:47821/*",
@@ -66,12 +66,12 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
     linkedInAdapter,
     /\[data-testid="mainFeed"\] \[role="listitem"\]/,
   );
-  assert.match(linkedInAdapter, /linkedin-dom-v10/);
+  assert.match(linkedInAdapter, /linkedin-dom-v12/);
   assert.match(contentScript, /platformId/);
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v35/);
+  assert.match(contentScript, /source-fidelity-v38/);
   assert.match(contentScript, /relative_text_estimate/);
   assert.match(contentScript, /not_exposed_promoted/);
   assert.match(contentScript, /LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000/);
@@ -131,6 +131,10 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
     path.join(projectRoot, "adapters", "linkedin-adapter.js"),
     "utf8",
   );
+  const freshnessRuntime = fs.readFileSync(
+    path.join(projectRoot, "source-freshness-runtime.js"),
+    "utf8",
+  );
 
   assert.match(contentScript, /document\.querySelector\("#workspace"\)/);
   assert.match(contentScript, /isScrollableElement/);
@@ -145,18 +149,23 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
   assert.match(contentScript, /pendingNewContent/);
   assert.match(contentScript, /Pending new content signal detected/);
   assert.match(contentScript, /plan\.pendingContentPolicy === "reveal_if_present"/);
-  assert.match(contentScript, /signal\.element\.click\(\)/);
-  assert.match(contentScript, /evidence = "feed_fingerprint_changed"/);
-  assert.doesNotMatch(contentScript, /evidence = "signal_removed"/);
+  assert.match(freshnessRuntime, /signal\.element\.click\(\)/);
+  assert.match(freshnessRuntime, /evidence: "feed_fingerprint_changed"/);
+  assert.doesNotMatch(freshnessRuntime, /evidence: "signal_removed"/);
+  assert.match(freshnessRuntime, /candidate\.contains\(element\)/);
+  assert.match(freshnessRuntime, /adapter\.freshness\.revealObservationMs/);
+  assert.match(linkedInAdapter, /revealObservationMs: 12_000/);
+  assert.match(linkedInAdapter, /rejectInsideFeedCandidate: true/);
   assert.match(contentScript, /restorationScope: feedMutation \? "post_reveal_start"/);
-  assert.equal(contentScript.match(/signal\.element\.click\(\)/g)?.length, 1);
+  assert.equal(freshnessRuntime.match(/signal\.element\.click\(\)/g)?.length, 1);
   assert.equal(contentScript.match(/menuButton\.click\(\)/g)?.length, 2);
   assert.doesNotMatch(contentScript, /(?:like|comment|repost|send)Button\.click\(\)/i);
 });
 
-test("LinkedIn capture waits for feed readiness and permits only one evidence retry", () => {
+test("LinkedIn capture composes readiness with generic freshness recovery", () => {
   const contentScript = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
   const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
+  const recovery = fs.readFileSync(path.join(projectRoot, "source-freshness-recovery.js"), "utf8");
 
   assert.match(contentScript, /AKU_BROWSER_PROBE_SOURCE_READY/);
   assert.match(contentScript, /selector_mismatch/);
@@ -164,10 +173,12 @@ test("LinkedIn capture waits for feed readiness and permits only one evidence re
   assert.match(worker, /waitForSourceReady/);
   assert.match(worker, /collectFromTabWithDeadline/);
   assert.match(worker, /bounded response deadline/);
-  assert.match(worker, /sourceReadinessRetryCount: 1/);
-  assert.match(worker, /pendingContentPolicy: "detect_only"/);
+  assert.match(worker, /recoverSourceFreshness/);
+  assert.match(worker, /probeSourceFreshness/);
+  assert.match(recovery, /source-freshness-recovery-v1/);
+  assert.doesNotMatch(worker, /sourceReadinessRetryCount: 1/);
+  assert.doesNotMatch(worker, /pendingContentPolicy: "detect_only"/);
   assert.match(worker, /restoreTabFocus/);
-  assert.equal(worker.match(/sourceReadinessRetryCount: 1/g)?.length, 1);
 });
 
 test("background X capture activates for the full bounded capture so scrolled media can hydrate", () => {
@@ -202,12 +213,13 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /AKU_BRIDGE_GET_CAPABILITIES/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
-  const capabilities = createBridgeCapabilities({ version: "0.5.33", manifest_version: 3 });
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v35");
-  assert.equal(capabilities.buildId, "aku-bridge-0.5.33-source-fidelity-v35");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v13", linkedin: "linkedin-dom-v10" });
+  const capabilities = createBridgeCapabilities({ version: "0.5.36", manifest_version: 3 });
+  assert.equal(capabilities.runtimeRevision, "source-fidelity-v38");
+  assert.equal(capabilities.buildId, "aku-bridge-0.5.36-source-fidelity-v38");
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v14", linkedin: "linkedin-dom-v12" });
   assert.ok(capabilities.actions.includes("reload_self"));
   assert.ok(capabilities.actions.includes("report_capture_quality"));
+  assert.ok(capabilities.actions.includes("recover_source_freshness"));
   assert.match(tabBridge, /capability handshake returned no capabilities/);
   assert.match(worker, /chrome\.storage\.local\.set/);
   assert.match(worker, /resumePendingSelfReload/);

@@ -4,7 +4,7 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v13",
+    version: "x-dom-v14",
     qualityProfile: "social-post-v1",
     qualitySelectors: Object.freeze({
       author: '[data-testid="User-Name"]',
@@ -15,6 +15,17 @@
         + '[aria-label*="Video" i], a[aria-label][href] img[src*="/card_img/"], '
         + 'a[aria-label][href] [style*="/card_img/"]',
       timestamp: "time",
+    }),
+    freshness: Object.freeze({
+      version: "x-freshness-v1",
+      wakeWhenBackground: true,
+      settledWakeIsCurrent: true,
+      wakeObservationMs: 3_500,
+      probeIntervalMs: 250,
+      revealSupported: true,
+      revealObservationMs: 5_000,
+      rejectInsideFeedCandidate: true,
+      pendingContentPattern: /^(?:new posts?|show(?: \d+)? posts?)$/i,
     }),
     matchesPage: () => window.location.hostname === "x.com",
     loginRequired: () => false,
@@ -114,7 +125,6 @@
       '[data-testid="videoComponent"] img',
       'a[aria-label][href] img[src*="/card_img/"]',
     ].join(","),
-    pendingContentPattern: /^(?:new posts?|show(?: \d+)? posts?)$/i,
   });
 
   function engagementCounts(container) {

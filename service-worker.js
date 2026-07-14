@@ -11,6 +11,7 @@ import {
   serializeBridgeError,
   validateTabLease,
 } from "./bridge-runtime-policy.js";
+import { recoverSourceFreshness } from "./source-freshness-recovery.js";
 import {
   BRIDGE_CONTRACT_VERSION,
   BRIDGE_ID,
@@ -30,6 +31,7 @@ const SOURCE_SCRIPT_FILES = [
   "source-adapter-runtime.js",
   "adapters/x-adapter.js",
   "adapters/linkedin-adapter.js",
+  "source-freshness-runtime.js",
   "content-script.js",
 ];
 
@@ -218,11 +220,21 @@ async function captureWithSourceTabRecovery(command) {
 async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) {
   await assertTabLease(prepared.lease, "before_capture");
   const tabLifecycle = normalizeSourceTabLifecycle(command.payload.tabLifecycle);
+  const sourceFreshness = await recoverSourceFreshness({
+    source: command.payload.source,
+    acquisitionRound: command.payload.acquisitionRound ?? 1,
+    backgroundAtDispatch: prepared.backgroundAtDispatch,
+    opened: prepared.opened,
+    activatedBeforeRecovery: prepared.activatedForReadiness,
+    pendingContentPolicy: command.payload.pendingContentPolicy,
+    sameTabMutationAllowed: command.payload.sameTabMutationAllowed,
+    activate: prepared.activateForRetry,
+    probe: () => probeSourceFreshness(prepared.tab.id, command.payload.source),
+    reveal: () => revealPendingSourceContent(prepared.tab.id, command.payload),
+  });
   const payload = {
     ...command.payload,
-    ...(command.payload.source === "linkedin" && prepared.backgroundAtDispatch
-      ? { pendingContentPolicy: "detect_only", sameTabMutationAllowed: false }
-      : {}),
+    sourceFreshness,
     sourceReadiness: prepared.readiness,
     tabAcquisition: {
       opened: prepared.opened,
@@ -234,30 +246,8 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
         tabLifecycle.openedTabDisposition,
     },
   };
-  let response = await collectFromTabWithDeadline(prepared.tab.id, payload);
+  const response = await collectFromTabWithDeadline(prepared.tab.id, payload);
   if (!response?.ok) throw new Error(response?.message || "Source content script failed.");
-  if (command.payload.source === "linkedin" && observationBlockCount(response.observation) === 0) {
-    const activatedForRetry = await prepared.activateForRetry();
-    const readiness = await waitForSourceReady(prepared.tab.id, "linkedin", 8_000);
-    response = await collectFromTabWithDeadline(prepared.tab.id, {
-      ...payload,
-      pendingContentPolicy: "detect_only",
-      sameTabMutationAllowed: false,
-      sourceReadiness: readiness,
-      sourceReadinessRetryCount: 1,
-      tabAcquisition: {
-        opened: prepared.opened,
-        activatedForReadiness:
-          prepared.activatedForReadiness || activatedForRetry,
-        backgroundAtDispatch: prepared.backgroundAtDispatch,
-        recoveryCount: sourceTabRecoveryCount,
-        ownership: prepared.opened ? "managed" : "shared",
-        openedTabDisposition:
-          tabLifecycle.openedTabDisposition,
-      },
-    });
-    if (!response?.ok) throw new Error(response?.message || "Source readiness retry failed.");
-  }
   await assertTabLease(prepared.lease, "after_capture");
   return response.observation;
 }
@@ -326,7 +316,8 @@ async function prepareSourceTab(tab, source, opened) {
     if (previousActiveTabId === null) {
       previousActiveTabId = (await chrome.tabs.query({ active: true, windowId: tab.windowId }))[0]?.id ?? null;
     }
-    if (previousActiveTabId !== tab.id) {
+    const currentlyActive = (await chrome.tabs.query({ active: true, windowId: tab.windowId }))[0]?.id;
+    if (currentlyActive !== tab.id) {
       await chrome.tabs.update(tab.id, { active: true });
       activatedForReadiness = true;
       return true;
@@ -475,20 +466,57 @@ async function probeSourceReadiness(tabId, source) {
   };
 }
 
+async function probeSourceFreshness(tabId, source) {
+  let response;
+  try {
+    response = await chrome.tabs.sendMessage(tabId, {
+      type: "AKU_BROWSER_PROBE_SOURCE_FRESHNESS",
+      source,
+    });
+  } catch {
+    response = null;
+  }
+  if (response?.ok && response.freshness?.runtimeRevision === "source-freshness-runtime-v1") {
+    return response.freshness;
+  }
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: SOURCE_SCRIPT_FILES,
+  });
+  response = await chrome.tabs.sendMessage(tabId, {
+    type: "AKU_BROWSER_PROBE_SOURCE_FRESHNESS",
+    source,
+  });
+  if (!response?.ok) throw new Error(response?.message || "Source freshness probe failed.");
+  return response.freshness;
+}
+
+async function revealPendingSourceContent(tabId, payload) {
+  const response = await chrome.tabs.sendMessage(tabId, {
+    type: "AKU_BROWSER_REVEAL_PENDING_CONTENT",
+    source: payload.source,
+    options: {
+      timeoutMs: payload.pendingContentTimeoutMs,
+      settleMs: payload.pendingContentSettleMs,
+    },
+  });
+  if (!response?.ok) throw new Error(response?.message || "Pending-content reveal failed.");
+  return response.freshness;
+}
+
 async function restoreTabFocus(previousActiveTabId, sourceTabId) {
   if (!previousActiveTabId || previousActiveTabId === sourceTabId) return;
   try {
+    const sourceTab = await chrome.tabs.get(sourceTabId);
+    const currentlyActive = (await chrome.tabs.query({
+      active: true,
+      windowId: sourceTab.windowId,
+    }))[0]?.id;
+    if (currentlyActive !== sourceTabId) return;
     await chrome.tabs.update(previousActiveTabId, { active: true });
   } catch {
     // The user may have closed or moved the previous tab during the bounded capture.
   }
-}
-
-function observationBlockCount(observation) {
-  return (observation?.snapshots ?? []).reduce(
-    (sum, snapshot) => sum + (snapshot.blocks?.length ?? 0),
-    0,
-  );
 }
 
 function sourceLabel(source) {
