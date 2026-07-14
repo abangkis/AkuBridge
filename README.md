@@ -2,6 +2,45 @@
 
 AkuBridge is the read-only Chrome extension used by AkuBrowser to collect a bounded set of visible observations from X or LinkedIn.
 
+## Current source-adapter architecture
+
+X and LinkedIn DOM knowledge is separated behind one revisioned adapter
+registry. The adapters are source-specific parsers, but they do not construct
+or validate the complete bridge observation by themselves.
+
+```mermaid
+flowchart LR
+    DOM["Rendered source DOM"] --> XA["X adapter<br/>x-dom-v12"]
+    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v8"]
+    XA --> R["Source-adapter registry"]
+    LA --> R
+    R --> C["Shared content runtime"]
+    C --> P["Bounded capture policy"]
+    P --> O["Canonical observation<br/>and adapterHealth"]
+    O --> SW["Service worker transport"]
+    SW --> S["AkuSidecar validation"]
+```
+
+The source adapters own page matching, feed-root and candidate discovery,
+source-native text/author/presentation/relationship extraction, media
+selectors and exclusions, and pending-content labels. The shared content
+runtime owns canonical block assembly, URL/date/media normalization, bounded
+snapshot collection, scrolling and restoration, field-presence diagnostics,
+and extension messaging. The service worker owns tab selection, readiness,
+leases, retries already authorized by the capture contract, and transport.
+
+The registry currently verifies only that each adapter exposes the required
+hooks. Synthetic conformance fixtures verify known extraction examples. At
+runtime, `adapterHealth.fieldCoverage` records field presence, but it is
+diagnostic rather than an admission decision: `adapterHealth.state` is healthy
+when at least one unique candidate was captured. Special readiness checks cover
+known cases such as X visual hydration and LinkedIn zero-evidence recovery, but
+there is not yet one generic required/conditional/optional field evaluator.
+
+The proposed generic quality and admission layer is documented as a
+brainstorming design in the parent workspace at
+`AkuBrowser/docs/source-adapter-quality-design.md`. It is not implemented yet.
+
 ## Development
 
 ```powershell
