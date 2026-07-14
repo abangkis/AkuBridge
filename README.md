@@ -10,17 +10,50 @@ npm run check
 npm run package:verify
 ```
 
-Load this directory as an unpacked extension from `chrome://extensions` with Developer mode enabled.
+Load this directory as an unpacked extension from `chrome://extensions` with
+Developer mode enabled. This manual step is required only for the initial
+bootstrap or recovery when the installed extension cannot handle cooperative
+self-reload.
 
 The adapter foundation separates X and LinkedIn DOM knowledge into source adapters loaded behind a common registry. The content runtime owns bounded scrolling, restoration, evidence normalization, and messaging; each adapter owns source matching, candidate discovery, author discovery, media exclusions, and pending-content labels.
 
 `package:verify` validates Manifest V3 references, local module imports, package/manifest version alignment, and emits a SHA-256 file manifest plus aggregate fingerprint. It does not write a package artifact or modify the installed extension.
 
-Run `npm run version:patch` for every runtime change before reloading the unpacked extension. It advances and synchronizes `manifest.json`, `package.json`, and `package-lock.json`; the runtime heartbeat derives its build identity from that version and the runtime revision.
+Every runtime change must advance both identities: run `npm run version:patch`
+to synchronize `manifest.json`, `package.json`, and `package-lock.json`, then
+advance `akuRuntimeRevision`/`BRIDGE_RUNTIME_REVISION` and the content runtime
+revision together. The heartbeat derives its build ID from extension version
+and runtime revision; AkuSidecar rejects captures from an incompatible build.
+
+After the one-time bootstrap, use AkuSupervisor instead of Chrome control:
+
+```powershell
+..\AkuSupervisor\target\dev\aku-supervisor.exe bridge validate `
+  --actor codex --request-id <unique-id>
+```
+
+Use `bridge reload` when release-gate validation is not required, and use the
+promoted stable binary instead of `target\dev` outside active Supervisor
+development. Cooperative reload preserves Chrome, source tabs, profile state,
+and login sessions.
 
 AkuBridge does not like, reply, follow, message, or post. For an initial capture, it follows the command's `openIfMissing` policy: the default AkuSidecar configuration may open one inactive canonical X or LinkedIn feed tab, while `fail_fast` requires an already-open eligible tab. Manual Live may use the active page for the selected source. A follow-up round never opens a replacement tab. Gate 0B permits at most two native scrolls and three viewports. Computer Use is not part of this native path.
 
 Each captured evidence block may include up to four rendered content images or video posters for Source layout. AkuBridge excludes small images and LinkedIn actor avatars, accepts only the allowlisted X/LinkedIn media CDNs, and never downloads or transforms media itself.
+
+LinkedIn keeps the visible relative timestamp text. When the source exposes a
+valid relative time but no native `datetime`, AkuBridge records a deterministic
+UTC-bucket estimate plus explicit source, estimated, and precision metadata.
+Promoted posts with no exposed time remain `publishedAt: null`. LinkedIn also
+uses a stricter eight-block-per-snapshot runtime ceiling inside the global
+20-block capture contract.
+
+Capture settling uses a bounded service-worker delay so tabs left in the
+background are not dependent on Chrome's throttled page timers. A timeout may
+read a content-only progress marker containing revision, stage, snapshot/block
+index, and counts; it never includes captured post content. Runtime and adapter
+registry generations are revision-aware, so reinjection replaces stale source
+listeners and adapters in reused tabs.
 
 Source adapters also emit bounded health diagnostics, source-native content/relationship semantics, passive source events, and a final acquisition frontier. These are observation-only fields: they do not expand scrolling, ranking, notification, or mutation authority. Synthetic DOM conformance fixtures protect the adapter contract between live Chrome validations.
 
