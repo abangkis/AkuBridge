@@ -15,7 +15,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version, packageJson.version);
-  assert.equal(manifest.version, "0.5.21");
+  assert.equal(manifest.version, "0.5.29");
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:47821/*",
@@ -27,6 +27,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     "service-worker.js",
     "content-script.js",
     "linkedin-permalink-policy.js",
+    "linkedin-timestamp-policy.js",
     "source-adapter-runtime.js",
     "adapters/x-adapter.js",
     "adapters/linkedin-adapter.js",
@@ -65,12 +66,27 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
     linkedInAdapter,
     /\[data-testid="mainFeed"\] \[role="listitem"\]/,
   );
-  assert.match(linkedInAdapter, /linkedin-dom-v7/);
+  assert.match(linkedInAdapter, /linkedin-dom-v8/);
   assert.match(contentScript, /platformId/);
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v23/);
+  assert.match(contentScript, /source-fidelity-v31/);
+  assert.match(contentScript, /relative_text_estimate/);
+  assert.match(contentScript, /not_exposed_promoted/);
+  assert.match(contentScript, /LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000/);
+  assert.match(contentScript, /CAPTURE_DEADLINE_RESERVE_MS = 2_000/);
+  assert.match(contentScript, /LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8/);
+  assert.match(contentScript, /Math\.min\(payload\.maxBlocksPerSnapshot, LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT\)/);
+  assert.match(contentScript, /plan\.captureTimeoutMs - CAPTURE_DEADLINE_RESERVE_MS/);
+  assert.match(contentScript, /const deadlineAtMs = Math\.min\(/);
+  assert.match(contentScript, /LinkedIn permalink recovery budget was exhausted for this snapshot/);
+  assert.match(contentScript, /adapterRuntimeRevision/);
+  assert.match(contentScript, /adapterVersion: sourceAdapters\.get\(source\)\.version/);
+  assert.match(contentScript, /AKU_BROWSER_CAPTURE_DIAGNOSTICS/);
+  assert.match(contentScript, /AKU_BROWSER_CAPTURE_DELAY/);
+  assert.match(contentScript, /updateCaptureProgress\("scroll_settling"/);
+  assert.match(contentScript, /updateCaptureProgress\("extracting_block"/);
   assert.match(contentScript, /const deadlineAtMs = Date\.now\(\) \+ attempts \* intervalMs/);
   assert.match(contentScript, /await delay\(Math\.min\(intervalMs, remainingMs\)\)/);
   assert.match(contentScript, /return read\(\) \|\| null/);
@@ -186,14 +202,19 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /AKU_BRIDGE_GET_CAPABILITIES/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
-  const capabilities = createBridgeCapabilities({ version: "0.5.21", manifest_version: 3 });
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v23");
-  assert.equal(capabilities.buildId, "aku-bridge-0.5.21-source-fidelity-v23");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v12", linkedin: "linkedin-dom-v7" });
+  const capabilities = createBridgeCapabilities({ version: "0.5.29", manifest_version: 3 });
+  assert.equal(capabilities.runtimeRevision, "source-fidelity-v31");
+  assert.equal(capabilities.buildId, "aku-bridge-0.5.29-source-fidelity-v31");
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v12", linkedin: "linkedin-dom-v8" });
   assert.ok(capabilities.actions.includes("reload_self"));
   assert.match(tabBridge, /capability handshake returned no capabilities/);
   assert.match(worker, /chrome\.storage\.local\.set/);
   assert.match(worker, /resumePendingSelfReload/);
+  assert.match(worker, /current\.runtimeRevision === expected\.runtimeRevision/);
+  assert.match(worker, /current\.adapterVersion === expected\.adapterVersions\[source\]/);
+  assert.match(worker, /Last content stage:/);
+  assert.match(worker, /message\?\.type === "AKU_BROWSER_CAPTURE_DELAY"/);
+  assert.match(worker, /isTrustedSourceContentSender/);
   assert.match(worker, /chrome\.tabs\.reload\(pending\.tabId\)/);
   assert.doesNotMatch(tabBridge, /setTimeout[\s\S]*location\.reload/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_ERROR/);

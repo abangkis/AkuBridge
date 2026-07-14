@@ -17,7 +17,7 @@ test("source adapters register independently behind one contract", () => {
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
       { source: "x", version: "x-dom-v12" },
-      { source: "linkedin", version: "linkedin-dom-v7" },
+      { source: "linkedin", version: "linkedin-dom-v8" },
     ],
   );
   assert.equal(context.AkuSourceAdapters.get("x").matchesPage(), true);
@@ -41,12 +41,33 @@ test("adapter registry rejects duplicates and unknown sources", () => {
 
 test("a reinjected adapter runtime replaces the stale registry generation", () => {
   const context = createBrowserContext();
-  const previous = { runtimeRevision: "stale-fixture" };
+  const previous = { runtimeRevision: "source-adapters-v3" };
   context.AkuSourceAdapters = previous;
   runScript(context, "source-adapter-runtime.js");
   assert.notEqual(context.AkuSourceAdapters, previous);
-  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v3");
+  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v4");
   assert.deepEqual([...context.AkuSourceAdapters.capabilities()], []);
+});
+
+test("the complete adapter bundle can replace its current registry generation", () => {
+  const context = createBrowserContext();
+  runScript(context, "source-adapter-runtime.js");
+  runScript(context, path.join("adapters", "x-adapter.js"));
+  runScript(context, path.join("adapters", "linkedin-adapter.js"));
+  const previous = context.AkuSourceAdapters;
+
+  runScript(context, "source-adapter-runtime.js");
+  runScript(context, path.join("adapters", "x-adapter.js"));
+  runScript(context, path.join("adapters", "linkedin-adapter.js"));
+
+  assert.notEqual(context.AkuSourceAdapters, previous);
+  assert.deepEqual(
+    [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
+    [
+      { source: "x", version: "x-dom-v12" },
+      { source: "linkedin", version: "linkedin-dom-v8" },
+    ],
+  );
 });
 
 function createBrowserContext() {

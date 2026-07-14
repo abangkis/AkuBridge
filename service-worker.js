@@ -19,12 +19,14 @@ import {
 
 const AKU_BROWSER_ORIGIN = "http://127.0.0.1:47821";
 const X_BACKGROUND_PROBE_TIMEOUT_MS = 1_000;
+const CAPTURE_DELAY_MAX_MS = 2_000;
 const PENDING_SELF_RELOAD_KEY = "akuBridgePendingSelfReload";
 const PENDING_SELF_RELOAD_MAX_AGE_MS = 30_000;
 const commandGuard = createCommandGuard();
 const SOURCE_SCRIPT_FILES = [
   "bounded-capture-policy.js",
   "linkedin-permalink-policy.js",
+  "linkedin-timestamp-policy.js",
   "source-adapter-runtime.js",
   "adapters/x-adapter.js",
   "adapters/linkedin-adapter.js",
@@ -60,6 +62,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }));
     return true;
   }
+  if (message?.type === "AKU_BROWSER_CAPTURE_DELAY") {
+    if (!isTrustedSourceContentSender(sender)) {
+      sendResponse({ ok: false, message: "Capture delay rejected: invalid source tab." });
+      return false;
+    }
+    const milliseconds = Math.max(
+      0,
+      Math.min(CAPTURE_DELAY_MAX_MS, Math.trunc(Number(message.milliseconds) || 0)),
+    );
+    setTimeout(() => sendResponse({ ok: true }), milliseconds);
+    return true;
+  }
   if (message?.type !== "AKU_BROWSER_DISPATCH") return undefined;
   if (!sender.url?.startsWith(`${AKU_BROWSER_ORIGIN}/`)) {
     sendResponse({ ok: false, message: "Dispatch rejected: invalid AkuBrowser origin." });
@@ -70,6 +84,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
   return true;
 });
+
+function isTrustedSourceContentSender(sender) {
+  if (!Number.isInteger(sender.tab?.id) || typeof sender.url !== "string") return false;
+  try {
+    const url = new URL(sender.url);
+    return url.protocol === "https:" && (
+      url.hostname === "x.com" ||
+      url.hostname === "www.linkedin.com"
+    );
+  } catch {
+    return false;
+  }
+}
 
 async function acceptReloadSelf(message, akuBrowserTabId) {
   assertEndpoint(message.endpoint);
@@ -427,19 +454,28 @@ async function waitForSourceReady(
 }
 
 async function probeSourceReadiness(tabId, source) {
+  let response;
   try {
-    const response = await chrome.tabs.sendMessage(tabId, {
+    response = await chrome.tabs.sendMessage(tabId, {
       type: "AKU_BROWSER_PROBE_SOURCE_READY",
       source,
     });
-    if (response?.ok && response.readiness) return response.readiness;
   } catch {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: SOURCE_SCRIPT_FILES,
-    });
+    response = null;
   }
-  const response = await chrome.tabs.sendMessage(tabId, {
+  const expected = bridgeCapabilities();
+  const current = response?.readiness;
+  if (
+    response?.ok &&
+    current &&
+    current.runtimeRevision === expected.runtimeRevision &&
+    current.adapterVersion === expected.adapterVersions[source]
+  ) return current;
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: SOURCE_SCRIPT_FILES,
+  });
+  response = await chrome.tabs.sendMessage(tabId, {
     type: "AKU_BROWSER_PROBE_SOURCE_READY",
     source,
   });
@@ -502,8 +538,16 @@ async function collectFromTabWithDeadline(tabId, payload) {
     return await Promise.race([
       collectFromTab(tabId, payload),
       new Promise((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(new Error("AkuBridge content capture exceeded its bounded response deadline."));
+        timeoutId = setTimeout(async () => {
+          const diagnostics = await chrome.tabs.sendMessage(tabId, {
+            type: "AKU_BROWSER_CAPTURE_DIAGNOSTICS",
+          }).catch(() => null);
+          const detail = diagnostics?.diagnostics
+            ? ` Last content stage: ${JSON.stringify(diagnostics.diagnostics)}.`
+            : "";
+          reject(new Error(
+            `AkuBridge content capture exceeded its bounded response deadline.${detail}`,
+          ));
         }, timeoutMs);
       }),
     ]);

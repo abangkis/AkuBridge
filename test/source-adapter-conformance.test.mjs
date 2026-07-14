@@ -61,6 +61,7 @@ for (const source of ["x", "linkedin"]) {
       assert.equal(presentation.attributionText, "with Cassie Dell - Promoted - Partnership with LinkedIn");
       assert.equal(presentation.connectionDegree, "2nd");
       assert.equal(presentation.timestampText, "12h · Edited");
+      assert.equal(presentation.timestampAvailability, "relative_text");
       assert.equal(presentation.edited, true);
       assert.equal(presentation.promoted, true);
       assert.deepEqual(JSON.parse(JSON.stringify(presentation.attachment)), {

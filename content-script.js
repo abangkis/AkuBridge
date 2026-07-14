@@ -1,5 +1,9 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v23";
+  const runtimeRevision = "source-fidelity-v31";
+  const LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000;
+  const LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS = 50;
+  const LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8;
+  const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
     chrome.runtime.onMessage.removeListener(globalThis.__akuBrowserSourceBridgeMessageHandler);
@@ -10,8 +14,13 @@
   const sourceAdapters = globalThis.AkuSourceAdapters;
   if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
   if (!sourceAdapters) throw new Error("AkuBridge source-adapter runtime was not loaded.");
+  updateCaptureProgress("idle");
 
   const messageHandler = (message, _sender, sendResponse) => {
+    if (message?.type === "AKU_BROWSER_CAPTURE_DIAGNOSTICS") {
+      sendResponse({ ok: true, diagnostics: globalThis.__akuBrowserCaptureProgress });
+      return false;
+    }
     if (message?.type === "AKU_BROWSER_PROBE_SOURCE_READY") {
       sendResponse({ ok: true, readiness: probeSourceReadiness(message.source) });
       return false;
@@ -85,6 +94,9 @@
     visualHydration = {},
   ) {
     return {
+      runtimeRevision,
+      adapterRuntimeRevision: sourceAdapters.runtimeRevision,
+      adapterVersion: sourceAdapters.get(source).version,
       state,
       source,
       selectorCandidateCount,
@@ -108,7 +120,12 @@
     }
 
     const plan = capturePolicy.normalizeCapturePlan(payload);
+    updateCaptureProgress("capture_started", { source, scrolls: plan.scrolls });
     const startedAt = performance.now();
+    const operationDeadlineAtMs = Date.now() + Math.max(
+      1_000,
+      plan.captureTimeoutMs - CAPTURE_DEADLINE_RESERVE_MS,
+    );
     let scrollContext = getScrollContext(source);
     const preActionPosition = readScrollPosition(scrollContext);
     const pendingNewContentSignal = detectPendingNewContent(source);
@@ -148,7 +165,17 @@
     let continuationAnchorMatched = false;
     try {
       for (let index = 0; index <= plan.scrolls; index += 1) {
-        const snapshot = await captureVisibleSnapshot(source, plan, scrollContext);
+        if (index > 0 && Date.now() >= operationDeadlineAtMs) {
+          scrollStopReason = "deadline";
+          break;
+        }
+        updateCaptureProgress("snapshot_started", { source, snapshotIndex: index });
+        const snapshot = await captureVisibleSnapshot(
+          source,
+          plan,
+          scrollContext,
+          operationDeadlineAtMs,
+        );
         snapshot.index = index;
         if (index === 0 && plan.continuation) {
           continuationAnchorMatched = snapshotMatchesContinuation(
@@ -166,6 +193,11 @@
           uniqueCandidates,
         );
         snapshots.push(snapshot);
+        updateCaptureProgress("snapshot_completed", {
+          source,
+          snapshotIndex: index,
+          blockCount: snapshot.blocks.length,
+        });
 
         if (index >= plan.scrolls) break;
         if (performance.now() - startedAt >= plan.captureTimeoutMs) {
@@ -174,10 +206,16 @@
         }
 
         const beforeScrollY = readScrollPosition(scrollContext).y;
+        updateCaptureProgress("scrolling", { source, afterSnapshotIndex: index });
         scrollByContext(
           scrollContext,
           Math.max(320, viewportHeight(scrollContext) * plan.scrollFraction),
         );
+        updateCaptureProgress("scroll_settling", {
+          source,
+          afterSnapshotIndex: index,
+          milliseconds: plan.scrollSettleMs,
+        });
         await delay(plan.scrollSettleMs);
         const delta = Math.round(readScrollPosition(scrollContext).y - beforeScrollY);
         if (Math.abs(delta) < 2) {
@@ -189,6 +227,7 @@
       }
     } finally {
       if (plan.restoreScroll) {
+        updateCaptureProgress("restoring_scroll", { source });
         restoreAttempted = true;
         restored = await restoreScrollContext(scrollContext, restorePosition);
       }
@@ -200,6 +239,7 @@
     const lastSnapshot = snapshots.at(-1);
     const frontierAnchorKeys = (lastSnapshot?.blocks ?? []).map(blockIdentity).filter(Boolean).slice(0, 20);
     const finalScrollY = Math.round(readScrollPosition(scrollContext).y);
+    updateCaptureProgress("capture_completed", { source, observedBlockCount });
     return {
       source,
       pageUrl: window.location.href,
@@ -340,19 +380,38 @@
     };
   }
 
-  async function captureVisibleSnapshot(source, payload, scrollContext) {
+  async function captureVisibleSnapshot(source, payload, scrollContext, operationDeadlineAtMs) {
+    const capturedAt = new Date().toISOString();
     const discovery = discoverSourceCandidates(source);
     const selectorCandidates = discovery.candidates;
     const containers = selectorCandidates.filter((element) =>
       isVisibleInViewport(element, scrollContext),
     );
+    const boundedContainers = containers.slice(
+      0,
+      source === "linkedin"
+        ? Math.min(payload.maxBlocksPerSnapshot, LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT)
+        : payload.maxBlocksPerSnapshot,
+    );
+    updateCaptureProgress("snapshot_candidates_ready", {
+      source,
+      visibleContainerCount: containers.length,
+      boundedContainerCount: boundedContainers.length,
+    });
 
+    updateCaptureProgress("permalink_recovery_started", { source });
     const recoveredPermalinks = source === "linkedin"
-      ? await recoverLinkedInPermalinks(containers.slice(0, payload.maxBlocksPerSnapshot))
+      ? await recoverLinkedInPermalinks(
+          boundedContainers,
+          operationDeadlineAtMs,
+        )
       : new WeakMap();
+    updateCaptureProgress("permalink_recovery_completed", { source });
 
     const blocks = [];
-    for (const container of containers) {
+    for (const [containerIndex, container] of boundedContainers.entries()) {
+      if (Date.now() >= operationDeadlineAtMs) break;
+      updateCaptureProgress("extracting_block", { source, containerIndex });
       const expansion = await expandSourceContent(container, source);
       let block;
       try {
@@ -363,6 +422,7 @@
           scrollContext,
           recoveredPermalinks.get(container),
           expansion,
+          capturedAt,
         );
       } finally {
         await restoreSourceContent(expansion);
@@ -381,7 +441,7 @@
       selectorCounts: discovery.selectorCounts ?? {},
       selectorCandidateCount: selectorCandidates.length,
       visibleContainerCount: containers.length,
-      capturedAt: new Date().toISOString(),
+      capturedAt,
       scrollY: Math.round(readScrollPosition(scrollContext).y),
       viewportHeight: Math.round(viewportHeight(scrollContext)),
       blocks,
@@ -395,6 +455,7 @@
     scrollContext,
     recoveredPermalink = null,
     contentExpansion = null,
+    capturedAt = new Date().toISOString(),
   ) {
     const adapter = sourceAdapters.get(source);
     const text = structuredText(
@@ -411,6 +472,23 @@
       compactText,
       normalizeHttpUrl,
     }) ?? {};
+    const nativePublishedAt = normalizeDate(time?.getAttribute("datetime"));
+    const relativeTimestamp = source === "linkedin" && !nativePublishedAt
+      ? globalThis.AkuLinkedInTimestampPolicy?.estimateFromRelativeText(
+          presentation.timestampText,
+          capturedAt,
+        ) ?? null
+      : null;
+    presentation.timestampSource = nativePublishedAt
+      ? "native_datetime"
+      : relativeTimestamp
+        ? "relative_text_estimate"
+        : presentation.promoted
+          ? "not_exposed_promoted"
+          : "unavailable";
+    presentation.timestampEstimated = Boolean(relativeTimestamp);
+    presentation.timestampPrecision = relativeTimestamp?.precision
+      ?? (nativePublishedAt ? "exact" : "unknown");
     const quotedRoot = source === "x" ? findXQuotedPostContainer(container) : null;
     const quotedPost = normalizeQuotedPost(adapter.extractQuotedPost?.(container, {
       compactText,
@@ -429,7 +507,7 @@
       text,
       author: sourceAdapters.get(source).findAuthor(container, { compactText }),
       avatarUrl: findAvatar(container, source),
-      publishedAt: normalizeDate(time?.getAttribute("datetime")),
+      publishedAt: nativePublishedAt ?? relativeTimestamp?.publishedAt ?? null,
       permalink,
       platformId: findPlatformId(container, source, permalink),
       contentKind: media.some((entry) => entry.kind === "video")
@@ -476,10 +554,23 @@
     };
   }
 
-  async function recoverLinkedInPermalinks(containers) {
+  async function recoverLinkedInPermalinks(containers, operationDeadlineAtMs) {
     const recovered = new WeakMap();
+    const deadlineAtMs = Math.min(
+      Date.now() + LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS,
+      operationDeadlineAtMs,
+    );
     for (const container of containers) {
       if (findPermalinkDetails(container, "linkedin", container.querySelector("time"))) continue;
+      const remainingMs = deadlineAtMs - Date.now();
+      if (remainingMs <= 0) {
+        recovered.set(container, {
+          url: null,
+          source: "unavailable",
+          reason: "LinkedIn permalink recovery budget was exhausted for this snapshot.",
+        });
+        continue;
+      }
       const menuButton = container.querySelector(
         'button[aria-label^="Open control menu for post by"]',
       );
@@ -496,8 +587,8 @@
           () => visibleLinkedInPermalinkEvidence().find((entry) => !previouslyVisible.has(entry.href))
             ?? visibleLinkedInPermalinkEvidence()[0]
             ?? null,
-          30,
-          50,
+          Math.max(1, Math.ceil(remainingMs / LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS)),
+          LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS,
         );
         const canonical = evidence?.url ?? null;
         recovered.set(container, canonical
@@ -508,8 +599,8 @@
           menuButton.click();
           await waitForValue(
             () => visibleLinkedInPermalinkEvidence().length === 0 ? true : null,
-            6,
-            30,
+            4,
+            25,
           );
         }
       }
@@ -1134,8 +1225,28 @@
     return [...new Set(values)];
   }
 
-  function delay(milliseconds) {
-    return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  function updateCaptureProgress(stage, details = {}) {
+    globalThis.__akuBrowserCaptureProgress = Object.freeze({
+      runtimeRevision,
+      adapterRuntimeRevision: sourceAdapters.runtimeRevision,
+      stage,
+      ...details,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  async function delay(milliseconds) {
+    const duration = Math.max(0, Math.min(2_000, Math.trunc(Number(milliseconds) || 0)));
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: "AKU_BROWSER_CAPTURE_DELAY",
+        milliseconds: duration,
+      });
+      if (response?.ok) return;
+    } catch {
+      // A local timer remains a safe fallback if the extension is reloading.
+    }
+    await new Promise((resolve) => setTimeout(resolve, duration));
   }
 
   async function waitForValue(read, attempts, intervalMs) {

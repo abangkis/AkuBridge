@@ -14,7 +14,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v7",
+    version: "linkedin-dom-v8",
     matchesPage: () => window.location.hostname === "www.linkedin.com",
     loginRequired: () => (
       /\/login|\/uas\/login/i.test(window.location.pathname) ||
@@ -117,6 +117,7 @@
       const attributionText = afterAuthor.find((line) =>
         /\b(?:Promoted|Partnership with)\b/i.test(line) || /^with\s+.+?\s*[\u2022\u00b7]/i.test(line),
       ) ?? "";
+      const promoted = lines.some((line) => /\bPromoted\b/i.test(line));
       const socialAvatar = socialContext
         ? [...container.querySelectorAll('a[href*="/in/"] img')]
             .find((image) => {
@@ -131,8 +132,13 @@
         attributionText,
         connectionDegree,
         timestampText,
+        timestampAvailability: timestampLine
+          ? "relative_text"
+          : promoted
+            ? "not_exposed_promoted"
+            : "unavailable",
         edited: /\bEdited\b/i.test(timestampText),
-        promoted: lines.some((line) => /\bPromoted\b/i.test(line)),
+        promoted,
         attachment: extractLinkedInAttachment(container, { compactText, normalizeHttpUrl }),
       };
     },

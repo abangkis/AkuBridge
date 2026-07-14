@@ -1,6 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v3";
-  if (globalThis.AkuSourceAdapters?.runtimeRevision === runtimeRevision) return;
+  const runtimeRevision = "source-adapters-v4";
 
   const adapters = new Map();
 

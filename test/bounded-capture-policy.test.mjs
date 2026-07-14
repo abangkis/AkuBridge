@@ -248,6 +248,7 @@ test("the policy is loaded before the source content script", () => {
   assert.deepEqual(sourceEntry.js, [
     "bounded-capture-policy.js",
     "linkedin-permalink-policy.js",
+    "linkedin-timestamp-policy.js",
     "source-adapter-runtime.js",
     "adapters/x-adapter.js",
     "adapters/linkedin-adapter.js",
@@ -257,6 +258,7 @@ test("the policy is loaded before the source content script", () => {
   const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
   assert.match(worker, /const SOURCE_SCRIPT_FILES = \[/);
   assert.match(worker, /"linkedin-permalink-policy\.js"/);
+  assert.match(worker, /"linkedin-timestamp-policy\.js"/);
   assert.match(worker, /"adapters\/x-adapter\.js"/);
   assert.match(worker, /"adapters\/linkedin-adapter\.js"/);
 });
