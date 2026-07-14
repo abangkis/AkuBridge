@@ -32,6 +32,7 @@ const SOURCE_SCRIPT_FILES = [
   "adapters/x-adapter.js",
   "adapters/linkedin-adapter.js",
   "source-freshness-runtime.js",
+  "media-recovery-runtime.js",
   "content-script.js",
 ];
 

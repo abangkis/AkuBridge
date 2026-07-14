@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v6";
+  const runtimeRevision = "source-adapters-v7";
 
   const adapters = new Map();
 
@@ -37,6 +37,15 @@
         `AkuBridge ${adapter.source} adapter requires a bounded reveal observation window.`,
       );
     }
+    if (!adapter.mediaRecovery || typeof adapter.mediaRecovery !== "object") {
+      throw new Error(`AkuBridge ${adapter.source} adapter requires a media-recovery strategy.`);
+    }
+    if (typeof adapter.mediaRecovery.version !== "string" || !adapter.mediaRecovery.version) {
+      throw new Error(`AkuBridge ${adapter.source} adapter requires a media-recovery version.`);
+    }
+    if (typeof adapter.mediaRecovery.extractCandidates !== "function") {
+      throw new Error(`AkuBridge ${adapter.source} adapter requires media recovery extraction.`);
+    }
     adapters.set(adapter.source, Object.freeze({ ...adapter }));
   }
 
@@ -52,6 +61,7 @@
       version: adapter.version,
       qualityProfile: adapter.qualityProfile,
       freshnessVersion: adapter.freshness.version,
+      mediaRecoveryVersion: adapter.mediaRecovery.version,
       actions: [
         "probe_readiness",
         "probe_freshness",
@@ -60,6 +70,7 @@
         "detect_pending_content",
         "report_adapter_health",
         "report_capture_quality",
+        "recover_missing_media",
         "extract_source_semantics",
         "report_frontier",
         "report_source_events",

@@ -1,0 +1,29 @@
+[
+  {
+    "id": "nasa-artemis-photo-grid",
+    "rootType": "photo",
+    "expectedKind": "image",
+    "urls": [
+      "https://pbs.twimg.com/media/nasa-1.jpg",
+      "https://pbs.twimg.com/media/nasa-2.jpg",
+      "https://pbs.twimg.com/media/nasa-3.jpg",
+      "https://pbs.twimg.com/media/nasa-4.jpg"
+    ]
+  },
+  {
+    "id": "world-of-science-video-poster",
+    "rootType": "video",
+    "expectedKind": "video",
+    "urls": [
+      "https://pbs.twimg.com/ext_tw_video_thumb/tesla-valve/pu/img/poster.jpg"
+    ]
+  },
+  {
+    "id": "openai-build-week-link-card",
+    "rootType": "card",
+    "expectedKind": "image",
+    "urls": [
+      "https://pbs.twimg.com/card_img/build-week/preview.jpg"
+    ]
+  }
+]

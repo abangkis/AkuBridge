@@ -10,14 +10,15 @@ or validate the complete bridge observation by themselves.
 
 ```mermaid
 flowchart LR
-    DOM["Rendered source DOM"] --> XA["X adapter<br/>x-dom-v14<br/>x-freshness-v1"]
-    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v12<br/>linkedin-freshness-v2"]
+    DOM["Rendered source DOM"] --> XA["X adapter<br/>x-dom-v15<br/>x-freshness-v1<br/>x-media-recovery-v1"]
+    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v13<br/>linkedin-freshness-v2<br/>linkedin-media-recovery-v1"]
     XA --> R["Source-adapter registry"]
     LA --> R
     R --> F["Generic freshness recovery<br/>wake -> reveal -> proof"]
     F --> C["Shared content runtime"]
     C --> Q["Generic quality evaluator<br/>social-post-v1"]
-    Q --> P["Bounded retry/capture policy"]
+    Q --> M["Generic media recovery<br/>hydrate -> adapter alternate DOM"]
+    M --> P["Bounded retry/capture policy"]
     P --> O["Canonical observation<br/>quality reports + adapterHealth"]
     O --> SW["Service worker transport"]
     SW --> S["AkuSidecar validation<br/>and admission"]
@@ -25,7 +26,8 @@ flowchart LR
 
 The source adapters own page matching, feed-root and candidate discovery,
 source-native text/author/presentation/relationship extraction, media
-selectors and exclusions, and a versioned freshness strategy. The shared content
+selectors and exclusions, a versioned freshness strategy, and a versioned
+alternate-media strategy. The shared content
 runtime owns canonical block assembly, URL/date/media normalization, bounded
 snapshot collection, scrolling and restoration, field-presence diagnostics,
 and extension messaging. Trusted `social-post-v1` policy requires text,
@@ -45,7 +47,8 @@ removes invalid candidates, and sends only admitted evidence to reasoning.
 The normative parser/quality architecture is in
 `AkuBrowser/docs/source-adapter-quality-design.md`; stale-tab behavior and the
 third-source freshness interface are in
-`AkuBrowser/contracts/source-freshness-recovery-v1.md`.
+`AkuBrowser/contracts/source-freshness-recovery-v1.md`; bounded media fallback
+is in `AkuBrowser/contracts/media-recovery-v1.md`.
 
 ## Development
 
@@ -85,6 +88,14 @@ and login sessions.
 AkuBridge does not like, reply, follow, message, or post. For an initial capture, it follows the command's `openIfMissing` policy: the default AkuSidecar configuration may open one inactive canonical X or LinkedIn feed tab, while `fail_fast` requires an already-open eligible tab. Manual Live may use the active page for the selected source. A follow-up round never opens a replacement tab. Gate 0B permits at most two native scrolls and three viewports. Computer Use is not part of this native path.
 
 Each captured evidence block may include up to four rendered content images or video posters for Source layout. AkuBridge excludes small images and LinkedIn actor avatars, accepts only the allowlisted X/LinkedIn media CDNs, and never downloads or transforms media itself.
+
+When a rendered media root remains empty, the generic media-recovery runtime
+uses at most one pre-authorized attempt: it waits within the existing deadline,
+reruns primary extraction, then calls the adapter's alternate DOM extractor.
+The runtime never navigates, downloads, screenshots, or uses OCR. Each block
+reports `mediaRecovery`; coverage aggregates outcomes and marks
+`fallbackUsed` only after successful recovery. Exhausted media is transported
+as explicitly degraded evidence and Source layout links to the native post.
 
 LinkedIn keeps the visible relative timestamp text. When the source exposes a
 valid relative time but no native `datetime`, AkuBridge records a deterministic

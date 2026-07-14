@@ -15,7 +15,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version, packageJson.version);
-  assert.equal(manifest.version, "0.5.36");
+  assert.equal(manifest.version, "0.5.37");
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:47821/*",
@@ -66,12 +66,12 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
     linkedInAdapter,
     /\[data-testid="mainFeed"\] \[role="listitem"\]/,
   );
-  assert.match(linkedInAdapter, /linkedin-dom-v12/);
+  assert.match(linkedInAdapter, /linkedin-dom-v13/);
   assert.match(contentScript, /platformId/);
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v38/);
+  assert.match(contentScript, /source-fidelity-v39/);
   assert.match(contentScript, /relative_text_estimate/);
   assert.match(contentScript, /not_exposed_promoted/);
   assert.match(contentScript, /LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000/);
@@ -131,8 +131,16 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
     path.join(projectRoot, "adapters", "linkedin-adapter.js"),
     "utf8",
   );
+  const xAdapter = fs.readFileSync(
+    path.join(projectRoot, "adapters", "x-adapter.js"),
+    "utf8",
+  );
   const freshnessRuntime = fs.readFileSync(
     path.join(projectRoot, "source-freshness-runtime.js"),
+    "utf8",
+  );
+  const mediaRecoveryRuntime = fs.readFileSync(
+    path.join(projectRoot, "media-recovery-runtime.js"),
     "utf8",
   );
 
@@ -156,6 +164,14 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
   assert.match(freshnessRuntime, /adapter\.freshness\.revealObservationMs/);
   assert.match(linkedInAdapter, /revealObservationMs: 12_000/);
   assert.match(linkedInAdapter, /rejectInsideFeedCandidate: true/);
+  assert.match(mediaRecoveryRuntime, /media-recovery-runtime-v1/);
+  assert.match(mediaRecoveryRuntime, /primary_hydration/);
+  assert.match(mediaRecoveryRuntime, /alternate_dom/);
+  assert.doesNotMatch(mediaRecoveryRuntime, /source\s*===\s*["'](?:x|linkedin)["']/);
+  assert.match(xAdapter, /x-media-recovery-v1/);
+  assert.match(linkedInAdapter, /linkedin-media-recovery-v1/);
+  assert.match(contentScript, /mediaRecoveryRuntime\.recover/);
+  assert.match(contentScript, /fallbackUsed: mediaRecovery\.outcomes\.recovered > 0/);
   assert.match(contentScript, /restorationScope: feedMutation \? "post_reveal_start"/);
   assert.equal(freshnessRuntime.match(/signal\.element\.click\(\)/g)?.length, 1);
   assert.equal(contentScript.match(/menuButton\.click\(\)/g)?.length, 2);
@@ -213,13 +229,14 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /AKU_BRIDGE_GET_CAPABILITIES/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
-  const capabilities = createBridgeCapabilities({ version: "0.5.36", manifest_version: 3 });
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v38");
-  assert.equal(capabilities.buildId, "aku-bridge-0.5.36-source-fidelity-v38");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v14", linkedin: "linkedin-dom-v12" });
+  const capabilities = createBridgeCapabilities({ version: "0.5.37", manifest_version: 3 });
+  assert.equal(capabilities.runtimeRevision, "source-fidelity-v39");
+  assert.equal(capabilities.buildId, "aku-bridge-0.5.37-source-fidelity-v39");
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v15", linkedin: "linkedin-dom-v13" });
   assert.ok(capabilities.actions.includes("reload_self"));
   assert.ok(capabilities.actions.includes("report_capture_quality"));
   assert.ok(capabilities.actions.includes("recover_source_freshness"));
+  assert.ok(capabilities.actions.includes("recover_missing_media"));
   assert.match(tabBridge, /capability handshake returned no capabilities/);
   assert.match(worker, /chrome\.storage\.local\.set/);
   assert.match(worker, /resumePendingSelfReload/);

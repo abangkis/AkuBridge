@@ -14,7 +14,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v12",
+    version: "linkedin-dom-v13",
     qualityProfile: "social-post-v1",
     qualitySelectors: Object.freeze({
       author: 'button[aria-label^="Open control menu for post by"], '
@@ -40,6 +40,12 @@
       revealObservationMs: 12_000,
       rejectInsideFeedCandidate: true,
       pendingContentPattern: /^(?:new posts?|show new posts?)$/i,
+    }),
+    mediaRecovery: Object.freeze({
+      version: "linkedin-media-recovery-v1",
+      maxAttempts: 1,
+      settleMs: 900,
+      extractCandidates: extractLinkedInRecoveryCandidates,
     }),
     matchesPage: () => window.location.hostname === "www.linkedin.com",
     loginRequired: () => (
@@ -194,6 +200,23 @@
       .map((button) => compactText(button.getAttribute("aria-label")))
       .find((value) => /^Open control menu for post by\s+/i.test(value));
     return label?.replace(/^Open control menu for post by\s+/i, "").trim() ?? "";
+  }
+
+  function extractLinkedInRecoveryCandidates(container, {
+    excludeRoot,
+    collectRootCandidates,
+    uniqueElements,
+  }) {
+    const videoSelector = "video, [data-view-name*='video' i], [aria-label*='video' i]";
+    const roots = uniqueElements([
+      ...container.querySelectorAll(".update-components-image, .feed-shared-image"),
+      ...container.querySelectorAll(videoSelector),
+      ...container.querySelectorAll("[data-test-document-container], iframe[title*='document' i]"),
+    ]).filter((root) => !excludeRoot?.contains?.(root));
+    return roots.flatMap((root) => collectRootCandidates(root, {
+      kind: root.matches?.(videoSelector) || root.closest?.(videoSelector) ? "video" : "image",
+      alt: root.getAttribute?.("aria-label") || root.getAttribute?.("title") || "",
+    }));
   }
 
   function filterCandidates(candidates) {

@@ -1,6 +1,6 @@
 {
   "x": {
-    "version": "x-dom-v14",
+    "version": "x-dom-v15",
     "selector": "article[data-testid=\"tweet\"]",
     "strategy": "tweet_testid",
     "contentKind": "post",
@@ -29,7 +29,7 @@
     }
   },
   "linkedin": {
-    "version": "linkedin-dom-v12",
+    "version": "linkedin-dom-v13",
     "selector": "[data-view-name=\"feed-full-update\"]",
     "strategy": "[data-view-name=\"feed-full-update\"]",
     "contentKind": "document",

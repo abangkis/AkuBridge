@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v38";
+  const runtimeRevision = "source-fidelity-v39";
   const LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000;
   const LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS = 50;
   const LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8;
@@ -14,10 +14,12 @@
   const qualityPolicy = globalThis.AkuCaptureQualityPolicy;
   const sourceAdapters = globalThis.AkuSourceAdapters;
   const freshnessRuntime = globalThis.AkuSourceFreshnessRuntime;
+  const mediaRecoveryRuntime = globalThis.AkuMediaRecoveryRuntime;
   if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
   if (!qualityPolicy) throw new Error("AkuBridge capture-quality policy was not loaded.");
   if (!sourceAdapters) throw new Error("AkuBridge source-adapter runtime was not loaded.");
   if (!freshnessRuntime) throw new Error("AkuBridge source-freshness runtime was not loaded.");
+  if (!mediaRecoveryRuntime) throw new Error("AkuBridge media-recovery runtime was not loaded.");
   updateCaptureProgress("idle");
 
   const messageHandler = (message, _sender, sendResponse) => {
@@ -256,6 +258,9 @@
       snapshots.flatMap((snapshot) => snapshot.qualityReports ?? []),
       { retryBudget: plan.qualityRetryBudget },
     );
+    const mediaRecovery = mediaRecoveryRuntime.summarize(
+      snapshots.flatMap((snapshot) => snapshot.blocks ?? []).map((block) => block.mediaRecovery),
+    );
     const lastSnapshot = snapshots.at(-1);
     const frontierAnchorKeys = (lastSnapshot?.blocks ?? []).map(blockIdentity).filter(Boolean).slice(0, 20);
     const finalScrollY = Math.round(readScrollPosition(scrollContext).y);
@@ -289,6 +294,7 @@
           ).join("|"),
         },
         captureQuality,
+        mediaRecovery,
         sourceFreshness,
         frontier: {
           scrollY: lastSnapshot?.scrollY ?? captureStartPosition.y,
@@ -302,7 +308,7 @@
           pendingNewContentAction,
           candidateCount,
         }),
-        fallbackUsed: false,
+        fallbackUsed: mediaRecovery.outcomes.recovered > 0,
         scrollContainer: describeScrollContext(scrollContext),
         pendingNewContent: Boolean(pendingNewContentSignal),
         pendingNewContentLabel: pendingNewContentSignal?.label ?? "",
@@ -359,6 +365,8 @@
             ? `Source visual hydration: ${payload.sourceReadiness.visualHydrationReady ? "ready" : "incomplete"}; ${payload.sourceReadiness.hydratedPrimaryAvatarCount ?? 0}/${payload.sourceReadiness.primaryAvatarContainerCount ?? 0} primary avatar(s), ${payload.sourceReadiness.hydratedMediaContainerCount ?? 0}/${payload.sourceReadiness.mediaContainerCount ?? 0} media container(s).`
             : null,
           `Capture quality: ${captureQuality.verdict}; ${captureQuality.candidateReportCount} candidate report(s), ${captureQuality.retryAttempts} bounded retry attempt(s).`,
+          `Media recovery: ${mediaRecovery.outcomes.recovered} recovered, ` +
+            `${mediaRecovery.outcomes.unavailable} unavailable, ${mediaRecovery.attempts} bounded attempt(s).`,
           payload.tabAcquisition?.opened
             ? "AkuBridge opened one inactive canonical source tab for this initial acquisition."
             : null,
@@ -445,6 +453,7 @@
       const expansion = await expandSourceContent(container, source);
       let block;
       let captureQuality;
+      let mediaRecovery;
       try {
         block = extractBlock(
           container,
@@ -468,13 +477,32 @@
           qualityAttempt < payload.qualityRetryBudget &&
           Date.now() < operationDeadlineAtMs
         ) {
+          const attemptsAvailable = payload.qualityRetryBudget - qualityAttempt;
           qualityAttempt += 1;
           updateCaptureProgress("quality_retry", {
             source,
             containerIndex,
             attempt: qualityAttempt,
           });
-          await delay(payload.qualityRetrySettleMs);
+          const mediaIssue = captureQuality.issues.some(
+            (issue) => issue.field === "media" && issue.recoverable === true,
+          );
+          if (mediaIssue) {
+            const quotedRoot = source === "x" ? findXQuotedPostContainer(container) : null;
+            mediaRecovery = await mediaRecoveryRuntime.recover({
+              source,
+              container,
+              excludeRoot: quotedRoot,
+              initialMedia: block.media,
+              mediaRootDetected: true,
+              attemptsAvailable,
+              deadlineAtMs: operationDeadlineAtMs,
+              extractPrimary: () => findMedia(container, source, { excludeRoot: quotedRoot }),
+              delay,
+            });
+          } else {
+            await delay(payload.qualityRetrySettleMs);
+          }
           block = extractBlock(
             container,
             source,
@@ -484,6 +512,15 @@
             expansion,
             capturedAt,
           );
+          if (mediaRecovery?.media?.length > 0) {
+            block.media = capturePolicy.normalizeMediaCandidates(
+              source,
+              [...block.media, ...mediaRecovery.media],
+            );
+            if (block.media.some((entry) => entry.kind === "video")) {
+              block.contentKind = "video";
+            }
+          }
           captureQuality = evaluateBlockQuality(
             container,
             source,
@@ -501,6 +538,20 @@
             0,
           );
         }
+        if (!mediaRecovery) {
+          mediaRecovery = await mediaRecoveryRuntime.recover({
+            source,
+            container,
+            excludeRoot: source === "x" ? findXQuotedPostContainer(container) : null,
+            initialMedia: block.media,
+            mediaRootDetected: captureQuality.issues.some((issue) => issue.field === "media"),
+            attemptsAvailable: 0,
+            deadlineAtMs: operationDeadlineAtMs,
+            extractPrimary: () => block.media,
+            delay,
+          });
+        }
+        block.mediaRecovery = mediaRecovery.audit;
         block.captureQuality = captureQuality;
       } finally {
         await restoreSourceContent(expansion);

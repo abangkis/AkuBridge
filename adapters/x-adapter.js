@@ -4,7 +4,7 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v14",
+    version: "x-dom-v15",
     qualityProfile: "social-post-v1",
     qualitySelectors: Object.freeze({
       author: '[data-testid="User-Name"]',
@@ -26,6 +26,12 @@
       revealObservationMs: 5_000,
       rejectInsideFeedCandidate: true,
       pendingContentPattern: /^(?:new posts?|show(?: \d+)? posts?)$/i,
+    }),
+    mediaRecovery: Object.freeze({
+      version: "x-media-recovery-v1",
+      maxAttempts: 1,
+      settleMs: 700,
+      extractCandidates: extractXRecoveryCandidates,
     }),
     matchesPage: () => window.location.hostname === "x.com",
     loginRequired: () => false,
@@ -135,6 +141,32 @@
       if (count) result[kind === "retweet" ? "repost" : kind] = count;
     }
     return result;
+  }
+
+  function extractXRecoveryCandidates(container, {
+    excludeRoot,
+    collectRootCandidates,
+    uniqueElements,
+  }) {
+    const videoSelector = [
+      '[data-testid="previewInterstitial"]',
+      '[data-testid="videoPlayer"]',
+      '[data-testid="videoComponent"]',
+      '[aria-label*="Video" i]',
+    ].join(",");
+    const roots = uniqueElements([
+      ...container.querySelectorAll('[data-testid="tweetPhoto"]'),
+      ...container.querySelectorAll(videoSelector),
+      ...container.querySelectorAll('a[aria-label][href] img, a[aria-label][href] [style*="/card_img/"]'),
+    ]).filter((root) => !excludeRoot?.contains?.(root));
+    return roots.flatMap((root) => {
+      const videoRoot = root.matches?.(videoSelector) || root.closest?.(videoSelector);
+      return collectRootCandidates(root, {
+        kind: videoRoot ? "video" : "image",
+        alt: root.getAttribute?.("aria-label") ||
+          root.closest?.('a[aria-label]')?.getAttribute?.("aria-label") || "",
+      });
+    });
   }
 
 function imageUrls(image) {
