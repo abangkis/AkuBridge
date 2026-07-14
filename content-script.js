@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v22";
+  const runtimeRevision = "source-fidelity-v23";
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
     chrome.runtime.onMessage.removeListener(globalThis.__akuBrowserSourceBridgeMessageHandler);
@@ -487,29 +487,27 @@
         recovered.set(container, { url: null, source: "unavailable", reason: "Post control menu was not exposed." });
         continue;
       }
-      const previouslyVisible = new Set(visibleLinkedInEmbedLinks().map((link) => link.href));
+      const previouslyVisible = new Set(visibleLinkedInPermalinkEvidence().map((entry) => entry.href));
       let opened = false;
       try {
         menuButton.click();
         opened = true;
-        const embedLink = await waitForValue(
-          () => visibleLinkedInEmbedLinks().find((link) => !previouslyVisible.has(link.href))
-            ?? visibleLinkedInEmbedLinks()[0]
+        const evidence = await waitForValue(
+          () => visibleLinkedInPermalinkEvidence().find((entry) => !previouslyVisible.has(entry.href))
+            ?? visibleLinkedInPermalinkEvidence()[0]
             ?? null,
-          12,
-          40,
+          30,
+          50,
         );
-        const canonical = globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEmbedHref(
-          embedLink?.href,
-        );
+        const canonical = evidence?.url ?? null;
         recovered.set(container, canonical
-          ? { url: canonical, source: "embed_urn", reason: "" }
-          : { url: null, source: "unavailable", reason: "Embed target URN was not exposed after opening the post menu." });
+          ? { url: canonical, source: evidence.source, reason: "" }
+          : { url: null, source: "unavailable", reason: "No stable post URN was exposed after opening the post menu." });
       } finally {
         if (opened) {
           menuButton.click();
           await waitForValue(
-            () => visibleLinkedInEmbedLinks().length === 0 ? true : null,
+            () => visibleLinkedInPermalinkEvidence().length === 0 ? true : null,
             6,
             30,
           );
@@ -519,10 +517,15 @@
     return recovered;
   }
 
-  function visibleLinkedInEmbedLinks() {
-    return [...document.querySelectorAll(
-      'a[href*="/preload/embed-modal/"][href*="targetUrn="]',
-    )].filter((link) => isVisibleInViewport(link));
+  function visibleLinkedInPermalinkEvidence() {
+    return [...document.querySelectorAll('[role="menu"] a[href], [role="menu"] [role="menuitem"][href]')]
+      .filter((link) => isVisibleInViewport(link))
+      .map((link) => ({
+        href: link.href,
+        url: globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEvidence(link.href) ?? null,
+        source: /\/preload\/embed-modal\//i.test(link.pathname) ? "embed_urn" : "menu_urn",
+      }))
+      .filter((entry) => entry.url);
   }
 
   async function expandSourceContent(container, source) {
@@ -817,15 +820,22 @@
     if (linkedUrl || source !== "linkedin") {
       return linkedUrl ? { url: linkedUrl, source: "direct_anchor" } : null;
     }
-    const activityId = [
+    const domEvidence = [
       container.getAttribute("data-urn"),
       container.getAttribute("data-id"),
       ...[...container.querySelectorAll("[data-urn], [data-id]")]
         .slice(0, 20)
         .flatMap((element) => [element.getAttribute("data-urn"), element.getAttribute("data-id")]),
-    ].filter(Boolean).map((value) => String(value).match(/activity(?::|-)(\d+)/i)?.[1]).find(Boolean);
-    return activityId
-      ? { url: `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/`, source: "dom_urn" }
+    ].filter(Boolean).map((value) => {
+      const canonical = globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEvidence(String(value));
+      if (canonical) return canonical;
+      const activityId = String(value).match(/activity(?::|-)(\d+)/i)?.[1];
+      return activityId
+        ? `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/`
+        : null;
+    }).find(Boolean);
+    return domEvidence
+      ? { url: domEvidence, source: "dom_urn" }
       : null;
   }
 
