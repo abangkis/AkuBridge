@@ -18,7 +18,6 @@ import {
 } from "./bridge-capabilities.js";
 
 const AKU_BROWSER_ORIGIN = "http://127.0.0.1:47821";
-const X_BACKGROUND_PROBE_TIMEOUT_MS = 1_000;
 const CAPTURE_DELAY_MAX_MS = 2_000;
 const PENDING_SELF_RELOAD_KEY = "akuBridgePendingSelfReload";
 const PENDING_SELF_RELOAD_MAX_AGE_MS = 30_000;
@@ -335,21 +334,16 @@ async function prepareSourceTab(tab, source, opened) {
   };
   let readiness;
   if (source === "x" && backgroundAtDispatch) {
+    // X defers image and video hydration while a feed tab remains in the
+    // background. An initial post without media can otherwise make the
+    // readiness probe look complete while later scrolled posts lose media.
+    await activate();
     readiness = await waitForSourceReady(
       tab.id,
       source,
-      X_BACKGROUND_PROBE_TIMEOUT_MS,
+      12_000,
       { requireVisualHydration: true },
     );
-    if (!isSourceCaptureReady(readiness, source) && !isTerminalReadiness(readiness)) {
-      await activate();
-      readiness = await waitForSourceReady(
-        tab.id,
-        source,
-        12_000,
-        { requireVisualHydration: true },
-      );
-    }
   } else {
     readiness = await waitForSourceReady(
       tab.id,
@@ -397,10 +391,6 @@ function isSourceCaptureReady(readiness, source) {
   return readiness.state === "feed_ready" && (
     source !== "x" || readiness.visualHydrationReady === true
   );
-}
-
-function isTerminalReadiness(readiness) {
-  return ["login_required", "wrong_page"].includes(readiness.state);
 }
 
 async function assertTabLease(lease, stage) {
