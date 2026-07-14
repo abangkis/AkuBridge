@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AkuBridge",
-  "version": "0.5.30",
+  "version": "0.5.33",
   "description": "Read-only, bounded browser observation bridge for AkuBrowser.",
   "permissions": [
     "tabs",
@@ -32,9 +32,10 @@
         "https://x.com/*",
         "https://www.linkedin.com/*"
       ],
-      "js": [
-        "bounded-capture-policy.js",
-        "linkedin-permalink-policy.js",
+        "js": [
+          "bounded-capture-policy.js",
+          "capture-quality-policy.js",
+          "linkedin-permalink-policy.js",
         "linkedin-timestamp-policy.js",
         "source-adapter-runtime.js",
         "adapters/x-adapter.js",

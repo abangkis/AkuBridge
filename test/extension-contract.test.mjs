@@ -15,7 +15,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version, packageJson.version);
-  assert.equal(manifest.version, "0.5.30");
+  assert.equal(manifest.version, "0.5.33");
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:47821/*",
@@ -66,12 +66,12 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
     linkedInAdapter,
     /\[data-testid="mainFeed"\] \[role="listitem"\]/,
   );
-  assert.match(linkedInAdapter, /linkedin-dom-v8/);
+  assert.match(linkedInAdapter, /linkedin-dom-v10/);
   assert.match(contentScript, /platformId/);
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v32/);
+  assert.match(contentScript, /source-fidelity-v35/);
   assert.match(contentScript, /relative_text_estimate/);
   assert.match(contentScript, /not_exposed_promoted/);
   assert.match(contentScript, /LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000/);
@@ -178,7 +178,7 @@ test("background X capture activates for the full bounded capture so scrolled me
     /if \(source === "x" && backgroundAtDispatch\) \{[\s\S]*?await activate\(\);[\s\S]*?waitForSourceReady\([\s\S]*?requireVisualHydration: true/,
   );
   assert.match(worker, /requireVisualHydration: source === "x"/);
-  assert.match(worker, /readiness\.visualHydrationReady === true/);
+  assert.match(worker, /function isSourceCaptureReady\(readiness\) \{\s*return readiness\.state === "feed_ready";/);
   assert.match(worker, /restoreTabFocus/);
   assert.doesNotMatch(worker, /X_BACKGROUND_PROBE_TIMEOUT_MS/);
   assert.doesNotMatch(worker, /isTerminalReadiness/);
@@ -202,11 +202,12 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /AKU_BRIDGE_GET_CAPABILITIES/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
-  const capabilities = createBridgeCapabilities({ version: "0.5.30", manifest_version: 3 });
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v32");
-  assert.equal(capabilities.buildId, "aku-bridge-0.5.30-source-fidelity-v32");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v12", linkedin: "linkedin-dom-v8" });
+  const capabilities = createBridgeCapabilities({ version: "0.5.33", manifest_version: 3 });
+  assert.equal(capabilities.runtimeRevision, "source-fidelity-v35");
+  assert.equal(capabilities.buildId, "aku-bridge-0.5.33-source-fidelity-v35");
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v13", linkedin: "linkedin-dom-v10" });
   assert.ok(capabilities.actions.includes("reload_self"));
+  assert.ok(capabilities.actions.includes("report_capture_quality"));
   assert.match(tabBridge, /capability handshake returned no capabilities/);
   assert.match(worker, /chrome\.storage\.local\.set/);
   assert.match(worker, /resumePendingSelfReload/);

@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v32";
+  const runtimeRevision = "source-fidelity-v35";
   const LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000;
   const LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS = 50;
   const LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8;
@@ -11,8 +11,10 @@
   globalThis.__akuBrowserSourceBridgeRevision = runtimeRevision;
 
   const capturePolicy = globalThis.AkuBoundedCapturePolicy;
+  const qualityPolicy = globalThis.AkuCaptureQualityPolicy;
   const sourceAdapters = globalThis.AkuSourceAdapters;
   if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
+  if (!qualityPolicy) throw new Error("AkuBridge capture-quality policy was not loaded.");
   if (!sourceAdapters) throw new Error("AkuBridge source-adapter runtime was not loaded.");
   updateCaptureProgress("idle");
 
@@ -236,6 +238,10 @@
     const candidateCount = uniqueCandidates.size;
     const observedBlockCount = snapshots.reduce((sum, snapshot) => sum + snapshot.blocks.length, 0);
     const fieldCoverage = summarizeFieldCoverage(snapshots);
+    const captureQuality = qualityPolicy.summarize(
+      snapshots.flatMap((snapshot) => snapshot.qualityReports ?? []),
+      { retryBudget: plan.qualityRetryBudget },
+    );
     const lastSnapshot = snapshots.at(-1);
     const frontierAnchorKeys = (lastSnapshot?.blocks ?? []).map(blockIdentity).filter(Boolean).slice(0, 20);
     const finalScrollY = Math.round(readScrollPosition(scrollContext).y);
@@ -256,7 +262,11 @@
         adapterVersion: sourceAdapters.get(source).version,
         adapterCapabilities: sourceAdapters.capabilities(),
         adapterHealth: {
-          state: candidateCount > 0 ? "healthy" : "selector_mismatch",
+          state: candidateCount === 0
+            ? "selector_mismatch"
+            : captureQuality.verdict === "complete"
+              ? "healthy"
+              : "degraded",
           strategies: [...new Set(snapshots.map((snapshot) => snapshot.selectorStrategy))],
           selectorCounts: snapshots.at(-1)?.selectorCounts ?? {},
           fieldCoverage,
@@ -264,6 +274,7 @@
             `${snapshot.selectorStrategy}:${snapshot.selectorCandidateCount}:${snapshot.visibleContainerCount}`
           ).join("|"),
         },
+        captureQuality,
         frontier: {
           scrollY: lastSnapshot?.scrollY ?? captureStartPosition.y,
           anchorKeys: frontierAnchorKeys,
@@ -332,6 +343,7 @@
           payload.sourceReadiness?.visualHydrationRequired
             ? `Source visual hydration: ${payload.sourceReadiness.visualHydrationReady ? "ready" : "incomplete"}; ${payload.sourceReadiness.hydratedPrimaryAvatarCount ?? 0}/${payload.sourceReadiness.primaryAvatarContainerCount ?? 0} primary avatar(s), ${payload.sourceReadiness.hydratedMediaContainerCount ?? 0}/${payload.sourceReadiness.mediaContainerCount ?? 0} media container(s).`
             : null,
+          `Capture quality: ${captureQuality.verdict}; ${captureQuality.candidateReportCount} candidate report(s), ${captureQuality.retryAttempts} bounded retry attempt(s).`,
           payload.tabAcquisition?.opened
             ? "AkuBridge opened one inactive canonical source tab for this initial acquisition."
             : null,
@@ -409,11 +421,13 @@
     updateCaptureProgress("permalink_recovery_completed", { source });
 
     const blocks = [];
+    const qualityReports = [];
     for (const [containerIndex, container] of boundedContainers.entries()) {
       if (Date.now() >= operationDeadlineAtMs) break;
       updateCaptureProgress("extracting_block", { source, containerIndex });
       const expansion = await expandSourceContent(container, source);
       let block;
+      let captureQuality;
       try {
         block = extractBlock(
           container,
@@ -424,10 +438,58 @@
           expansion,
           capturedAt,
         );
+        let qualityAttempt = 0;
+        captureQuality = evaluateBlockQuality(
+          container,
+          source,
+          block,
+          qualityAttempt,
+          payload.qualityRetryBudget - qualityAttempt,
+        );
+        while (
+          captureQuality.verdict === "retryable" &&
+          qualityAttempt < payload.qualityRetryBudget &&
+          Date.now() < operationDeadlineAtMs
+        ) {
+          qualityAttempt += 1;
+          updateCaptureProgress("quality_retry", {
+            source,
+            containerIndex,
+            attempt: qualityAttempt,
+          });
+          await delay(payload.qualityRetrySettleMs);
+          block = extractBlock(
+            container,
+            source,
+            payload.maxBlockCharacters,
+            scrollContext,
+            recoveredPermalinks.get(container),
+            expansion,
+            capturedAt,
+          );
+          captureQuality = evaluateBlockQuality(
+            container,
+            source,
+            block,
+            qualityAttempt,
+            payload.qualityRetryBudget - qualityAttempt,
+          );
+        }
+        if (captureQuality.verdict === "retryable") {
+          captureQuality = evaluateBlockQuality(
+            container,
+            source,
+            block,
+            captureQuality.attempt,
+            0,
+          );
+        }
+        block.captureQuality = captureQuality;
       } finally {
         await restoreSourceContent(expansion);
         if (block?.presentation) block.presentation.contentExpansion = expansion?.state ?? "not_applicable";
       }
+      qualityReports.push(captureQuality);
       if (block.text.length < 40) continue;
       if (blocks.some((existing) => existing.text === block.text)) continue;
       block.feedPosition = selectorCandidates.indexOf(container) + 1;
@@ -445,7 +507,60 @@
       scrollY: Math.round(readScrollPosition(scrollContext).y),
       viewportHeight: Math.round(viewportHeight(scrollContext)),
       blocks,
+      qualityReports,
     };
+  }
+
+  function evaluateBlockQuality(container, source, block, attempt, retriesRemaining) {
+    const adapter = sourceAdapters.get(source);
+    const selectors = adapter.qualitySelectors ?? {};
+    const quotedRoot = source === "x" ? findXQuotedPostContainer(container) : null;
+    const facts = {
+      contentRootDetected: selectorDetectedOutside(container, selectors.content, quotedRoot),
+      authorRootDetected: selectorDetectedOutside(container, selectors.author, quotedRoot),
+      primaryAvatarRootDetected: selectorDetectedOutside(container, selectors.avatar, quotedRoot),
+      mediaRootDetected: hasPotentialMediaRoot(container, source, quotedRoot),
+      timestampSignalDetected:
+        selectorDetectedOutside(container, selectors.timestamp, quotedRoot) ||
+        Boolean(block.presentation?.timestampText),
+      publishedAtNotExposed:
+        block.presentation?.timestampSource === "not_exposed_promoted" ||
+        block.presentation?.timestampAvailability === "not_exposed_promoted",
+      stableTextIdentity: compactText(block.text).length >= 40,
+    };
+    return qualityPolicy.evaluateCandidate({
+      candidate: block,
+      facts,
+      profileId: adapter.qualityProfile,
+      attempt,
+      retriesRemaining,
+    });
+  }
+
+  function selectorDetectedOutside(container, selector, excludeRoot) {
+    if (!selector) return false;
+    return [...container.querySelectorAll(selector)].some((element) =>
+      !excludeRoot?.contains?.(element),
+    );
+  }
+
+  function hasPotentialMediaRoot(container, source, excludeRoot) {
+    const adapter = sourceAdapters.get(source);
+    if (selectorDetectedOutside(container, adapter.qualitySelectors?.media, excludeRoot)) {
+      return true;
+    }
+    for (const image of container.querySelectorAll(adapter.imageSelector ?? "img")) {
+      if (excludeRoot?.contains?.(image) || adapter.shouldSkipImage?.(image)) continue;
+      const rect = image.getBoundingClientRect();
+      if ((rect.width || image.naturalWidth) >= 180 && (rect.height || image.naturalHeight) >= 90) {
+        return true;
+      }
+    }
+    return [...container.querySelectorAll("video")].some((video) => {
+      if (excludeRoot?.contains?.(video)) return false;
+      const rect = video.getBoundingClientRect();
+      return (rect.width || video.videoWidth) >= 180 && (rect.height || video.videoHeight) >= 90;
+    });
   }
 
   function extractBlock(

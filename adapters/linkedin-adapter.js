@@ -14,7 +14,22 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v8",
+    version: "linkedin-dom-v10",
+    qualityProfile: "social-post-v1",
+    qualitySelectors: Object.freeze({
+      author: 'button[aria-label^="Open control menu for post by"], '
+        + '.update-components-actor__name, .feed-shared-actor__name, '
+        + '[data-view-name="feed-actor-name"]',
+      avatar: '.update-components-actor__avatar-image, '
+        + '.feed-shared-actor__avatar-image, '
+        + '[data-view-name="feed-actor-image"] img, '
+        + '.update-components-actor img, .feed-shared-actor img',
+      content: '[data-testid="expandable-text-box"]',
+      media: '.update-components-image, .feed-shared-image, '
+        + 'video, [data-test-document-container], '
+        + 'iframe[title*="document" i]',
+      timestamp: "time",
+    }),
     matchesPage: () => window.location.hostname === "www.linkedin.com",
     loginRequired: () => (
       /\/login|\/uas\/login/i.test(window.location.pathname) ||

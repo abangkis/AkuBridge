@@ -24,6 +24,7 @@ const PENDING_SELF_RELOAD_MAX_AGE_MS = 30_000;
 const commandGuard = createCommandGuard();
 const SOURCE_SCRIPT_FILES = [
   "bounded-capture-policy.js",
+  "capture-quality-policy.js",
   "linkedin-permalink-policy.js",
   "linkedin-timestamp-policy.js",
   "source-adapter-runtime.js",
@@ -357,7 +358,7 @@ async function prepareSourceTab(tab, source, opened) {
     readiness = await waitForSourceReady(tab.id, source, 15_000);
   }
   readiness.waitMs = Date.now() - startedAt;
-  const captureReady = isSourceCaptureReady(readiness, source);
+  const captureReady = isSourceCaptureReady(readiness);
   if (!captureReady) {
     await restoreTabFocus(previousActiveTabId, tab.id);
     throw new Error(
@@ -387,10 +388,8 @@ async function prepareSourceTab(tab, source, opened) {
   };
 }
 
-function isSourceCaptureReady(readiness, source) {
-  return readiness.state === "feed_ready" && (
-    source !== "x" || readiness.visualHydrationReady === true
-  );
+function isSourceCaptureReady(readiness) {
+  return readiness.state === "feed_ready";
 }
 
 async function assertTabLease(lease, stage) {

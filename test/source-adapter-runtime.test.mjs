@@ -16,12 +16,14 @@ test("source adapters register independently behind one contract", () => {
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v12" },
-      { source: "linkedin", version: "linkedin-dom-v8" },
+      { source: "x", version: "x-dom-v13" },
+      { source: "linkedin", version: "linkedin-dom-v10" },
     ],
   );
   assert.equal(context.AkuSourceAdapters.get("x").matchesPage(), true);
   assert.equal(context.AkuSourceAdapters.get("linkedin").matchesPage(), false);
+  assert.equal(context.AkuSourceAdapters.get("x").qualityProfile, "social-post-v1");
+  assert.equal(context.AkuSourceAdapters.capabilities()[0].qualityProfile, "social-post-v1");
 });
 
 test("adapter registry rejects duplicates and unknown sources", () => {
@@ -30,6 +32,8 @@ test("adapter registry rejects duplicates and unknown sources", () => {
   context.AkuSourceAdapters.register({
     source: "fixture",
     version: "fixture-v1",
+    qualityProfile: "social-post-v1",
+    qualitySelectors: {},
     matchesPage() { return true; },
     discoverCandidates() { return { candidates: [] }; },
     findAuthor() { return ""; },
@@ -45,7 +49,7 @@ test("a reinjected adapter runtime replaces the stale registry generation", () =
   context.AkuSourceAdapters = previous;
   runScript(context, "source-adapter-runtime.js");
   assert.notEqual(context.AkuSourceAdapters, previous);
-  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v4");
+  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v5");
   assert.deepEqual([...context.AkuSourceAdapters.capabilities()], []);
 });
 
@@ -64,8 +68,8 @@ test("the complete adapter bundle can replace its current registry generation", 
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v12" },
-      { source: "linkedin", version: "linkedin-dom-v8" },
+      { source: "x", version: "x-dom-v13" },
+      { source: "linkedin", version: "linkedin-dom-v10" },
     ],
   );
 });

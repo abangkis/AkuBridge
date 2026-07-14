@@ -12,6 +12,8 @@
     maxBlocksPerSnapshot: 20,
     maxBlockCharacters: 4_000,
     maxMediaPerBlock: 4,
+    maxQualityRetryBudget: 1,
+    maxQualityRetrySettleMs: 1_000,
   });
 
   function normalizeCapturePlan(payload = {}) {
@@ -67,6 +69,18 @@
         40,
         limits.maxBlockCharacters,
         limits.maxBlockCharacters,
+      ),
+      qualityRetryBudget: clampInteger(
+        payload.qualityRetryBudget,
+        0,
+        limits.maxQualityRetryBudget,
+        0,
+      ),
+      qualityRetrySettleMs: clampInteger(
+        payload.qualityRetrySettleMs,
+        100,
+        limits.maxQualityRetrySettleMs,
+        300,
       ),
       acquisitionRound,
       continuation: acquisitionRound === 2 ? normalizeContinuation(payload.continuation) : null,

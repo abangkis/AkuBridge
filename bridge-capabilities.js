@@ -1,4 +1,4 @@
-export const BRIDGE_RUNTIME_REVISION = "source-fidelity-v32";
+export const BRIDGE_RUNTIME_REVISION = "source-fidelity-v35";
 export const BRIDGE_ID = "aku-bridge-chrome-mv3-v0";
 export const BRIDGE_CONTRACT_VERSION = "aku-browser.bridge.v1";
 
@@ -8,7 +8,7 @@ export function createBridgeCapabilities(manifest) {
     extensionVersion: manifest.version,
     runtimeRevision: BRIDGE_RUNTIME_REVISION,
     buildId: `aku-bridge-${manifest.version}-${BRIDGE_RUNTIME_REVISION}`,
-    adapterVersions: { x: "x-dom-v12", linkedin: "linkedin-dom-v8" },
+    adapterVersions: { x: "x-dom-v13", linkedin: "linkedin-dom-v10" },
     contractVersion: BRIDGE_CONTRACT_VERSION,
     manifestVersion: manifest.manifest_version,
     sources: ["x", "linkedin"],
@@ -17,6 +17,7 @@ export function createBridgeCapabilities(manifest) {
       "collect_visible",
       "detect_pending_content",
       "report_adapter_health",
+      "report_capture_quality",
       "extract_source_semantics",
       "report_frontier",
       "manage_source_tab_lifecycle",

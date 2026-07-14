@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v4";
+  const runtimeRevision = "source-adapters-v5";
 
   const adapters = new Map();
 
@@ -15,6 +15,12 @@
         throw new Error(`AkuBridge ${adapter.source} adapter is missing ${method}().`);
       }
     }
+    if (typeof adapter.qualityProfile !== "string" || !adapter.qualityProfile) {
+      throw new Error(`AkuBridge ${adapter.source} adapter requires a quality profile.`);
+    }
+    if (!adapter.qualitySelectors || typeof adapter.qualitySelectors !== "object") {
+      throw new Error(`AkuBridge ${adapter.source} adapter requires quality selectors.`);
+    }
     adapters.set(adapter.source, Object.freeze({ ...adapter }));
   }
 
@@ -28,11 +34,13 @@
     return [...adapters.values()].map((adapter) => ({
       source: adapter.source,
       version: adapter.version,
+      qualityProfile: adapter.qualityProfile,
       actions: [
         "probe_readiness",
         "collect_visible",
         "detect_pending_content",
         "report_adapter_health",
+        "report_capture_quality",
         "extract_source_semantics",
         "report_frontier",
         "report_source_events",

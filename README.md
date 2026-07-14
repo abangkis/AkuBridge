@@ -10,15 +10,16 @@ or validate the complete bridge observation by themselves.
 
 ```mermaid
 flowchart LR
-    DOM["Rendered source DOM"] --> XA["X adapter<br/>x-dom-v12"]
-    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v8"]
+    DOM["Rendered source DOM"] --> XA["X adapter<br/>x-dom-v13"]
+    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v10"]
     XA --> R["Source-adapter registry"]
     LA --> R
     R --> C["Shared content runtime"]
-    C --> P["Bounded capture policy"]
-    P --> O["Canonical observation<br/>and adapterHealth"]
+    C --> Q["Generic quality evaluator<br/>social-post-v1"]
+    Q --> P["Bounded retry/capture policy"]
+    P --> O["Canonical observation<br/>quality reports + adapterHealth"]
     O --> SW["Service worker transport"]
-    SW --> S["AkuSidecar validation"]
+    SW --> S["AkuSidecar validation<br/>and admission"]
 ```
 
 The source adapters own page matching, feed-root and candidate discovery,
@@ -26,20 +27,22 @@ source-native text/author/presentation/relationship extraction, media
 selectors and exclusions, and pending-content labels. The shared content
 runtime owns canonical block assembly, URL/date/media normalization, bounded
 snapshot collection, scrolling and restoration, field-presence diagnostics,
-and extension messaging. The service worker owns tab selection, readiness,
-leases, retries already authorized by the capture contract, and transport.
+and extension messaging. Trusted `social-post-v1` policy requires text,
+author, and one stable identity path; it conditionally expects media or a
+primary avatar when the adapter detects that source root. The service worker
+owns tab selection, readiness, leases, retries already authorized by the
+capture contract, and transport.
 
-The registry currently verifies only that each adapter exposes the required
-hooks. Synthetic conformance fixtures verify known extraction examples. At
-runtime, `adapterHealth.fieldCoverage` records field presence, but it is
-diagnostic rather than an admission decision: `adapterHealth.state` is healthy
-when at least one unique candidate was captured. Special readiness checks cover
-known cases such as X visual hydration and LinkedIn zero-evidence recovery, but
-there is not yet one generic required/conditional/optional field evaluator.
+Each adapter declares a quality profile and detection selectors. The shared
+evaluator emits explicit `complete`, `usable_degraded`, `retryable`, or
+`invalid` reports with field-level reason codes. AkuSidecar pre-authorizes at
+most one same-candidate, same-viewport retry; the retry cannot add scrolling,
+navigation, source changes, or deadline. A final `retryable` report is not
+allowed across the Bridge boundary. Sidecar validates report consistency,
+removes invalid candidates, and sends only admitted evidence to reasoning.
 
-The proposed generic quality and admission layer is documented as a
-brainstorming design in the parent workspace at
-`AkuBrowser/docs/source-adapter-quality-design.md`. It is not implemented yet.
+The normative architecture and third-source extension requirements are in
+`AkuBrowser/docs/source-adapter-quality-design.md`.
 
 ## Development
 

@@ -27,6 +27,7 @@ for (const source of ["x", "linkedin"]) {
     const semantics = adapter.extractSemantics(candidate, { compactText, normalizeHttpUrl });
     const avatarUrl = adapter.findAvatar(candidate, { compactText, normalizeHttpUrl });
     assert.equal(adapter.version, fixture.version);
+    assert.equal(adapter.qualityProfile, "social-post-v1");
     assert.equal(discovery.candidates.length, 1);
     assert.equal(discovery.strategy, fixture.strategy);
     assert.equal(semantics.contentKind, fixture.contentKind);
@@ -48,6 +49,8 @@ for (const source of ["x", "linkedin"]) {
       assert.deepEqual(JSON.parse(JSON.stringify(quotedPost)), fixture.quotedPost);
     }
     if (source === "linkedin") {
+      assert.equal(adapter.qualitySelectors.avatar.includes('a[href*="/in/"] img'), false);
+      assert.match(adapter.qualitySelectors.avatar, /feed-actor-image/);
       assert.equal(
         adapter.extractText(candidate, {
           compactText,

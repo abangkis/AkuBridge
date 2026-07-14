@@ -4,7 +4,18 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v12",
+    version: "x-dom-v13",
+    qualityProfile: "social-post-v1",
+    qualitySelectors: Object.freeze({
+      author: '[data-testid="User-Name"]',
+      avatar: '[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"]',
+      content: '[data-testid="tweetText"]',
+      media: '[data-testid="tweetPhoto"], [data-testid="previewInterstitial"], '
+        + '[data-testid="videoPlayer"], [data-testid="videoComponent"], '
+        + '[aria-label*="Video" i], a[aria-label][href] img[src*="/card_img/"], '
+        + 'a[aria-label][href] [style*="/card_img/"]',
+      timestamp: "time",
+    }),
     matchesPage: () => window.location.hostname === "x.com",
     loginRequired: () => false,
     feedRootPresent: () => Boolean(document.querySelector("main")),
