@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v39";
+  const runtimeRevision = "source-fidelity-v40";
   const LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000;
   const LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS = 50;
   const LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8;
@@ -411,6 +411,12 @@
         sourceTabOwnership: payload.tabAcquisition?.ownership ?? "shared",
         sourceTabOpenedDisposition:
           payload.tabAcquisition?.openedTabDisposition ?? "preserve",
+        captureVisibilityPolicy:
+          payload.tabAcquisition?.captureVisibilityPolicy ?? "quiet",
+        captureVisibilityMode:
+          payload.tabAcquisition?.captureVisibilityMode ?? "same_window",
+        workingTabPreserved: false,
+        workingFocusRestored: false,
         sourceTabClosedAfterCapture: false,
         sourceReadinessRetryCount: payload.sourceReadinessRetryCount ?? 0,
       },

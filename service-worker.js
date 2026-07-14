@@ -13,6 +13,11 @@ import {
 } from "./bridge-runtime-policy.js";
 import { recoverSourceFreshness } from "./source-freshness-recovery.js";
 import {
+  planCaptureVisibility,
+  requiresSameWindowRecovery,
+} from "./capture-visibility-policy.js";
+import { createManagedCaptureWindowRuntime } from "./capture-window-runtime.js";
+import {
   BRIDGE_CONTRACT_VERSION,
   BRIDGE_ID,
   createBridgeCapabilities,
@@ -23,6 +28,7 @@ const CAPTURE_DELAY_MAX_MS = 2_000;
 const PENDING_SELF_RELOAD_KEY = "akuBridgePendingSelfReload";
 const PENDING_SELF_RELOAD_MAX_AGE_MS = 30_000;
 const commandGuard = createCommandGuard();
+const managedCaptureWindow = createManagedCaptureWindowRuntime(chrome);
 const SOURCE_SCRIPT_FILES = [
   "bounded-capture-policy.js",
   "capture-quality-policy.js",
@@ -193,6 +199,7 @@ async function captureWithSourceTabRecovery(command) {
         command.payload.source,
         command.payload.mode,
         command.payload.openIfMissing,
+        command.payload.captureVisibilityPolicy,
       );
       const observation = await capturePreparedSource(command, prepared, attempt);
       if (shouldCloseOpenedSourceTab({
@@ -203,6 +210,11 @@ async function captureWithSourceTabRecovery(command) {
         await chrome.tabs.remove(prepared.tab.id).catch(() => undefined);
         observation.coverage.sourceTabClosedAfterCapture = true;
       }
+      const focusOutcome = await prepared.restoreFocus();
+      observation.coverage.captureVisibilityPolicy = prepared.captureVisibilityPolicy;
+      observation.coverage.captureVisibilityMode = prepared.captureVisibilityMode;
+      observation.coverage.workingTabPreserved = focusOutcome.preserved === true;
+      observation.coverage.workingFocusRestored = focusOutcome.restored === true;
       return observation;
     } catch (error) {
       if (!shouldRetrySourceTab({
@@ -242,9 +254,11 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
       activatedForReadiness: prepared.activatedForReadiness,
       backgroundAtDispatch: prepared.backgroundAtDispatch,
       recoveryCount: sourceTabRecoveryCount,
-      ownership: prepared.opened ? "managed" : "shared",
+      ownership: prepared.ownership,
       openedTabDisposition:
         tabLifecycle.openedTabDisposition,
+      captureVisibilityPolicy: prepared.captureVisibilityPolicy,
+      captureVisibilityMode: prepared.captureVisibilityMode,
     },
   };
   const response = await collectFromTabWithDeadline(prepared.tab.id, payload);
@@ -286,9 +300,43 @@ function bridgeHeaders(token) {
   };
 }
 
-async function findOrOpenSourceTab(source, mode, openIfMissing) {
+async function findOrOpenSourceTab(source, mode, openIfMissing, requestedVisibilityPolicy) {
+  const visibilityPlan = planCaptureVisibility({
+    policy: requestedVisibilityPolicy,
+    mode,
+  });
+  let excludedManagedWindowId = null;
+  if (visibilityPlan.initialMode === "managed_window") {
+    try {
+      const managed = await managedCaptureWindow.prepare(source, { openIfMissing });
+      excludedManagedWindowId = managed.tab.windowId;
+      if (managed.opened) await waitForTabComplete(managed.tab.id, 20_000);
+      const prepared = await prepareSourceTab(managed.tab, source, managed.opened, {
+        ownership: "managed",
+        captureVisibilityPolicy: visibilityPlan.policy,
+        captureVisibilityMode: "managed_window",
+        restoreFocus: managed.verifyFocus,
+      });
+      if (!requiresSameWindowRecovery(visibilityPlan, prepared.readiness)) {
+        return prepared;
+      }
+      await prepared.restoreFocus();
+    } catch (error) {
+      if (!visibilityPlan.allowSameWindowFallback) {
+        if (error?.code === "visible_recovery_required") throw error;
+        throw new AkuBridgeError(
+          "visible_recovery_required",
+          "capture_visibility",
+          `Quiet capture could not prepare the managed ${source} surface: ${String(error?.message ?? error)}`,
+          { source, causeCode: error?.code ?? "bridge_failure" },
+        );
+      }
+    }
+  }
+
   const patterns = source === "x" ? ["https://x.com/*"] : ["https://www.linkedin.com/*"];
-  const tabs = await chrome.tabs.query({ url: patterns });
+  const tabs = (await chrome.tabs.query({ url: patterns }))
+    .filter((tab) => tab.windowId !== excludedManagedWindowId);
   const selected = chooseSourceTab(tabs, { source, mode });
   let tab = selected;
   let opened = false;
@@ -304,10 +352,16 @@ async function findOrOpenSourceTab(source, mode, openIfMissing) {
     await waitForTabComplete(tab.id, 20_000);
     tab = await chrome.tabs.get(tab.id);
   }
-  return prepareSourceTab(tab, source, opened);
+  return prepareSourceTab(tab, source, opened, {
+    ownership: opened ? "managed" : "shared",
+    captureVisibilityPolicy: visibilityPlan.policy,
+    captureVisibilityMode: visibilityPlan.initialMode === "managed_window"
+      ? "same_window_recovery"
+      : "same_window",
+  });
 }
 
-async function prepareSourceTab(tab, source, opened) {
+async function prepareSourceTab(tab, source, opened, options = {}) {
   const lease = createTabLease(tab, source, opened);
   const startedAt = Date.now();
   const backgroundAtDispatch = tab.active !== true;
@@ -376,7 +430,10 @@ async function prepareSourceTab(tab, source, opened) {
     readiness,
     activatedForReadiness,
     activateForRetry: activate,
-    restoreFocus: () => restoreTabFocus(previousActiveTabId, tab.id),
+    ownership: options.ownership ?? (opened ? "managed" : "shared"),
+    captureVisibilityPolicy: options.captureVisibilityPolicy ?? "quiet",
+    captureVisibilityMode: options.captureVisibilityMode ?? "same_window",
+    restoreFocus: options.restoreFocus ?? (() => restoreTabFocus(previousActiveTabId, tab.id)),
   };
 }
 
@@ -506,17 +563,23 @@ async function revealPendingSourceContent(tabId, payload) {
 }
 
 async function restoreTabFocus(previousActiveTabId, sourceTabId) {
-  if (!previousActiveTabId || previousActiveTabId === sourceTabId) return;
+  if (!previousActiveTabId || previousActiveTabId === sourceTabId) {
+    return { changed: false, restored: false, preserved: true };
+  }
   try {
     const sourceTab = await chrome.tabs.get(sourceTabId);
     const currentlyActive = (await chrome.tabs.query({
       active: true,
       windowId: sourceTab.windowId,
     }))[0]?.id;
-    if (currentlyActive !== sourceTabId) return;
+    if (currentlyActive !== sourceTabId) {
+      return { changed: true, restored: true, preserved: false };
+    }
     await chrome.tabs.update(previousActiveTabId, { active: true });
+    return { changed: true, restored: true, preserved: false };
   } catch {
     // The user may have closed or moved the previous tab during the bounded capture.
+    return { changed: true, restored: false, preserved: false };
   }
 }
 

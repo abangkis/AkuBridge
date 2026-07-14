@@ -10,7 +10,8 @@ or validate the complete bridge observation by themselves.
 
 ```mermaid
 flowchart LR
-    DOM["Rendered source DOM"] --> XA["X adapter<br/>x-dom-v15<br/>x-freshness-v1<br/>x-media-recovery-v1"]
+    V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
+    DOM --> XA["X adapter<br/>x-dom-v15<br/>x-freshness-v1<br/>x-media-recovery-v1"]
     DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v13<br/>linkedin-freshness-v2<br/>linkedin-media-recovery-v1"]
     XA --> R["Source-adapter registry"]
     LA --> R
@@ -24,7 +25,10 @@ flowchart LR
     SW --> S["AkuSidecar validation<br/>and admission"]
 ```
 
-The source adapters own page matching, feed-root and candidate discovery,
+The generic visibility orchestrator owns the capture surface before parsing:
+Quiet catch-up uses a reusable, dedicated non-focused Chrome window, while
+Adaptive tries that path first and may fall back to bounded same-window
+activation. The source adapters own page matching, feed-root and candidate discovery,
 source-native text/author/presentation/relationship extraction, media
 selectors and exclusions, a versioned freshness strategy, and a versioned
 alternate-media strategy. The shared content
@@ -85,7 +89,19 @@ promoted stable binary instead of `target\dev` outside active Supervisor
 development. Cooperative reload preserves Chrome, source tabs, profile state,
 and login sessions.
 
-AkuBridge does not like, reply, follow, message, or post. For an initial capture, it follows the command's `openIfMissing` policy: the default AkuSidecar configuration may open one inactive canonical X or LinkedIn feed tab, while `fail_fast` requires an already-open eligible tab. Manual Live may use the active page for the selected source. A follow-up round never opens a replacement tab. Gate 0B permits at most two native scrolls and three viewports. Computer Use is not part of this native path.
+AkuBridge does not like, reply, follow, message, or post. For Catch Up, the
+default `quiet` policy creates or reuses canonical X and LinkedIn tabs in one
+dedicated Chrome window created with `focused: false`. Activating a tab inside
+that window does not authorize replacing the active tab in the user's working
+window. The managed binding is stored locally and revalidated after service
+worker or browser lifecycle changes. `adaptive_fidelity` uses the same quiet
+path first, but may fall back to the bounded activate/capture/restore path when
+managed-window readiness or hydration cannot be proven. `openIfMissing` still
+controls whether a missing managed tab may be created; `fail_fast` therefore
+fails when no reusable managed binding exists. Manual Live may use the active
+page for the selected source. A follow-up round never opens a replacement tab.
+Gate 0B permits at most two native scrolls and three viewports. Computer Use is
+not part of this native path.
 
 Each captured evidence block may include up to four rendered content images or video posters for Source layout. AkuBridge excludes small images and LinkedIn actor avatars, accepts only the allowlisted X/LinkedIn media CDNs, and never downloads or transforms media itself.
 
@@ -115,8 +131,8 @@ Source adapters also emit bounded health diagnostics, source-native content/rela
 
 Tabs opened by AkuBridge are distinguished from shared user tabs. Both are preserved by default. The lifecycle contract can close only an explicitly managed tab opened by the same successful acquisition; it never closes a pre-existing user tab.
 
-Before Gate 0B.2 capture, the generic freshness engine temporarily activates a
-background X or LinkedIn tab, waits through the adapter-declared wake window,
+Before Gate 0B.2 capture, the generic freshness engine activates the source tab
+inside the selected capture surface, waits through the adapter-declared wake window,
 and handles either an automatically changed feed or one allowlisted visible
 `New posts`/`Show posts` control. The revealed latest feed becomes the new
 scroll-restoration baseline, and `coverage.sourceFreshness` records the state,
@@ -128,8 +144,13 @@ LinkedIn capture still uses a bounded feed-readiness probe because a completed
 page shell may contain no rendered feed. Freshness is a separate generic stage:
 both X and LinkedIn now wake stale background tabs and support adapter-owned
 pending-content reveal. Reveal failure stops at `source_freshness`; it is never
-retried as detect-only capture. If the user changes tabs during acquisition,
-focus restoration yields to that user action.
+retried as detect-only capture. Quiet coverage reports `managed_window` plus
+whether the working tab remained preserved. If Chrome unexpectedly focuses the
+managed surface, Bridge restores the prior working focus and fails with
+`visible_recovery_required` instead of silently claiming a quiet run. Adaptive
+coverage distinguishes quiet success from `same_window_recovery`. If the user
+changes tabs during same-window acquisition, focus restoration yields to that
+user action.
 
 If Chrome invalidates a tab between discovery and initial capture, AkuBridge may discard that stale reference and perform exactly one fresh source-tab discovery. The normal `openIfMissing` policy still applies, and coverage records the recovery. Provider-directed follow-up never rebinds because its evidence frontier belongs to the original tab.
 
