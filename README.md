@@ -11,7 +11,7 @@ or validate the complete bridge observation by themselves.
 ```mermaid
 flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
-    DOM --> XA["X adapter<br/>x-dom-v15<br/>x-freshness-v1<br/>x-media-recovery-v1"]
+    DOM --> XA["X adapter<br/>x-dom-v16<br/>x-freshness-v1<br/>x-media-recovery-v1"]
     DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v13<br/>linkedin-freshness-v2<br/>linkedin-media-recovery-v1"]
     XA --> R["Source-adapter registry"]
     LA --> R
@@ -47,6 +47,11 @@ most one same-candidate, same-viewport retry; the retry cannot add scrolling,
 navigation, source changes, or deadline. A final `retryable` report is not
 allowed across the Bridge boundary. Sidecar validates report consistency,
 removes invalid candidates, and sends only admitted evidence to reasoning.
+
+The X adapter treats an in-post `/status/.../photo/...` permalink as semantic
+media evidence. This keeps a temporarily unhydrated photo inside the generic
+visual-readiness and recovery path instead of incorrectly reporting that media
+does not apply to the post.
 
 The normative parser/quality architecture is in
 `AkuBrowser/docs/source-adapter-quality-design.md`; stale-tab behavior and the

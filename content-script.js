@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v41";
+  const runtimeRevision = "source-fidelity-v42";
   const LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000;
   const LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS = 50;
   const LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8;
@@ -949,12 +949,8 @@
           hydratedPrimaryAvatarCount += 1;
         }
       }
-      const mediaRoot = container.querySelector(
-        '[data-testid="tweetPhoto"], [data-testid="previewInterstitial"], '
-          + '[data-testid="videoPlayer"], [data-testid="videoComponent"], '
-          + 'div[aria-label*="Video" i], a[aria-label][href] img[src*="/card_img/"], '
-          + 'a[aria-label][href] [style*="/card_img/"]',
-      );
+      const mediaSelector = sourceAdapters.get(source).qualitySelectors?.media;
+      const mediaRoot = mediaSelector ? container.querySelector(mediaSelector) : null;
       if (mediaRoot) {
         mediaContainerCount += 1;
         if (findMedia(container, source).length > 0) hydratedMediaContainerCount += 1;

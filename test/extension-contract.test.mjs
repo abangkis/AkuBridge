@@ -15,7 +15,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version, packageJson.version);
-  assert.equal(manifest.version, "0.5.39");
+  assert.equal(manifest.version, "0.5.40");
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:47821/*",
@@ -71,7 +71,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v41/);
+  assert.match(contentScript, /source-fidelity-v42/);
   assert.match(contentScript, /relative_text_estimate/);
   assert.match(contentScript, /not_exposed_promoted/);
   assert.match(contentScript, /LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000/);
@@ -107,12 +107,15 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /structuredText/);
   assert.match(contentScript, /summarizeVisualHydration/);
   assert.match(contentScript, /hydratedPrimaryAvatarCount/);
-  assert.match(contentScript, /div\[aria-label\*="Video" i\]/);
+  assert.match(xAdapter, /\[aria-label\*="Video" i\]/);
   assert.match(contentScript, /excludeRoot/);
   assert.match(contentScript, /findXQuotedPostContainer/);
   assert.doesNotMatch(contentScript, /container\.querySelectorAll\("img"\).*profile_images/s);
   assert.match(contentScript, /media\.some\(\(entry\) => entry\.kind === "video"\)/);
   assert.match(xAdapter, /videoComponent.*img/);
+  assert.match(xAdapter, /a\[href\*="\/status\/"\]\[href\*="\/photo\/"\]/);
+  assert.match(contentScript, /sourceAdapters\.get\(source\)\.qualitySelectors\?\.media/);
+  assert.match(contentScript, /mediaSelector \? container\.querySelector\(mediaSelector\) : null/);
   assert.match(contentScript, /mediaUrlFromCssBackground/);
   assert.match(linkedInAdapter, /\[data-view-name="feed-full-update"\]/);
   assert.match(linkedInAdapter, /\.feed-shared-update-v2/);
@@ -229,10 +232,10 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /AKU_BRIDGE_GET_CAPABILITIES/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
-  const capabilities = createBridgeCapabilities({ version: "0.5.39", manifest_version: 3 });
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v41");
-  assert.equal(capabilities.buildId, "aku-bridge-0.5.39-source-fidelity-v41");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v15", linkedin: "linkedin-dom-v13" });
+  const capabilities = createBridgeCapabilities({ version: "0.5.40", manifest_version: 3 });
+  assert.equal(capabilities.runtimeRevision, "source-fidelity-v42");
+  assert.equal(capabilities.buildId, "aku-bridge-0.5.40-source-fidelity-v42");
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v16", linkedin: "linkedin-dom-v13" });
   assert.ok(capabilities.actions.includes("reload_self"));
   assert.ok(capabilities.actions.includes("report_capture_quality"));
   assert.ok(capabilities.actions.includes("recover_source_freshness"));

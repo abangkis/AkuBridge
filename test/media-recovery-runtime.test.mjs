@@ -75,15 +75,22 @@ test("media recovery fails soft with an explicit unavailable outcome", async () 
   assert.match(result.audit.limitation, /remained unavailable/i);
 });
 
-test("X adapter fallback covers the three captured regression shapes", () => {
+test("X adapter fallback covers the captured regression shapes", () => {
   const context = adapterContext();
   runScript(context, path.join("adapters", "x-adapter.js"));
   const strategy = context.adapter.mediaRecovery;
+  const photoPermalinkSelector = 'a[href*="/status/"][href*="/photo/"]';
+  assert.ok(context.adapter.qualitySelectors.media.includes(photoPermalinkSelector));
+  assert.ok(context.adapter.imageSelector.includes(`${photoPermalinkSelector} img`));
   for (const fixture of cases) {
     const root = recoveryRoot(fixture);
     const container = {
       querySelectorAll(selector) {
         if (fixture.rootType === "photo" && selector.includes("tweetPhoto")) return [root];
+        if (
+          fixture.rootType === "photo_permalink" &&
+          selector.includes('href*="/photo/"')
+        ) return [root];
         if (fixture.rootType === "video" && selector.includes("previewInterstitial")) return [root];
         if (fixture.rootType === "card" && selector.includes("a[aria-label]")) return [root];
         return [];

@@ -4,7 +4,7 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v15",
+    version: "x-dom-v16",
     qualityProfile: "social-post-v1",
     qualitySelectors: Object.freeze({
       author: '[data-testid="User-Name"]',
@@ -12,6 +12,7 @@
       content: '[data-testid="tweetText"]',
       media: '[data-testid="tweetPhoto"], [data-testid="previewInterstitial"], '
         + '[data-testid="videoPlayer"], [data-testid="videoComponent"], '
+        + 'a[href*="/status/"][href*="/photo/"], '
         + '[aria-label*="Video" i], a[aria-label][href] img[src*="/card_img/"], '
         + 'a[aria-label][href] [style*="/card_img/"]',
       timestamp: "time",
@@ -126,6 +127,7 @@
     },
     imageSelector: [
       '[data-testid="tweetPhoto"] img',
+      'a[href*="/status/"][href*="/photo/"] img',
       '[data-testid="previewInterstitial"] img[alt="Embedded video"]',
       '[data-testid="videoPlayer"] img',
       '[data-testid="videoComponent"] img',
@@ -156,6 +158,7 @@
     ].join(",");
     const roots = uniqueElements([
       ...container.querySelectorAll('[data-testid="tweetPhoto"]'),
+      ...container.querySelectorAll('a[href*="/status/"][href*="/photo/"]'),
       ...container.querySelectorAll(videoSelector),
       ...container.querySelectorAll('a[aria-label][href] img, a[aria-label][href] [style*="/card_img/"]'),
     ]).filter((root) => !excludeRoot?.contains?.(root));
