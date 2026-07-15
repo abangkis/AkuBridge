@@ -176,12 +176,14 @@ page shell may contain no rendered feed. Freshness is a separate generic stage:
 both X and LinkedIn now wake stale background tabs and support adapter-owned
 pending-content reveal. Reveal failure stops at `source_freshness`; it is never
 retried as detect-only capture. Quiet coverage reports `managed_window` plus
-whether the working tab remained preserved. If Chrome unexpectedly focuses the
-managed surface, Bridge restores the prior working focus and fails with
-`visible_recovery_required` instead of silently claiming a quiet run. Adaptive
-coverage distinguishes quiet success from `same_window_recovery`. If the user
-changes tabs during same-window acquisition, focus restoration yields to that
-user action.
+separate ownership and focus signals. `workingTabPreserved` is guaranteed by
+using only the Bridge-owned surface; it is not inferred from an unchanged focus
+snapshot. If Chrome focuses that managed surface during capture, Bridge restores
+the prior working focus and records `workingFocusRestored`. A user's later tab
+or window choice remains authoritative and is never rolled back. Failure to
+prepare the managed surface without taking focus still fails with
+`visible_recovery_required`. Adaptive coverage distinguishes quiet success from
+`same_window_recovery`.
 
 If Chrome invalidates a tab between discovery and initial capture, AkuBridge may discard that stale reference and perform exactly one fresh source-tab discovery. The normal `openIfMissing` policy still applies, and coverage records the recovery. Provider-directed follow-up never rebinds because its evidence frontier belongs to the original tab.
 

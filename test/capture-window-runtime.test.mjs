@@ -23,6 +23,38 @@ test("managed capture creates a non-focused window and preserves the working tab
   assert.equal(chrome.activeByWindow.get(1), 11);
 });
 
+test("managed capture does not override a user's later tab choice", async () => {
+  const chrome = fakeChrome();
+  const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x", {
+    leaseId: "session-1",
+  });
+  chrome.addTab(1, "https://example.com/new-work", 12);
+  chrome.activeByWindow.set(1, 12);
+
+  assert.deepEqual(await prepared.verifyFocus(), {
+    changed: false,
+    restored: false,
+    preserved: true,
+  });
+  assert.equal(chrome.activeByWindow.get(1), 12);
+});
+
+test("managed capture restores focus only when its own window took focus", async () => {
+  const chrome = fakeChrome();
+  const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x", {
+    leaseId: "session-1",
+  });
+  chrome.focusedWindowId = 2;
+
+  assert.deepEqual(await prepared.verifyFocus(), {
+    changed: true,
+    restored: true,
+    preserved: true,
+  });
+  assert.equal(chrome.focusedWindowId, 1);
+  assert.equal(chrome.activeByWindow.get(1), 11);
+});
+
 test("managed capture refuses creation when missing-tab policy forbids it", async () => {
   const chrome = fakeChrome();
   await assert.rejects(

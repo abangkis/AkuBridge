@@ -227,7 +227,11 @@ async function captureWithSourceTabRecovery(command) {
       const focusOutcome = await prepared.restoreFocus();
       observation.coverage.captureVisibilityPolicy = prepared.captureVisibilityPolicy;
       observation.coverage.captureVisibilityMode = prepared.captureVisibilityMode;
-      observation.coverage.workingTabPreserved = focusOutcome.preserved === true;
+      // Tab preservation is an ownership guarantee, not a focus snapshot.
+      // A user may intentionally move focus while capture is running, and
+      // Chrome may briefly report the managed window as last-focused. Neither
+      // event means that AkuBridge navigated or closed the user's working tab.
+      observation.coverage.workingTabPreserved = prepared.workingTabPreserved === true;
       observation.coverage.workingFocusRestored = focusOutcome.restored === true;
       return observation;
     } catch (error) {
@@ -338,6 +342,7 @@ async function findOrOpenSourceTab(
         ownership: "managed",
         captureVisibilityPolicy: visibilityPlan.policy,
         captureVisibilityMode: "managed_window",
+        workingTabPreserved: true,
         restoreFocus: managed.verifyFocus,
       });
       if (!requiresSameWindowRecovery(visibilityPlan, prepared.readiness)) {
@@ -456,6 +461,7 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
     ownership: options.ownership ?? (opened ? "managed" : "shared"),
     captureVisibilityPolicy: options.captureVisibilityPolicy ?? "quiet",
     captureVisibilityMode: options.captureVisibilityMode ?? "same_window",
+    workingTabPreserved: options.workingTabPreserved === true,
     restoreFocus: options.restoreFocus ?? (() => restoreTabFocus(previousActiveTabId, tab.id)),
   };
 }

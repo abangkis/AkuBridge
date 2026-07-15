@@ -30,7 +30,11 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
 
       const current = await chromeApi.tabs.get(binding.tabId);
       if (current.active !== true) await chromeApi.tabs.update(binding.tabId, { active: true });
-      const focusOutcome = await preserveWorkingFocus(chromeApi, focusSnapshot);
+      const focusOutcome = await preserveWorkingFocus(
+        chromeApi,
+        focusSnapshot,
+        binding.windowId,
+      );
       if (focusOutcome.changed) {
         throw visibilityError(
           "Chrome focused the managed capture surface while Quiet capture was preparing it.",
@@ -42,7 +46,11 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
         tab: await chromeApi.tabs.get(binding.tabId),
         opened,
         focusSnapshot,
-        verifyFocus: () => preserveWorkingFocus(chromeApi, focusSnapshot),
+        verifyFocus: () => preserveWorkingFocus(
+          chromeApi,
+          focusSnapshot,
+          binding.windowId,
+        ),
       };
     },
     async release(leaseId) {
@@ -192,25 +200,23 @@ async function captureWorkingFocus(chromeApi) {
   }
 }
 
-async function preserveWorkingFocus(chromeApi, snapshot) {
+async function preserveWorkingFocus(chromeApi, snapshot, managedWindowId) {
   if (!snapshot?.windowId) {
     return { changed: false, restored: false, preserved: true };
   }
   let currentWindow;
-  let currentTab;
   try {
     currentWindow = await chromeApi.windows.getLastFocused();
-    currentTab = (await chromeApi.tabs.query({
-      active: true,
-      windowId: snapshot.windowId,
-    }))[0];
   } catch {
     return { changed: true, restored: false, preserved: false };
   }
-  const changed = currentWindow?.id !== snapshot.windowId || (
-    Number.isInteger(snapshot.tabId) && currentTab?.id !== snapshot.tabId
-  );
-  if (!changed) return { changed: false, restored: false, preserved: true };
+
+  // Focus outside the managed surface belongs to the user. Do not undo a tab
+  // or window change that happened while a bounded capture was running.
+  if (currentWindow?.id !== managedWindowId) {
+    return { changed: false, restored: false, preserved: true };
+  }
+
   try {
     if (Number.isInteger(snapshot.tabId)) {
       await chromeApi.tabs.update(snapshot.tabId, { active: true });
@@ -224,7 +230,7 @@ async function preserveWorkingFocus(chromeApi, snapshot) {
     const restored = verifiedWindow?.id === snapshot.windowId && (
       !Number.isInteger(snapshot.tabId) || verifiedTab?.id === snapshot.tabId
     );
-    return { changed: true, restored, preserved: false };
+    return { changed: true, restored, preserved: restored };
   } catch {
     return { changed: true, restored: false, preserved: false };
   }
