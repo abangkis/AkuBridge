@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v42";
+  const runtimeRevision = "source-fidelity-v43";
   const LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000;
   const LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS = 50;
   const LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8;
@@ -460,6 +460,7 @@
       let block;
       let captureQuality;
       let mediaRecovery;
+      let candidateKey;
       try {
         block = extractBlock(
           container,
@@ -470,11 +471,13 @@
           expansion,
           capturedAt,
         );
+        candidateKey = provisionalCandidateKey(source, block, containerIndex, capturedAt);
         let qualityAttempt = 0;
         captureQuality = evaluateBlockQuality(
           container,
           source,
           block,
+          candidateKey,
           qualityAttempt,
           payload.qualityRetryBudget - qualityAttempt,
         );
@@ -531,6 +534,7 @@
             container,
             source,
             block,
+            candidateKey,
             qualityAttempt,
             payload.qualityRetryBudget - qualityAttempt,
           );
@@ -540,6 +544,7 @@
             container,
             source,
             block,
+            candidateKey,
             captureQuality.attempt,
             0,
           );
@@ -585,7 +590,14 @@
     };
   }
 
-  function evaluateBlockQuality(container, source, block, attempt, retriesRemaining) {
+  function evaluateBlockQuality(
+    container,
+    source,
+    block,
+    candidateKey,
+    attempt,
+    retriesRemaining,
+  ) {
     const adapter = sourceAdapters.get(source);
     const selectors = adapter.qualitySelectors ?? {};
     const quotedRoot = source === "x" ? findXQuotedPostContainer(container) : null;
@@ -606,9 +618,27 @@
       candidate: block,
       facts,
       profileId: adapter.qualityProfile,
+      candidateKey,
       attempt,
       retriesRemaining,
     });
+  }
+
+  function provisionalCandidateKey(source, block, containerIndex, capturedAt) {
+    if (block?.platformId) return block.platformId;
+    if (block?.permalink) return block.permalink;
+    const text = compactText(block?.text).toLowerCase();
+    if (text) return `${source}:text:${stableTextHash(text)}`;
+    return `${source}:dom:${capturedAt}:${containerIndex + 1}`;
+  }
+
+  function stableTextHash(value) {
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(16).padStart(8, "0");
   }
 
   function selectorDetectedOutside(container, selector, excludeRoot) {

@@ -40,6 +40,12 @@ primary avatar when the adapter detects that source root. The service worker
 owns tab selection, readiness, leases, retries already authorized by the
 capture contract, and transport.
 
+Conditional fields have distinct impact. Missing primary media is an
+evidence-level limitation and may consume the one bounded recovery attempt.
+An unhydrated author avatar is a presentation-only warning: it remains
+observable in the quality report but does not consume retry budget, degrade
+admission, or hide otherwise complete evidence.
+
 Each adapter declares a quality profile and detection selectors. The shared
 evaluator emits explicit `complete`, `usable_degraded`, `retryable`, or
 `invalid` reports with field-level reason codes. AkuSidecar pre-authorizes at
@@ -81,6 +87,12 @@ to synchronize `manifest.json`, `package.json`, and `package-lock.json`, then
 advance `akuRuntimeRevision`/`BRIDGE_RUNTIME_REVISION` and the content runtime
 revision together. The heartbeat derives its build ID from extension version
 and runtime revision; AkuSidecar rejects captures from an incompatible build.
+
+AkuSidecar associates each accepted heartbeat with its current non-persisted
+`instanceEpoch`. The AkuBrowser relay requests a fresh capability handshake
+before every new run and after a Sidecar replacement. AkuBridge does not need
+to persist or interpret the epoch; it continues to publish only its bounded
+capabilities, while Sidecar owns admission freshness.
 
 After the one-time bootstrap, use AkuSupervisor instead of Chrome control:
 
@@ -128,6 +140,9 @@ The runtime never navigates, downloads, screenshots, or uses OCR. Each block
 reports `mediaRecovery`; coverage aggregates outcomes and marks
 `fallbackUsed` only after successful recovery. Exhausted media is transported
 as explicitly degraded evidence and Source layout links to the native post.
+The audit also records the bounded extraction stages (`primary`, hydration,
+adapter alternate DOM, and terminal outcome) so an unavailable URL can be
+located without replaying or exposing post content.
 
 LinkedIn keeps the visible relative timestamp text. When the source exposes a
 valid relative time but no native `datetime`, AkuBridge records a deterministic

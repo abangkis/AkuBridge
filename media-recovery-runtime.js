@@ -27,13 +27,22 @@
       recoveredCount: 0,
       method: "none",
       limitation: "",
+      trace: [],
     };
     const primary = normalizeMedia(source, initialMedia);
     if (primary.length > 0) {
-      return result(primary, { ...base, outcome: "primary_complete" });
+      return result(primary, {
+        ...base,
+        outcome: "primary_complete",
+        trace: ["primary_complete"],
+      });
     }
     if (!mediaRootDetected) {
-      return result([], { ...base, outcome: "not_applicable" });
+      return result([], {
+        ...base,
+        outcome: "not_applicable",
+        trace: ["primary_missing", "media_root_absent"],
+      });
     }
     if (
       !strategy ||
@@ -45,6 +54,7 @@
         ...base,
         outcome: "unavailable",
         limitation: "Rendered media was detected but no bounded recovery attempt was available.",
+        trace: ["primary_missing", "media_root_detected", "attempt_unavailable"],
       });
     }
 
@@ -53,6 +63,7 @@
       clampInteger(strategy.maxAttempts, 1, 1, 1),
     );
     let attempts = 0;
+    const trace = ["primary_missing", "media_root_detected"];
     for (; attempts < maximumAttempts && Date.now() < deadlineAtMs; attempts += 1) {
       await delay(clampInteger(strategy.settleMs, 100, 2_000, 700));
       const hydrated = normalizeMedia(source, extractPrimary?.() ?? []);
@@ -63,8 +74,10 @@
           attempts: attempts + 1,
           recoveredCount: hydrated.length,
           method: "primary_hydration",
+          trace: [...trace, "primary_hydration_complete"],
         });
       }
+      trace.push("primary_hydration_empty");
       const alternate = normalizeMedia(
         source,
         strategy.extractCandidates(container, {
@@ -80,14 +93,18 @@
           attempts: attempts + 1,
           recoveredCount: alternate.length,
           method: "alternate_dom",
+          trace: [...trace, "alternate_dom_complete"],
         });
       }
+      trace.push("alternate_dom_empty");
     }
+    if (Date.now() >= deadlineAtMs) trace.push("deadline_exhausted");
     return result([], {
       ...base,
       outcome: "unavailable",
       attempts,
       limitation: "Rendered media remained unavailable after the bounded adapter recovery.",
+      trace,
     });
   }
 
@@ -111,6 +128,12 @@
       methods: Object.freeze([...new Set(
         recoveries.map((entry) => entry.method).filter((method) => method && method !== "none"),
       )]),
+      stageCounts: Object.freeze(recoveries
+        .flatMap((entry) => entry.trace ?? [])
+        .reduce((counts, stage) => {
+          counts[stage] = (counts[stage] ?? 0) + 1;
+          return counts;
+        }, {})),
     });
   }
 
@@ -188,7 +211,13 @@
   }
 
   function result(media, audit) {
-    return Object.freeze({ media: Object.freeze(media), audit: Object.freeze(audit) });
+    return Object.freeze({
+      media: Object.freeze(media),
+      audit: Object.freeze({
+        ...audit,
+        trace: Object.freeze([...(audit.trace ?? [])]),
+      }),
+    });
   }
 
   function uniqueElements(values) {

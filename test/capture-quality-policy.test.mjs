@@ -44,6 +44,22 @@ test("detected empty media is retryable and then degrades after the bounded retr
   assert.equal(final.attempt, 1);
 });
 
+test("missing avatars are presentation warnings and never consume the retry budget", () => {
+  const policy = loadPolicy();
+  const report = policy.evaluateCandidate({
+    candidate: { ...completeCandidate(), avatarUrl: null },
+    facts: completeFacts(),
+    profileId: "social-post-v1",
+    candidateKey: "x:status:1",
+    retriesRemaining: 1,
+  });
+  assert.equal(report.verdict, "complete");
+  assert.equal(report.candidateKey, "x:status:1");
+  assert.equal(report.issues[0].field, "avatarUrl");
+  assert.equal(report.issues[0].impact, "presentation");
+  assert.equal(report.issues[0].recoverable, false);
+});
+
 test("a detected empty required author becomes invalid after recovery is exhausted", () => {
   const policy = loadPolicy();
   const candidate = { ...completeCandidate(), author: "" };
@@ -77,7 +93,7 @@ test("explicitly not-exposed timestamps do not reduce quality", () => {
   assert.equal(report.verdict, "complete");
 });
 
-test("quality summaries preserve verdict and bounded retry accounting", () => {
+test("quality summaries preserve warnings without degrading the aggregate", () => {
   const policy = loadPolicy();
   const complete = policy.evaluateCandidate({
     candidate: completeCandidate(),
@@ -91,10 +107,10 @@ test("quality summaries preserve verdict and bounded retry accounting", () => {
     attempt: 1,
   });
   const summary = policy.summarize([complete, degraded], { retryBudget: 1 });
-  assert.equal(summary.verdict, "usable_degraded");
+  assert.equal(summary.verdict, "complete");
   assert.equal(summary.candidateReportCount, 2);
-  assert.equal(summary.verdictCounts.complete, 1);
-  assert.equal(summary.verdictCounts.usable_degraded, 1);
+  assert.equal(summary.verdictCounts.complete, 2);
+  assert.equal(summary.verdictCounts.usable_degraded, 0);
   assert.equal(summary.retryAttempts, 1);
 });
 

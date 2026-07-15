@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "capture-quality-v1";
+  const runtimeRevision = "capture-quality-v2";
   if (globalThis.AkuCaptureQualityPolicy?.runtimeRevision === runtimeRevision) return;
 
   const profiles = Object.freeze({
@@ -7,8 +7,20 @@
       requiredFields: Object.freeze(["text", "author"]),
       identityFields: Object.freeze(["platformId", "permalink", "stableTextIdentity"]),
       conditionalFields: Object.freeze([
-        Object.freeze({ field: "avatarUrl", fact: "primaryAvatarRootDetected" }),
-        Object.freeze({ field: "media", fact: "mediaRootDetected" }),
+        Object.freeze({
+          field: "avatarUrl",
+          fact: "primaryAvatarRootDetected",
+          severity: "low",
+          recoverable: false,
+          impact: "presentation",
+        }),
+        Object.freeze({
+          field: "media",
+          fact: "mediaRootDetected",
+          severity: "high",
+          recoverable: true,
+          impact: "evidence",
+        }),
       ]),
       optionalDetectedFields: Object.freeze([
         Object.freeze({ field: "publishedAt", fact: "timestampSignalDetected" }),
@@ -20,6 +32,7 @@
     candidate,
     facts = {},
     profileId,
+    candidateKey = null,
     attempt = 0,
     retriesRemaining = 0,
   }) {
@@ -40,6 +53,7 @@
         observedState: detected ? "detected_empty" : "missing",
         severity: "critical",
         recoverable: detected,
+        impact: "identity",
         attempt,
       }));
     }
@@ -56,6 +70,7 @@
         observedState: "missing",
         severity: "critical",
         recoverable: false,
+        impact: "identity",
         attempt,
       }));
     }
@@ -66,8 +81,9 @@
         field: expectation.field,
         code: "pending_hydration",
         observedState: "pending_hydration",
-        severity: "high",
-        recoverable: true,
+        severity: expectation.severity ?? "high",
+        recoverable: expectation.recoverable !== false,
+        impact: expectation.impact ?? "evidence",
         attempt,
       }));
     }
@@ -84,21 +100,24 @@
         observedState: "detected_empty",
         severity: "low",
         recoverable: false,
+        impact: "evidence",
         attempt,
       }));
     }
 
-    const critical = issues.some((entry) => entry.severity === "critical");
-    const recoverable = issues.some((entry) => entry.recoverable);
+    const decisionIssues = issues.filter((entry) => entry.impact !== "presentation");
+    const critical = decisionIssues.some((entry) => entry.severity === "critical");
+    const recoverable = decisionIssues.some((entry) => entry.recoverable);
     const verdict = critical
       ? recoverable && retriesRemaining > 0 ? "retryable" : "invalid"
       : recoverable && retriesRemaining > 0
         ? "retryable"
-        : issues.length > 0
+        : decisionIssues.length > 0
           ? "usable_degraded"
           : "complete";
     return Object.freeze({
       profile: profileId,
+      candidateKey: normalizeCandidateKey(candidateKey),
       verdict,
       score: qualityScore(issues),
       attempt,
@@ -153,9 +172,17 @@
     return Object.freeze(value);
   }
 
+  function normalizeCandidateKey(value) {
+    return typeof value === "string" && value.trim()
+      ? value.trim().slice(0, 500)
+      : null;
+  }
+
   function qualityScore(issues) {
     const penalty = issues.reduce((sum, entry) => sum + (
-      entry.severity === "critical" ? 0.5 : entry.severity === "high" ? 0.2 : 0.05
+      entry.impact === "presentation"
+        ? 0.01
+        : entry.severity === "critical" ? 0.5 : entry.severity === "high" ? 0.2 : 0.05
     ), 0);
     return Math.max(0, Math.round((1 - penalty) * 100) / 100);
   }
