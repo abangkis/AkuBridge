@@ -13,6 +13,7 @@
     initialMedia = [],
     mediaRootDetected = false,
     attemptsAvailable = 0,
+    settleMs = null,
     deadlineAtMs = Number.POSITIVE_INFINITY,
     extractPrimary,
     delay,
@@ -65,7 +66,7 @@
     let attempts = 0;
     const trace = ["primary_missing", "media_root_detected"];
     for (; attempts < maximumAttempts && Date.now() < deadlineAtMs; attempts += 1) {
-      await delay(clampInteger(strategy.settleMs, 100, 2_000, 700));
+      await delay(clampInteger(settleMs ?? strategy.settleMs, 100, 2_000, 700));
       const hydrated = normalizeMedia(source, extractPrimary?.() ?? []);
       if (hydrated.length > 0) {
         return result(hydrated, {

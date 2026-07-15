@@ -49,6 +49,22 @@ test("media recovery retries primary hydration before adapter fallback", async (
   );
 });
 
+test("media recovery honors the bounded-load settle override", async () => {
+  const delays = [];
+  const context = runtimeContext(() => []);
+  await context.AkuMediaRecoveryRuntime.recover({
+    source: "x",
+    container: {},
+    initialMedia: [],
+    mediaRootDetected: true,
+    attemptsAvailable: 1,
+    settleMs: 1_000,
+    extractPrimary: () => [],
+    delay: async (milliseconds) => delays.push(milliseconds),
+  });
+  assert.deepEqual(delays, [1_000]);
+});
+
 test("media recovery uses one adapter-specific alternate extraction", async () => {
   const context = runtimeContext(() => [media("https://pbs.twimg.com/media/alternate.jpg")]);
   const result = await context.AkuMediaRecoveryRuntime.recover({

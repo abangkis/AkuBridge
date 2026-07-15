@@ -34,7 +34,7 @@ test("native capture policy clamps every browser-movement budget", () => {
     restoreScroll: false,
   });
 
-  assert.equal(plan.scrolls, 2);
+  assert.equal(plan.scrolls, 6);
   assert.equal(plan.scrollFraction, 0.5);
   assert.equal(plan.scrollSettleMs, 2_000);
   assert.equal(plan.captureTimeoutMs, 45_000);

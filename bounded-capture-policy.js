@@ -2,7 +2,7 @@
   if (globalThis.AkuBoundedCapturePolicy) return;
 
   const limits = Object.freeze({
-    maxScrolls: 2,
+    maxScrolls: 6,
     minScrollFraction: 0.5,
     maxScrollFraction: 0.9,
     maxScrollSettleMs: 2_000,

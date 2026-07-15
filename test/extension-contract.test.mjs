@@ -15,7 +15,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version, packageJson.version);
-  assert.equal(manifest.version, "0.5.42");
+  assert.equal(manifest.version, "0.5.44");
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:47821/*",
@@ -71,7 +71,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v44/);
+  assert.match(contentScript, /source-fidelity-v46/);
   assert.match(contentScript, /relative_text_estimate/);
   assert.match(contentScript, /not_exposed_promoted/);
   assert.match(contentScript, /LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000/);
@@ -234,9 +234,9 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /AKU_BRIDGE_GET_CAPABILITIES/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
-  const capabilities = createBridgeCapabilities({ version: "0.5.42", manifest_version: 3 });
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v44");
-  assert.equal(capabilities.buildId, "aku-bridge-0.5.42-source-fidelity-v44");
+  const capabilities = createBridgeCapabilities({ version: "0.5.44", manifest_version: 3 });
+  assert.equal(capabilities.runtimeRevision, "source-fidelity-v46");
+  assert.equal(capabilities.buildId, "aku-bridge-0.5.44-source-fidelity-v46");
   assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v16", linkedin: "linkedin-dom-v13" });
   assert.ok(capabilities.actions.includes("reload_self"));
   assert.ok(capabilities.actions.includes("report_capture_quality"));
@@ -257,7 +257,7 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.doesNotMatch(tabBridge, /setTimeout[\s\S]*location\.reload/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_ERROR/);
   assert.equal(capabilities.authority, "read_only_bounded");
-  assert.deepEqual(capabilities.captureLimits, { maxScrolls: 2, maxSnapshots: 3, maxBlocksPerSnapshot: 20 });
+  assert.deepEqual(capabilities.captureLimits, { maxScrolls: 6, maxSnapshots: 7, maxBlocksPerSnapshot: 20 });
   assert.match(worker, /assertTabLease\(prepared\.lease, "before_capture"\)/);
   assert.match(worker, /assertTabLease\(prepared\.lease, "after_capture"\)/);
   assert.match(worker, /chrome\.runtime\.reload\(\)/);

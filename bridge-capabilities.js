@@ -1,4 +1,4 @@
-export const BRIDGE_RUNTIME_REVISION = "source-fidelity-v44";
+export const BRIDGE_RUNTIME_REVISION = "source-fidelity-v46";
 export const BRIDGE_ID = "aku-bridge-chrome-mv3-v0";
 export const BRIDGE_CONTRACT_VERSION = "aku-browser.bridge.v1";
 
@@ -31,6 +31,6 @@ export function createBridgeCapabilities(manifest) {
       "reload_self",
     ],
     authority: "read_only_bounded",
-    captureLimits: { maxScrolls: 2, maxSnapshots: 3, maxBlocksPerSnapshot: 20 },
+    captureLimits: { maxScrolls: 6, maxSnapshots: 7, maxBlocksPerSnapshot: 20 },
   };
 }

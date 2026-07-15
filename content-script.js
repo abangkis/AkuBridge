@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v44";
+  const runtimeRevision = "source-fidelity-v46";
   const LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000;
   const LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS = 50;
   const LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8;
@@ -505,6 +505,7 @@
               initialMedia: block.media,
               mediaRootDetected: true,
               attemptsAvailable,
+              settleMs: payload.qualityRetrySettleMs,
               deadlineAtMs: operationDeadlineAtMs,
               extractPrimary: () => findMedia(container, source, { excludeRoot: quotedRoot }),
               delay,
@@ -557,6 +558,7 @@
             initialMedia: block.media,
             mediaRootDetected: captureQuality.issues.some((issue) => issue.field === "media"),
             attemptsAvailable: 0,
+            settleMs: payload.qualityRetrySettleMs,
             deadlineAtMs: operationDeadlineAtMs,
             extractPrimary: () => block.media,
             delay,
