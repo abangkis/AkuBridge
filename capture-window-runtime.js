@@ -4,7 +4,7 @@ export const CAPTURE_WINDOW_STORAGE_KEY = "akuBridgeManagedCaptureWindowV1";
 
 export function createManagedCaptureWindowRuntime(chromeApi) {
   return Object.freeze({
-    async prepare(source, { openIfMissing = true } = {}) {
+    async prepare(source, { openIfMissing = true, leaseId = null } = {}) {
       const focusSnapshot = await captureWorkingFocus(chromeApi);
       const state = await loadState(chromeApi);
       let binding = await validateBinding(chromeApi, state, source);
@@ -20,6 +20,13 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
         binding = await createBinding(chromeApi, state, source);
         opened = true;
       }
+
+      const claimedState = normalizeManagedCaptureState(binding.state ?? state);
+      claimedState.windowId = binding.windowId;
+      claimedState.tabs[source] = binding.tabId;
+      claimedState.ownedByBridge = true;
+      claimedState.leaseId = normalizeLeaseId(leaseId);
+      await saveState(chromeApi, claimedState);
 
       const current = await chromeApi.tabs.get(binding.tabId);
       if (current.active !== true) await chromeApi.tabs.update(binding.tabId, { active: true });
@@ -38,6 +45,41 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
         verifyFocus: () => preserveWorkingFocus(chromeApi, focusSnapshot),
       };
     },
+    async release(leaseId) {
+      const state = await loadState(chromeApi);
+      const requestedLeaseId = normalizeLeaseId(leaseId);
+      if (!state.windowId || !state.ownedByBridge) {
+        return { released: false, reason: "no_owned_surface" };
+      }
+      if (state.leaseId && state.leaseId !== requestedLeaseId) {
+        return { released: false, reason: "lease_mismatch" };
+      }
+      let window;
+      try {
+        window = await chromeApi.windows.get(state.windowId, { populate: true });
+      } catch {
+        await clearState(chromeApi);
+        return { released: false, reason: "surface_already_closed" };
+      }
+      const ownedTabs = ownedTabsInWindow(window.tabs ?? [], state.tabs);
+      const ownedIds = new Set(ownedTabs.map((tab) => tab.id));
+      const userTabs = (window.tabs ?? []).filter((tab) => !ownedIds.has(tab.id));
+      if (ownedTabs.length > 0 && userTabs.length === 0) {
+        await chromeApi.windows.remove(state.windowId);
+        await clearState(chromeApi);
+        return { released: true, mode: "owned_window_closed", closedTabs: ownedTabs.length };
+      }
+      if (ownedTabs.length > 0) {
+        await chromeApi.tabs.remove(ownedTabs.map((tab) => tab.id));
+      }
+      await clearState(chromeApi);
+      return {
+        released: ownedTabs.length > 0,
+        mode: "owned_tabs_closed_user_window_preserved",
+        closedTabs: ownedTabs.length,
+        preservedUserTabs: userTabs.length,
+      };
+    },
   });
 }
 
@@ -48,7 +90,12 @@ export function normalizeManagedCaptureState(value) {
       Number.isInteger(value?.tabs?.[source]) ? [[source, value.tabs[source]]] : [],
     ),
   );
-  return { windowId, tabs };
+  return {
+    windowId,
+    tabs,
+    ownedByBridge: value?.ownedByBridge === true || windowId !== null,
+    leaseId: normalizeLeaseId(value?.leaseId),
+  };
 }
 
 async function loadState(chromeApi) {
@@ -62,6 +109,10 @@ async function saveState(chromeApi, state) {
   });
 }
 
+async function clearState(chromeApi) {
+  await chromeApi.storage.local.remove(CAPTURE_WINDOW_STORAGE_KEY);
+}
+
 async function validateBinding(chromeApi, state, source) {
   if (!state.windowId) return null;
   let window;
@@ -73,16 +124,12 @@ async function validateBinding(chromeApi, state, source) {
   }
   const rememberedId = state.tabs[source];
   const tab = (window.tabs ?? []).find((candidate) =>
-    !candidate.discarded && (
-      candidate.id === rememberedId || isCanonicalFeedUrl(candidate.url, source)
-    ),
+    !candidate.discarded &&
+    candidate.id === rememberedId &&
+    isCanonicalFeedUrl(candidate.url, source),
   );
   if (!tab) return null;
-  if (rememberedId !== tab.id) {
-    state.tabs[source] = tab.id;
-    await saveState(chromeApi, state);
-  }
-  return { windowId: window.id, tabId: tab.id };
+  return { windowId: window.id, tabId: tab.id, state };
 }
 
 async function createBinding(chromeApi, state, source) {
@@ -115,7 +162,23 @@ async function createBinding(chromeApi, state, source) {
   next.windowId = windowId;
   next.tabs[source] = tab.id;
   await saveState(chromeApi, next);
-  return { windowId, tabId: tab.id };
+  return { windowId, tabId: tab.id, state: next };
+}
+
+function ownedTabsInWindow(tabs, bindings) {
+  return ["x", "linkedin"].flatMap((source) => {
+    const id = bindings[source];
+    const tab = tabs.find((candidate) =>
+      candidate.id === id && isCanonicalFeedUrl(candidate.url, source)
+    );
+    return tab ? [tab] : [];
+  });
+}
+
+function normalizeLeaseId(value) {
+  return typeof value === "string" && value.length >= 1 && value.length <= 200
+    ? value
+    : null;
 }
 
 async function captureWorkingFocus(chromeApi) {
@@ -174,4 +237,3 @@ function visibilityError(message, details) {
   error.details = details;
   return error;
 }
-

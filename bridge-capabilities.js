@@ -1,4 +1,4 @@
-export const BRIDGE_RUNTIME_REVISION = "source-fidelity-v40";
+export const BRIDGE_RUNTIME_REVISION = "source-fidelity-v41";
 export const BRIDGE_ID = "aku-bridge-chrome-mv3-v0";
 export const BRIDGE_CONTRACT_VERSION = "aku-browser.bridge.v1";
 
@@ -25,6 +25,7 @@ export function createBridgeCapabilities(manifest) {
       "report_frontier",
       "manage_source_tab_lifecycle",
       "manage_capture_window",
+      "release_capture_surface",
       "preserve_working_tab",
       "report_source_events",
       "reload_self",

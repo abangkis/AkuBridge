@@ -103,6 +103,17 @@ page for the selected source. A follow-up round never opens a replacement tab.
 Gate 0B permits at most two native scrolls and three viewports. Computer Use is
 not part of this native path.
 
+Every managed surface is owned through a bounded capture lease. Standalone
+runs use the run ID; both X and LinkedIn children of a unified check share the
+session ID so the window remains available between sources and closes only
+after the whole session is terminal. Release is idempotent and survives UI or
+service-worker restart through the stored binding. AkuBridge closes the whole
+window only when every remaining tab is one of its recorded canonical feed
+tabs. If the user adds another tab, navigates a managed tab elsewhere, or
+otherwise takes control of the surface, Bridge closes only the still-provable
+owned feed tabs and preserves the user's tab and window. Pre-existing source
+tabs and working windows are never registered as owned cleanup targets.
+
 Each captured evidence block may include up to four rendered content images or video posters for Source layout. AkuBridge excludes small images and LinkedIn actor avatars, accepts only the allowlisted X/LinkedIn media CDNs, and never downloads or transforms media itself.
 
 When a rendered media root remains empty, the generic media-recovery runtime

@@ -71,6 +71,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }));
     return true;
   }
+  if (message?.type === "AKU_BRIDGE_RELEASE_CAPTURE_SURFACE") {
+    if (!sender.url?.startsWith(`${AKU_BROWSER_ORIGIN}/`)) {
+      sendResponse({ ok: false, message: "Capture-surface release rejected: invalid AkuBrowser origin." });
+      return false;
+    }
+    managedCaptureWindow.release(message.leaseId)
+      .then((outcome) => sendResponse({ ok: true, outcome }))
+      .catch((error) => sendResponse({
+        ok: false,
+        message: String(error?.message ?? error),
+      }));
+    return true;
+  }
   if (message?.type === "AKU_BROWSER_CAPTURE_DELAY") {
     if (!isTrustedSourceContentSender(sender)) {
       sendResponse({ ok: false, message: "Capture delay rejected: invalid source tab." });
@@ -200,6 +213,7 @@ async function captureWithSourceTabRecovery(command) {
         command.payload.mode,
         command.payload.openIfMissing,
         command.payload.captureVisibilityPolicy,
+        command.payload.captureLeaseId,
       );
       const observation = await capturePreparedSource(command, prepared, attempt);
       if (shouldCloseOpenedSourceTab({
@@ -300,7 +314,13 @@ function bridgeHeaders(token) {
   };
 }
 
-async function findOrOpenSourceTab(source, mode, openIfMissing, requestedVisibilityPolicy) {
+async function findOrOpenSourceTab(
+  source,
+  mode,
+  openIfMissing,
+  requestedVisibilityPolicy,
+  captureLeaseId,
+) {
   const visibilityPlan = planCaptureVisibility({
     policy: requestedVisibilityPolicy,
     mode,
@@ -308,7 +328,10 @@ async function findOrOpenSourceTab(source, mode, openIfMissing, requestedVisibil
   let excludedManagedWindowId = null;
   if (visibilityPlan.initialMode === "managed_window") {
     try {
-      const managed = await managedCaptureWindow.prepare(source, { openIfMissing });
+      const managed = await managedCaptureWindow.prepare(source, {
+        openIfMissing,
+        leaseId: captureLeaseId,
+      });
       excludedManagedWindowId = managed.tab.windowId;
       if (managed.opened) await waitForTabComplete(managed.tab.id, 20_000);
       const prepared = await prepareSourceTab(managed.tab, source, managed.opened, {

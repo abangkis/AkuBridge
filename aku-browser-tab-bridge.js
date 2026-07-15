@@ -64,6 +64,36 @@
       return;
     }
 
+    if (message.type === "AKU_BROWSER_RELEASE_CAPTURE_SURFACE") {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "AKU_BRIDGE_RELEASE_CAPTURE_SURFACE",
+          leaseId: message.leaseId,
+        });
+        if (!response?.ok) {
+          throw new Error(response?.message || "AkuBridge rejected capture-surface release.");
+        }
+        window.postMessage(
+          {
+            type: "AKU_BROWSER_CAPTURE_SURFACE_RELEASED",
+            leaseId: message.leaseId,
+            outcome: response.outcome ?? null,
+          },
+          allowedOrigin,
+        );
+      } catch (error) {
+        window.postMessage(
+          {
+            type: "AKU_BROWSER_CAPTURE_SURFACE_RELEASE_FAILED",
+            leaseId: message.leaseId,
+            message: String(error?.message ?? error),
+          },
+          allowedOrigin,
+        );
+      }
+      return;
+    }
+
     if (message.type !== "AKU_BROWSER_DISPATCH") return;
     try {
       const response = await chrome.runtime.sendMessage({

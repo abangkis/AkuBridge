@@ -7,7 +7,9 @@ import {
 
 test("managed capture creates a non-focused window and preserves the working tab", async () => {
   const chrome = fakeChrome();
-  const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x");
+  const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x", {
+    leaseId: "session-1",
+  });
 
   assert.equal(prepared.opened, true);
   assert.equal(prepared.tab.url, "https://x.com/home");
@@ -34,7 +36,57 @@ test("managed capture state accepts only known numeric bindings", () => {
   assert.deepEqual(normalizeManagedCaptureState({
     windowId: 8,
     tabs: { x: 9, linkedin: "10", other: 11 },
-  }), { windowId: 8, tabs: { x: 9 } });
+    leaseId: "session-1",
+  }), {
+    windowId: 8,
+    tabs: { x: 9 },
+    ownedByBridge: true,
+    leaseId: "session-1",
+  });
+});
+
+test("release closes a fully Bridge-owned managed window", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  await runtime.prepare("x", { leaseId: "session-1" });
+
+  assert.deepEqual(await runtime.release("session-1"), {
+    released: true,
+    mode: "owned_window_closed",
+    closedTabs: 1,
+  });
+  assert.deepEqual(chrome.removedWindowIds, [2]);
+  assert.equal(chrome.windowsById.has(2), false);
+});
+
+test("release preserves user tabs added to a Bridge-owned window", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  await runtime.prepare("x", { leaseId: "session-1" });
+  chrome.addTab(2, "https://example.com/user-work", 31);
+
+  assert.deepEqual(await runtime.release("session-1"), {
+    released: true,
+    mode: "owned_tabs_closed_user_window_preserved",
+    closedTabs: 1,
+    preservedUserTabs: 1,
+  });
+  assert.deepEqual(chrome.removedWindowIds, []);
+  assert.deepEqual(chrome.removedTabIds, [21]);
+  assert.equal(chrome.windowsById.get(2).tabs[0].id, 31);
+});
+
+test("release does not close a newer leased surface", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  await runtime.prepare("x", { leaseId: "session-2" });
+
+  assert.deepEqual(await runtime.release("session-1"), {
+    released: false,
+    reason: "lease_mismatch",
+  });
+  assert.equal(chrome.windowsById.has(2), true);
+  assert.deepEqual(chrome.removedWindowIds, []);
 });
 
 function fakeChrome() {
@@ -49,9 +101,19 @@ function fakeChrome() {
     focusedWindowId: 1,
     activeByWindow,
     createdWindowOptions: null,
+    windowsById: windows,
+    removedWindowIds: [],
+    removedTabIds: [],
+    addTab(windowId, url, id) {
+      const tab = { id, windowId, active: false, url };
+      tabs.set(id, tab);
+      windows.get(windowId).tabs.push(tab);
+      return tab;
+    },
     storage: { local: {
       async get(key) { return { [key]: storage[key] }; },
       async set(value) { Object.assign(storage, value); },
+      async remove(key) { delete storage[key]; },
     } },
     windows: {
       async getLastFocused() { return { id: state.focusedWindowId }; },
@@ -72,6 +134,14 @@ function fakeChrome() {
         if (options.focused) state.focusedWindowId = id;
         return { id };
       },
+      async remove(id) {
+        const window = windows.get(id);
+        if (!window) throw new Error("No window");
+        state.removedWindowIds.push(id);
+        for (const tab of window.tabs) tabs.delete(tab.id);
+        windows.delete(id);
+        activeByWindow.delete(id);
+      },
     },
     tabs: {
       async get(id) {
@@ -90,8 +160,17 @@ function fakeChrome() {
         return { ...tab, active: options.active === true };
       },
       async create() { throw new Error("not used"); },
+      async remove(ids) {
+        for (const id of Array.isArray(ids) ? ids : [ids]) {
+          const tab = tabs.get(id);
+          if (!tab) continue;
+          state.removedTabIds.push(id);
+          tabs.delete(id);
+          const window = windows.get(tab.windowId);
+          window.tabs = window.tabs.filter((candidate) => candidate.id !== id);
+        }
+      },
     },
   };
   return state;
 }
-
