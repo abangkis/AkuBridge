@@ -94,6 +94,32 @@
       return;
     }
 
+    if (message.type === "AKU_BROWSER_MEDIA_RECAPTURE") {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "AKU_BRIDGE_MEDIA_RECAPTURE",
+          endpoint: message.endpoint,
+          token: message.token,
+          recaptureId: message.recaptureId,
+        });
+        if (!response?.ok) {
+          throw new Error(response?.message || "AkuBridge rejected media recapture.");
+        }
+        window.postMessage({
+          type: "AKU_BROWSER_MEDIA_RECAPTURE_COMPLETED",
+          recaptureId: message.recaptureId,
+          recapture: response.recapture ?? null,
+        }, allowedOrigin);
+      } catch (error) {
+        window.postMessage({
+          type: "AKU_BROWSER_MEDIA_RECAPTURE_FAILED",
+          recaptureId: message.recaptureId,
+          message: String(error?.message ?? error),
+        }, allowedOrigin);
+      }
+      return;
+    }
+
     if (message.type !== "AKU_BROWSER_DISPATCH") return;
     try {
       const response = await chrome.runtime.sendMessage({

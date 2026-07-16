@@ -6,6 +6,13 @@ export function normalizeCaptureVisibilityPolicy(value) {
 
 export function planCaptureVisibility({ policy, mode }) {
   const normalizedPolicy = normalizeCaptureVisibilityPolicy(policy);
+  if (mode === "recapture_media") {
+    return {
+      policy: normalizedPolicy,
+      initialMode: "managed_window",
+      allowSameWindowFallback: false,
+    };
+  }
   if (mode !== "catch_up") {
     return {
       policy: normalizedPolicy,

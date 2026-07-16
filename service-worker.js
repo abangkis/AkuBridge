@@ -84,6 +84,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }));
     return true;
   }
+  if (message?.type === "AKU_BRIDGE_MEDIA_RECAPTURE") {
+    if (!sender.url?.startsWith(`${AKU_BROWSER_ORIGIN}/`)) {
+      sendResponse({ ok: false, message: "Media recapture rejected: invalid AkuBrowser origin." });
+      return false;
+    }
+    dispatchMediaRecapture(message)
+      .then((recapture) => sendResponse({ ok: true, recapture }))
+      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+    return true;
+  }
   if (message?.type === "AKU_BROWSER_CAPTURE_DELAY") {
     if (!isTrustedSourceContentSender(sender)) {
       sendResponse({ ok: false, message: "Capture delay rejected: invalid source tab." });
@@ -204,6 +214,51 @@ async function dispatchRun(message) {
   }
 }
 
+async function dispatchMediaRecapture(message) {
+  assertEndpoint(message.endpoint);
+  if (typeof message.recaptureId !== "string" || !message.recaptureId) {
+    throw new Error("Media recapture requires a job ID.");
+  }
+  const response = await fetch(
+    `${message.endpoint}/api/bridge/media-recaptures/${encodeURIComponent(message.recaptureId)}/claim`,
+    { headers: bridgeHeaders(message.token), cache: "no-store" },
+  );
+  if (!response.ok) throw new Error(await responseError(response, "Could not claim media recapture"));
+  const recapture = (await response.json()).recapture;
+  if (!commandGuard.begin(recapture.id)) {
+    throw new AkuBridgeError("duplicate_command", "media_recapture", `AkuBridge rejected duplicate recapture ${recapture.id}.`);
+  }
+  try {
+    const targetUrl = assertRecaptureTarget(recapture.source, recapture.targetUrl);
+    const observation = await captureWithSourceTabRecovery({
+      id: recapture.id,
+      type: "recapture_media",
+      payload: { ...recapture.payload, targetUrl },
+    });
+    const completed = await postMediaRecaptureResult(
+      message.endpoint,
+      message.token,
+      recapture.id,
+      "observation",
+      { observation },
+    );
+    commandGuard.finish(recapture.id);
+    return completed.recapture;
+  } catch (error) {
+    await postMediaRecaptureResult(
+      message.endpoint,
+      message.token,
+      recapture.id,
+      "failure",
+      { error: serializeBridgeError(error) },
+    ).catch(() => undefined);
+    commandGuard.finish(recapture.id);
+    throw error;
+  } finally {
+    await managedCaptureWindow.release(recapture.id).catch(() => undefined);
+  }
+}
+
 async function captureWithSourceTabRecovery(command) {
   for (let attempt = 0; ; attempt += 1) {
     let prepared = null;
@@ -214,6 +269,7 @@ async function captureWithSourceTabRecovery(command) {
         command.payload.openIfMissing,
         command.payload.captureVisibilityPolicy,
         command.payload.captureLeaseId,
+        command.payload.targetUrl,
       );
       const observation = await capturePreparedSource(command, prepared, attempt);
       if (shouldCloseOpenedSourceTab({
@@ -222,6 +278,7 @@ async function captureWithSourceTabRecovery(command) {
         captureCompleted: true,
       })) {
         await chrome.tabs.remove(prepared.tab.id).catch(() => undefined);
+        prepared.closed = true;
         observation.coverage.sourceTabClosedAfterCapture = true;
       }
       const focusOutcome = await prepared.restoreFocus();
@@ -243,7 +300,13 @@ async function captureWithSourceTabRecovery(command) {
         throw error;
       }
     } finally {
-      if (prepared) await prepared.restoreFocus();
+      if (prepared) {
+        await prepared.restoreFocus();
+        if (prepared.closeOnExit && !prepared.closed) {
+          await chrome.tabs.remove(prepared.tab.id).catch(() => undefined);
+          prepared.closed = true;
+        }
+      }
     }
   }
 }
@@ -310,6 +373,19 @@ async function postBridgeResult(endpoint, token, commandId, kind, payload) {
   if (!response.ok) throw new Error(await responseError(response, `Could not submit ${kind}`));
 }
 
+async function postMediaRecaptureResult(endpoint, token, id, kind, payload) {
+  const response = await fetch(
+    `${endpoint}/api/bridge/media-recaptures/${encodeURIComponent(id)}/${kind}`,
+    {
+      method: "POST",
+      headers: { ...bridgeHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  if (!response.ok) throw new Error(await responseError(response, `Could not submit media recapture ${kind}`));
+  return response.json();
+}
+
 function bridgeHeaders(token) {
   return {
     "X-Aku-Bridge-Token": token,
@@ -324,12 +400,14 @@ async function findOrOpenSourceTab(
   openIfMissing,
   requestedVisibilityPolicy,
   captureLeaseId,
+  targetUrl = null,
 ) {
   const visibilityPlan = planCaptureVisibility({
     policy: requestedVisibilityPolicy,
     mode,
   });
   let excludedManagedWindowId = null;
+  let targetCaptureTabId = null;
   if (visibilityPlan.initialMode === "managed_window") {
     try {
       const managed = await managedCaptureWindow.prepare(source, {
@@ -338,18 +416,36 @@ async function findOrOpenSourceTab(
       });
       excludedManagedWindowId = managed.tab.windowId;
       if (managed.opened) await waitForTabComplete(managed.tab.id, 20_000);
-      const prepared = await prepareSourceTab(managed.tab, source, managed.opened, {
+      let captureTab = managed.tab;
+      let captureTabOpened = managed.opened;
+      if (targetUrl) {
+        captureTab = await chrome.tabs.create({
+          windowId: managed.tab.windowId,
+          url: assertRecaptureTarget(source, targetUrl),
+          active: true,
+        });
+        targetCaptureTabId = captureTab.id;
+        captureTabOpened = true;
+        await waitForTabComplete(captureTab.id, 20_000);
+        captureTab = await chrome.tabs.get(captureTab.id);
+      }
+      const prepared = await prepareSourceTab(captureTab, source, captureTabOpened, {
         ownership: "managed",
         captureVisibilityPolicy: visibilityPlan.policy,
         captureVisibilityMode: "managed_window",
         workingTabPreserved: true,
         restoreFocus: managed.verifyFocus,
       });
+      prepared.closeOnExit = Boolean(targetUrl);
       if (!requiresSameWindowRecovery(visibilityPlan, prepared.readiness)) {
         return prepared;
       }
       await prepared.restoreFocus();
     } catch (error) {
+      if (Number.isInteger(targetCaptureTabId)) {
+        await chrome.tabs.remove(targetCaptureTabId).catch(() => undefined);
+        targetCaptureTabId = null;
+      }
       if (!visibilityPlan.allowSameWindowFallback) {
         if (error?.code === "visible_recovery_required") throw error;
         throw new AkuBridgeError(
@@ -387,6 +483,16 @@ async function findOrOpenSourceTab(
       ? "same_window_recovery"
       : "same_window",
   });
+}
+
+function assertRecaptureTarget(source, rawUrl) {
+  const url = new URL(rawUrl);
+  const xPost = source === "x" && url.protocol === "https:" && url.hostname === "x.com" && url.pathname.includes("/status/");
+  const linkedInPost = source === "linkedin" && url.protocol === "https:" && url.hostname === "www.linkedin.com" &&
+    (url.pathname.includes("/posts/") || url.pathname.includes("/feed/update/"));
+  if (!xPost && !linkedInPost) throw new Error("Media recapture target is not a supported native post URL.");
+  url.hash = "";
+  return url.href;
 }
 
 async function prepareSourceTab(tab, source, opened, options = {}) {

@@ -25,6 +25,18 @@ test("Adaptive catch-up authorizes same-window recovery only as fallback", () =>
   });
 });
 
+test("item media recapture stays inside the managed capture surface", () => {
+  assert.deepEqual(planCaptureVisibility({ policy: "quiet", mode: "recapture_media" }), {
+    policy: "quiet",
+    initialMode: "managed_window",
+    allowSameWindowFallback: false,
+  });
+  assert.equal(planCaptureVisibility({
+    policy: "adaptive_fidelity",
+    mode: "recapture_media",
+  }).allowSameWindowFallback, false);
+});
+
 test("unknown visibility policies fail closed to Quiet", () => {
   assert.equal(normalizeCaptureVisibilityPolicy("surprise_me"), "quiet");
 });

@@ -15,7 +15,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version, packageJson.version);
-  assert.equal(manifest.version, "0.6.0");
+  assert.equal(manifest.version, "0.6.1");
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:47821/*",
@@ -71,7 +71,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v48/);
+  assert.match(contentScript, /source-fidelity-v49/);
   assert.match(contentScript, /relative_text_estimate/);
   assert.match(contentScript, /not_exposed_promoted/);
   assert.match(contentScript, /LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000/);
@@ -233,16 +233,20 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
 
   assert.match(tabBridge, /AKU_BRIDGE_GET_CAPABILITIES/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
+  assert.match(tabBridge, /AKU_BROWSER_MEDIA_RECAPTURE/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
-  const capabilities = createBridgeCapabilities({ version: "0.6.0", manifest_version: 3 });
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v48");
-  assert.equal(capabilities.buildId, "aku-bridge-0.6.0-source-fidelity-v48");
+  const capabilities = createBridgeCapabilities({ version: "0.6.1", manifest_version: 3 });
+  assert.equal(capabilities.runtimeRevision, "source-fidelity-v49");
+  assert.equal(capabilities.buildId, "aku-bridge-0.6.1-source-fidelity-v49");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v16", linkedin: "linkedin-dom-v13" });
   assert.ok(capabilities.actions.includes("reload_self"));
   assert.ok(capabilities.actions.includes("report_capture_quality"));
   assert.ok(capabilities.actions.includes("recover_source_freshness"));
   assert.ok(capabilities.actions.includes("recover_missing_media"));
+  assert.ok(capabilities.actions.includes("recapture_missing_media"));
+  assert.match(worker, /dispatchMediaRecapture/);
+  assert.match(worker, /assertRecaptureTarget/);
   assert.ok(capabilities.actions.includes("manage_capture_window"));
   assert.ok(capabilities.actions.includes("release_capture_surface"));
   assert.ok(capabilities.actions.includes("preserve_working_tab"));
