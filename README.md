@@ -59,11 +59,10 @@ media evidence. This keeps a temporarily unhydrated photo inside the generic
 visual-readiness and recovery path instead of incorrectly reporting that media
 does not apply to the post.
 
-The normative parser/quality architecture is in
-`AkuBrowser/docs/source-adapter-quality-design.md`; stale-tab behavior and the
-third-source freshness interface are in
-`AkuBrowser/contracts/source-freshness-recovery-v1.md`; bounded media fallback
-is in `AkuBrowser/contracts/media-recovery-v1.md`.
+The active inter-process boundary is the compact
+`AkuBrowser/contracts/bridge-contract-v2.md`. Adapter ownership, freshness,
+quality, and media-recovery behavior are documented here beside the code that
+implements them.
 
 ## Development
 
