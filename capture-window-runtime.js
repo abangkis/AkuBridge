@@ -35,7 +35,7 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
         focusSnapshot,
         binding.windowId,
       );
-      if (focusOutcome.changed) {
+      if (focusOutcome.changed && focusOutcome.preserved !== true) {
         throw visibilityError(
           "Chrome focused the managed capture surface while Quiet capture was preparing it.",
           { source, reason: "managed_window_took_focus", focusOutcome },

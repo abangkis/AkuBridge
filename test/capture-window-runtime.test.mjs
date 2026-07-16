@@ -55,6 +55,24 @@ test("managed capture restores focus only when its own window took focus", async
   assert.equal(chrome.activeByWindow.get(1), 11);
 });
 
+test("managed capture accepts a transient focus change that it successfully restores", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  await runtime.prepare("x", { leaseId: "session-1" });
+  chrome.focusManagedWindowOnTabActivation = true;
+
+  const prepared = await runtime.prepare("linkedin", { leaseId: "session-1" });
+
+  assert.equal(prepared.tab.url, "https://www.linkedin.com/feed/");
+  assert.equal(chrome.focusedWindowId, 1);
+  assert.equal(chrome.activeByWindow.get(1), 11);
+  assert.deepEqual(await runtime.release("session-1"), {
+    released: true,
+    mode: "owned_window_closed",
+    closedTabs: 2,
+  });
+});
+
 test("managed capture refuses creation when missing-tab policy forbids it", async () => {
   const chrome = fakeChrome();
   await assert.rejects(
@@ -136,6 +154,7 @@ function fakeChrome() {
     windowsById: windows,
     removedWindowIds: [],
     removedTabIds: [],
+    focusManagedWindowOnTabActivation: false,
     addTab(windowId, url, id) {
       const tab = { id, windowId, active: false, url };
       tabs.set(id, tab);
@@ -188,10 +207,18 @@ function fakeChrome() {
       },
       async update(id, options) {
         const tab = tabs.get(id);
-        if (options.active) activeByWindow.set(tab.windowId, id);
+        if (options.active) {
+          activeByWindow.set(tab.windowId, id);
+          if (state.focusManagedWindowOnTabActivation) state.focusedWindowId = tab.windowId;
+        }
         return { ...tab, active: options.active === true };
       },
-      async create() { throw new Error("not used"); },
+      async create(options) {
+        const id = Math.max(...tabs.keys()) + 1;
+        const tab = state.addTab(options.windowId, options.url, id);
+        if (options.active) activeByWindow.set(options.windowId, id);
+        return { ...tab, active: options.active === true };
+      },
       async remove(ids) {
         for (const id of Array.isArray(ids) ? ids : [ids]) {
           const tab = tabs.get(id);
