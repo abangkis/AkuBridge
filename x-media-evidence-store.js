@@ -1,5 +1,5 @@
-const STORAGE_KEY = "akuXMediaEvidenceStoreV1";
-const RUNTIME_REVISION = "x-media-evidence-store-v1";
+const STORAGE_KEY = "akuXMediaEvidenceStoreV2";
+const RUNTIME_REVISION = "x-media-evidence-store-v2";
 const DEFAULT_TTL_MS = 30 * 60 * 1_000;
 const DEFAULT_MAX_CANDIDATES = 128;
 const DEFAULT_MAX_MEDIA = 4;
@@ -201,7 +201,9 @@ function safeXMediaURL(value) {
 }
 
 function normalizeProvenance(value) {
-  return value === "main_structured_state" ? value : "observed_dom";
+  return ["main_structured_state", "x_response_graphql"].includes(value)
+    ? value
+    : "observed_dom";
 }
 
 function purge(entries, currentTime) {

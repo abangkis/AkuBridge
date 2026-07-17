@@ -7,10 +7,10 @@ import { fileURLToPath } from "node:url";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-function loadEvidence() {
+function loadEvidence({ hostname = "example.test", origin = "https://example.test" } = {}) {
   const context = {
     URL,
-    location: { hostname: "example.test" },
+    location: { hostname, origin },
     queueMicrotask,
   };
   context.globalThis = context;
@@ -132,6 +132,117 @@ test("structured evidence is sanitized before entering the shared bounded cache"
     media: published[0].media,
   }] });
   assert.equal(published.length, 1);
+});
+
+test("response evidence bridge accepts only a strict media-only envelope", () => {
+  const evidence = loadEvidence({ hostname: "x.com", origin: "https://x.com" });
+  const published = [];
+  const runtime = evidence.createRuntime({
+    document: null,
+    publish: (candidateId, media) => published.push({ candidateId, media }),
+  });
+  let messageHandler;
+  const posted = [];
+  const windowObject = {
+    addEventListener(type, handler) {
+      if (type === "message") messageHandler = handler;
+    },
+    postMessage(message, targetOrigin) {
+      posted.push({ message, targetOrigin });
+    },
+  };
+
+  assert.equal(evidence.installResponseEvidenceBridge(runtime, windowObject), true);
+  assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{
+    message: {
+      type: "AKU_X_RESPONSE_EVIDENCE_READY",
+      runtimeRevision: "x-response-evidence-v1",
+    },
+    targetOrigin: "https://x.com",
+  }]);
+
+  messageHandler({
+    source: windowObject,
+    origin: "https://x.com",
+    data: {
+      type: "AKU_X_RESPONSE_MEDIA_EVIDENCE",
+      runtimeRevision: "x-response-evidence-v1",
+      candidates: [{
+        candidateId: "x:status:12345",
+        media: [{
+          kind: "image",
+          url: "https://pbs.twimg.com/media/from-response.jpg",
+          posterUrl: null,
+          playbackUrl: null,
+          playbackMode: null,
+          width: 1200,
+          height: 675,
+          provenance: "x_response_graphql",
+        }],
+      }],
+      diagnostics: {
+        observedResponseCount: 1,
+        parsedResponseCount: 1,
+        rejectedResponseCount: 0,
+        candidateCount: 1,
+        mediaCount: 1,
+        traversedNodeCount: 50,
+        bounded: false,
+      },
+    },
+  });
+
+  assert.equal(runtime.lookup("x:status:12345")[0].provenance, "x_response_graphql");
+  assert.equal(published.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(runtime.responseDiagnostics())), {
+    runtimeRevision: "x-response-evidence-v1",
+    messagesReceived: 1,
+    messagesRejected: 0,
+    acceptedCandidateCount: 1,
+    observedResponseCount: 1,
+    parsedResponseCount: 1,
+    rejectedResponseCount: 0,
+    lastCandidateCount: 1,
+    lastMediaCount: 1,
+    lastTraversedNodeCount: 50,
+    lastBounded: false,
+  });
+
+  messageHandler({
+    source: windowObject,
+    origin: "https://x.com",
+    data: {
+      type: "AKU_X_RESPONSE_MEDIA_EVIDENCE",
+      runtimeRevision: "x-response-evidence-v1",
+      candidates: [],
+      diagnostics: {},
+      rawResponse: { forbidden: true },
+    },
+  });
+  messageHandler({
+    source: windowObject,
+    origin: "https://evil.example",
+    data: {
+      type: "AKU_X_RESPONSE_MEDIA_EVIDENCE",
+      runtimeRevision: "x-response-evidence-v1",
+      candidates: [],
+    },
+  });
+
+  assert.equal(published.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(runtime.responseDiagnostics())), {
+    runtimeRevision: "x-response-evidence-v1",
+    messagesReceived: 2,
+    messagesRejected: 1,
+    acceptedCandidateCount: 1,
+    observedResponseCount: 1,
+    parsedResponseCount: 1,
+    rejectedResponseCount: 0,
+    lastCandidateCount: 1,
+    lastMediaCount: 1,
+    lastTraversedNodeCount: 50,
+    lastBounded: false,
+  });
 });
 
 test("document-start watcher observes bounded URL attributes and keeps media after DOM mutation", () => {

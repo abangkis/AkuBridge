@@ -19,8 +19,10 @@ flowchart LR
     F --> C["Shared content runtime"]
     C --> Q["Generic quality evaluator<br/>social-post-v1"]
     Q --> M["Generic media acquisition<br/>primary -> structured -> hydrate -> alternate DOM"]
-    DOM --> XE["X early media evidence<br/>document-start watcher + MAIN-world resolver"]
+    DOM --> XE["X DOM media evidence<br/>document-start watcher + MAIN-world resolver"]
+    XG["Already-requested X GraphQL responses<br/>3 exact operations"] --> XR["X response evidence adapter<br/>document_start / MAIN world"]
     XE --> XC["Sanitized bounded URL cache<br/>30 min TTL / 128 posts / 4 media"]
+    XR --> XC
     XC --> M
     XC --> AE["Async retained-item enrichment<br/>AkuBrowser relay -> Sidecar override"]
     M --> P["Bounded retry/capture policy"]
@@ -65,14 +67,27 @@ media evidence. This keeps a temporarily unhydrated photo inside the generic
 visual-readiness and recovery path instead of incorrectly reporting that media
 does not apply to the post.
 
-X media evidence now has a passive second path. A `document_start` watcher
-retains allowlisted post-media URLs while they are briefly present, and a
-bounded MAIN-world resolver may read media entities already exposed inside the
-matching post's React data. Only the normalized `x:status:<id>`, media URLs,
-dimensions, type, and provenance cross the boundary; post text, raw responses,
-and React objects do not. The sanitized cache keeps at most 128 posts for 30
-minutes with four media entries each. It uses the existing `storage`
-permission and never opens, activates, focuses, scrolls, or navigates a tab.
+X media evidence has passive DOM and response-backed paths. Live v57 validation
+showed why both are needed: in a Quiet X surface, media roots were detected but
+hydrated media containers and recoverable URLs remained at zero, while the same
+source could hydrate after foreground visibility. In v58, the
+`x-response-evidence-v1` adapter starts in the MAIN world at `document_start`
+and observes only successful JSON responses that X already requested for the
+exact `HomeTimeline`, `HomeLatestTimeline`, and `TweetDetail` GraphQL
+operations. It neither originates nor retries a provider request.
+
+Response payloads are parsed transiently under byte, traversal, depth,
+property, candidate, and media ceilings. Raw responses, post text, React
+objects, operation URLs, account state, and provider authentication never
+cross into the isolated world or persistent storage. Only a normalized
+`x:status:<id>` plus at most four allowlisted `pbs.twimg.com` or
+`video.twimg.com` media records, dimensions, type, and
+`x_response_graphql` provenance can enter the existing cache. The DOM watcher
+and bounded MAIN-world React resolver remain complementary inputs. The
+sanitized cache keeps at most 128 posts for 30 minutes with four media entries
+each. It uses the existing `storage` permission; v58 adds no permission and
+never opens, activates, focuses, scrolls, or navigates a tab. It cannot affect
+selection, ranking, semantic grouping, or Timeline capacity.
 
 The active inter-process boundary is the compact
 `AkuBrowser/contracts/bridge-contract-v2.md`. Adapter ownership, freshness,
@@ -193,16 +208,18 @@ setting. The temporary tab and managed surface are released on every terminal
 path. The audit also records the bounded extraction stages (`initial_dom`,
 `structured_state`, `primary_hydration`, `alternate_dom`, and terminal outcome).
 An async evidence override records `passive_cache` and
-`async_evidence_cache`, so an unavailable URL can be located without replaying
-or exposing post content.
+`async_evidence_cache`, while response-derived media retains
+`x_response_graphql` provenance, so an unavailable URL can be located without
+replaying or exposing post content.
 
-If the early X cache later contains evidence for a retained item whose media
+If the passive X cache later contains evidence for a retained item whose media
 was unavailable, AkuBrowser may apply it asynchronously through a
 Bridge-authenticated, item-scoped Sidecar endpoint. This passive enrichment
 creates no browser job, consumes no Timeline capacity or reasoning call, and
 does not change ranking. It records a completed provenance row and replaces
-only that item's local presentation evidence. Foreground recapture remains a
-separate, explicit terminal fallback after quiet acquisition is exhausted.
+only that item's local presentation evidence through
+`passive-x-media-enrichment-v2`. Foreground recapture remains a separate,
+explicit consent fallback after passive and quiet acquisition are exhausted.
 
 LinkedIn keeps the visible relative timestamp text. When the source exposes a
 valid relative time but no native `datetime`, AkuBridge records a deterministic

@@ -19,7 +19,12 @@ test("persistent X media evidence is sanitized, bounded, and lookup-only", async
   const storage = fakeStorage();
   const store = createXMediaEvidenceStore(storage, { now: () => 1000, maxMedia: 2 });
   await store.put("https://x.com/example/status/123456", [
-    { kind: "image", url: "https://pbs.twimg.com/media/first.jpg", alt: "must not persist" },
+    {
+      kind: "image",
+      url: "https://pbs.twimg.com/media/first.jpg",
+      alt: "must not persist",
+      provenance: "x_response_graphql",
+    },
     { kind: "image", url: "https://evil.example/media/second.jpg" },
     { kind: "image", url: "https://pbs.twimg.com/media/third.jpg" },
     { kind: "image", url: "https://pbs.twimg.com/media/fourth.jpg" },
@@ -28,8 +33,23 @@ test("persistent X media evidence is sanitized, bounded, and lookup-only", async
   assert.equal(result.candidates.length, 1);
   assert.equal(result.candidates[0].media.length, 2);
   assert.equal("alt" in result.candidates[0].media[0], false);
+  assert.equal(result.candidates[0].media[0].provenance, "x_response_graphql");
+  assert.equal(result.candidates[0].media[1].provenance, "observed_dom");
   assert.equal(JSON.stringify(storage.values).includes("evil.example"), false);
   assert.equal(JSON.stringify(storage.values).includes("must not persist"), false);
+});
+
+test("persistent X media evidence preserves bounded response provenance", async () => {
+  const storage = fakeStorage();
+  const store = createXMediaEvidenceStore(storage, { now: () => 1000 });
+  await store.put("x:status:55555", [{
+    kind: "image",
+    url: "https://pbs.twimg.com/media/response.jpg",
+    provenance: "x_response_graphql",
+  }]);
+  const result = await store.lookup(["x:status:55555"]);
+  assert.equal(result.runtimeRevision, "x-media-evidence-store-v2");
+  assert.equal(result.candidates[0].media[0].provenance, "x_response_graphql");
 });
 
 test("persistent X media evidence expires and keeps the newest candidates", async () => {

@@ -1,5 +1,6 @@
 (() => {
-  const runtimeRevision = "x-media-evidence-runtime-v1";
+  const runtimeRevision = "x-media-evidence-runtime-v2";
+  const responseEvidenceRevision = "x-response-evidence-v1";
   if (
     globalThis.AkuXMediaEvidence?.runtimeRevision === runtimeRevision &&
     globalThis.AkuXMediaEvidenceRuntime?.runtimeRevision === runtimeRevision
@@ -131,6 +132,18 @@
     const lastPublished = new Map();
     let observer = null;
     let flushPending = false;
+    const responseEvidence = {
+      messagesReceived: 0,
+      messagesRejected: 0,
+      acceptedCandidateCount: 0,
+      observedResponseCount: 0,
+      parsedResponseCount: 0,
+      rejectedResponseCount: 0,
+      lastCandidateCount: 0,
+      lastMediaCount: 0,
+      lastTraversedNodeCount: 0,
+      lastBounded: false,
+    };
 
     function start() {
       if (observer || !documentObject || typeof MutationObserverConstructor !== "function") {
@@ -206,15 +219,45 @@
       return cache.get(candidateId);
     }
 
-    function ingestStructured(payload) {
+    function ingestCandidates(payload, provenance) {
       const candidates = Array.isArray(payload) ? payload : payload?.candidates;
       let acceptedCandidateCount = 0;
       for (const candidate of Array.isArray(candidates) ? candidates.slice(0, 24) : []) {
         if (!candidate || typeof candidate !== "object") continue;
-        const stored = storeEvidence(candidate.candidateId, candidate.media, "main_structured_state");
+        const stored = storeEvidence(candidate.candidateId, candidate.media, provenance);
         if (stored.length > 0) acceptedCandidateCount += 1;
       }
       return acceptedCandidateCount;
+    }
+
+    function ingestStructured(payload) {
+      return ingestCandidates(payload, "main_structured_state");
+    }
+
+    function ingestResponseEvidence(payload) {
+      responseEvidence.messagesReceived += 1;
+      if (!validResponseEvidenceEnvelope(payload)) {
+        responseEvidence.messagesRejected += 1;
+        return 0;
+      }
+      const diagnostics = payload.diagnostics ?? {};
+      responseEvidence.observedResponseCount = diagnostics.observedResponseCount ?? 0;
+      responseEvidence.parsedResponseCount = diagnostics.parsedResponseCount ?? 0;
+      responseEvidence.rejectedResponseCount = diagnostics.rejectedResponseCount ?? 0;
+      responseEvidence.lastCandidateCount = diagnostics.candidateCount ?? 0;
+      responseEvidence.lastMediaCount = diagnostics.mediaCount ?? 0;
+      responseEvidence.lastTraversedNodeCount = diagnostics.traversedNodeCount ?? 0;
+      responseEvidence.lastBounded = diagnostics.bounded === true;
+      const accepted = ingestCandidates(payload, "x_response_graphql");
+      responseEvidence.acceptedCandidateCount += accepted;
+      return accepted;
+    }
+
+    function responseDiagnostics() {
+      return Object.freeze({
+        runtimeRevision: responseEvidenceRevision,
+        ...responseEvidence,
+      });
     }
 
     function storeEvidence(candidateId, values, provenance) {
@@ -248,8 +291,86 @@
       lookupContainer,
       lookup,
       ingestStructured,
+      ingestResponseEvidence,
+      responseDiagnostics,
       diagnostics: cache.diagnostics,
     });
+  }
+
+  function installResponseEvidenceBridge(runtime, windowObject = globalThis.window) {
+    if (
+      !runtime ||
+      globalThis.location?.origin !== "https://x.com" ||
+      typeof windowObject?.addEventListener !== "function" ||
+      typeof windowObject?.postMessage !== "function"
+    ) return false;
+    const priorHandler = globalThis.__akuXResponseEvidenceBridgeHandler;
+    if (typeof priorHandler === "function" && typeof windowObject.removeEventListener === "function") {
+      windowObject.removeEventListener("message", priorHandler);
+    }
+    const handler = (event) => {
+      if (
+        event.source !== windowObject ||
+        event.origin !== "https://x.com" ||
+        event.data?.type !== "AKU_X_RESPONSE_MEDIA_EVIDENCE"
+      ) return;
+      runtime.ingestResponseEvidence(event.data);
+    };
+    globalThis.__akuXResponseEvidenceBridgeHandler = handler;
+    windowObject.addEventListener("message", handler);
+    windowObject.postMessage({
+      type: "AKU_X_RESPONSE_EVIDENCE_READY",
+      runtimeRevision: responseEvidenceRevision,
+    }, "https://x.com");
+    return true;
+  }
+
+  function validResponseEvidenceEnvelope(payload) {
+    if (!payload || typeof payload !== "object") return false;
+    if (payload.runtimeRevision !== responseEvidenceRevision) return false;
+    if (!hasOnlyKeys(payload, ["type", "runtimeRevision", "candidates", "diagnostics"])) return false;
+    const candidates = payload.candidates;
+    if (!Array.isArray(candidates) || candidates.length > 24) return false;
+    for (const candidate of candidates) {
+      if (!candidate || typeof candidate !== "object") return false;
+      if (!hasOnlyKeys(candidate, ["candidateId", "media"])) return false;
+      if (!normalizeCandidateId(candidate.candidateId)) return false;
+      if (!Array.isArray(candidate.media) || candidate.media.length > defaults.maxMediaPerCandidate) {
+        return false;
+      }
+      for (const media of candidate.media) {
+        if (!media || typeof media !== "object") return false;
+        if (!hasOnlyKeys(media, [
+          "kind", "url", "posterUrl", "playbackUrl", "playbackMode",
+          "width", "height", "provenance",
+        ])) return false;
+      }
+    }
+    return validResponseDiagnostics(payload.diagnostics);
+  }
+
+  function validResponseDiagnostics(value) {
+    if (value === undefined || value === null) return true;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    if (!hasOnlyKeys(value, [
+      "observedResponseCount", "parsedResponseCount", "rejectedResponseCount",
+      "candidateCount", "mediaCount", "traversedNodeCount", "bounded",
+    ])) return false;
+    return Object.entries(value).every(([key, entry]) => (
+      key === "bounded"
+        ? typeof entry === "boolean"
+        : Number.isInteger(entry) && entry >= 0 && entry <= 100_000
+    ));
+  }
+
+  function hasOnlyKeys(value, allowed) {
+    let keys;
+    try {
+      keys = Object.keys(value);
+    } catch {
+      return false;
+    }
+    return keys.every((key) => allowed.includes(key));
   }
 
   function candidateIdFromContainer(container) {
@@ -368,7 +489,9 @@
       alt: typeof value.alt === "string" ? value.alt.trim().slice(0, 300) : "",
       width: clampInteger(value.width, 0, 8_192, 0),
       height: clampInteger(value.height, 0, 8_192, 0),
-      provenance: provenance === "main_structured_state" ? provenance : "observed_dom",
+      provenance: ["main_structured_state", "x_response_graphql"].includes(provenance)
+        ? provenance
+        : "observed_dom",
       observedAtMs,
     });
   }
@@ -463,6 +586,8 @@
     defaults,
     createCache,
     createRuntime,
+    installResponseEvidenceBridge,
+    validResponseEvidenceEnvelope,
     normalizeCandidateId,
     candidateIdFromContainer,
     safeXMediaUrl,
@@ -478,5 +603,6 @@
     const runtime = createRuntime();
     globalThis.AkuXMediaEvidenceRuntime = runtime;
     runtime.start();
+    installResponseEvidenceBridge(runtime);
   }
 })();

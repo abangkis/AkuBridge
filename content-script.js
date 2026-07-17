@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v57";
+  const runtimeRevision = "source-fidelity-v58";
   const LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000;
   const LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS = 50;
   const LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8;
@@ -307,6 +307,7 @@
         xStructuredMediaEvidence: source === "x" ? {
           resolver: payload.xStructuredMediaEvidence?.diagnostics ?? null,
           cache: xMediaEvidenceRuntime?.diagnostics?.() ?? null,
+          responseObserver: xMediaEvidenceRuntime?.responseDiagnostics?.() ?? null,
           acceptedCandidateCount: structuredMediaAcceptedCandidateCount,
         } : null,
         sourceFreshness,
@@ -383,7 +384,8 @@
             `${mediaAcquisition.outcomes.unavailable} unavailable, ${mediaAcquisition.attempts} bounded attempt(s), ` +
             `${mediaAcquisition.foregroundRequiredCount} foreground-required.`,
           source === "x"
-            ? `X structured media: ${structuredMediaAcceptedCandidateCount} candidate(s) accepted into the bounded evidence cache.`
+            ? `X media evidence: ${structuredMediaAcceptedCandidateCount} structured candidate(s) accepted; ` +
+              `${xMediaEvidenceRuntime?.responseDiagnostics?.()?.acceptedCandidateCount ?? 0} response-backed candidate(s) accepted into the bounded evidence cache.`
             : null,
           payload.tabAcquisition?.opened
             ? "AkuBridge opened one inactive canonical source tab for this initial acquisition."
