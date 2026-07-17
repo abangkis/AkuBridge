@@ -17,6 +17,7 @@ import {
   requiresSameWindowRecovery,
 } from "./capture-visibility-policy.js";
 import { createManagedCaptureWindowRuntime } from "./capture-window-runtime.js";
+import { inspectCaptureSurface } from "./capture-surface-telemetry.js";
 import {
   BRIDGE_CONTRACT_VERSION,
   BRIDGE_ID,
@@ -314,6 +315,7 @@ async function captureWithSourceTabRecovery(command) {
 
 async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) {
   await assertTabLease(prepared.lease, "before_capture");
+  const captureSurface = await inspectCaptureSurface(chrome, prepared.tab.id);
   const tabLifecycle = normalizeSourceTabLifecycle(command.payload.tabLifecycle);
   const sourceFreshness = await recoverSourceFreshness({
     source: command.payload.source,
@@ -341,6 +343,7 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
         tabLifecycle.openedTabDisposition,
       captureVisibilityPolicy: prepared.captureVisibilityPolicy,
       captureVisibilityMode: prepared.captureVisibilityMode,
+      captureSurface,
     },
   };
   const response = await collectFromTabWithDeadline(prepared.tab.id, payload);

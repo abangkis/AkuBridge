@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v54";
+  const runtimeRevision = "source-fidelity-v55";
   const LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000;
   const LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS = 50;
   const LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8;
@@ -380,6 +380,9 @@
           payload.tabAcquisition?.backgroundAtDispatch
             ? "The source tab was in the background when the command was dispatched."
             : null,
+          payload.tabAcquisition?.captureSurface?.available
+            ? `Capture surface: window=${payload.tabAcquisition.captureSurface.windowState}/${payload.tabAcquisition.captureSurface.windowFocused ? "focused" : "unfocused"}; tab=${payload.tabAcquisition.captureSurface.tabActive ? "active" : "inactive"}/${payload.tabAcquisition.captureSurface.tabStatus}.`
+            : `Capture surface telemetry unavailable: ${payload.tabAcquisition?.captureSurface?.reason ?? "not_reported"}.`,
           `Source freshness: ${sourceFreshness.outcome}; verification=${sourceFreshness.verification}; ` +
             `wake=${sourceFreshness.wakeAttempted}; probes=${sourceFreshness.probeCount}.`,
           payload.tabAcquisition?.recoveryCount > 0
@@ -419,6 +422,26 @@
           payload.tabAcquisition?.captureVisibilityPolicy ?? "quiet",
         captureVisibilityMode:
           payload.tabAcquisition?.captureVisibilityMode ?? "same_window",
+        captureSurfaceAvailable:
+          payload.tabAcquisition?.captureSurface?.available === true,
+        captureSurfaceReason:
+          payload.tabAcquisition?.captureSurface?.reason ?? null,
+        captureWindowState:
+          payload.tabAcquisition?.captureSurface?.windowState ?? "unknown",
+        captureWindowType:
+          payload.tabAcquisition?.captureSurface?.windowType ?? "unknown",
+        captureWindowFocused:
+          payload.tabAcquisition?.captureSurface?.windowFocused === true,
+        captureWindowWidth:
+          payload.tabAcquisition?.captureSurface?.windowWidth ?? 0,
+        captureWindowHeight:
+          payload.tabAcquisition?.captureSurface?.windowHeight ?? 0,
+        captureTabActive:
+          payload.tabAcquisition?.captureSurface?.tabActive === true,
+        captureTabDiscarded:
+          payload.tabAcquisition?.captureSurface?.tabDiscarded === true,
+        captureTabStatus:
+          payload.tabAcquisition?.captureSurface?.tabStatus ?? "unknown",
         workingTabPreserved: false,
         workingFocusRestored: false,
         sourceTabClosedAfterCapture: false,

@@ -210,6 +210,13 @@ prepare the managed surface without taking focus still fails with
 `visible_recovery_required`. Adaptive coverage distinguishes quiet success from
 `same_window_recovery`.
 
+Each observation also records a privacy-bounded capture-surface snapshot:
+window state/type/focus/dimensions and tab active/discarded/load status, without
+persisting Chrome window or tab identifiers. Combined with document visibility
+and visual-hydration counts, this distinguishes a minimized or inactive surface
+from a normal unfocused window where the source itself declined to hydrate
+media.
+
 If Chrome invalidates a tab between discovery and initial capture, AkuBridge may discard that stale reference and perform exactly one fresh source-tab discovery. The normal `openIfMissing` policy still applies, and coverage records the recovery. Provider-directed follow-up never rebinds because its evidence frontier belongs to the original tab.
 
 Every capture now binds a short-lived source-tab lease and revalidates the tab before and after collection. The lease permits navigation within the same approved source but fails closed if the tab is closed, replaced, moved to another window, or navigated outside the source. Structured failures include a stable code and stage. A runtime command guard prevents duplicate terminal results within one MV3 service-worker generation; AkuSidecar remains the durable owner of command claiming across worker restarts.

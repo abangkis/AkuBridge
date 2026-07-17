@@ -71,7 +71,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v54/);
+  assert.match(contentScript, /source-fidelity-v55/);
   assert.match(contentScript, /relative_text_estimate/);
   assert.match(contentScript, /not_exposed_promoted/);
   assert.match(contentScript, /LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000/);
@@ -209,6 +209,11 @@ test("LinkedIn capture composes readiness with generic freshness recovery", () =
 
 test("background X capture activates for the full bounded capture so scrolled media can hydrate", () => {
   const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
+  const contentScript = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
+  const surfaceTelemetry = fs.readFileSync(
+    path.join(projectRoot, "capture-surface-telemetry.js"),
+    "utf8",
+  );
   assert.match(worker, /source === "x" && backgroundAtDispatch/);
   assert.match(
     worker,
@@ -220,6 +225,10 @@ test("background X capture activates for the full bounded capture so scrolled me
   assert.match(worker, /restoreTabFocus/);
   assert.doesNotMatch(worker, /X_BACKGROUND_PROBE_TIMEOUT_MS/);
   assert.doesNotMatch(worker, /isTerminalReadiness/);
+  assert.match(worker, /inspectCaptureSurface/);
+  assert.match(contentScript, /captureWindowState/);
+  assert.match(contentScript, /captureTabActive/);
+  assert.match(surfaceTelemetry, /windowFocused/);
 });
 
 test("initial stale-tab recovery is bounded and follow-up remains anchored", () => {
@@ -242,8 +251,8 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /AKU_BROWSER_MEDIA_RECAPTURE/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
   const capabilities = createBridgeCapabilities({ version: "0.6.6", manifest_version: 3 });
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v54");
-  assert.equal(capabilities.buildId, "aku-bridge-0.6.6-source-fidelity-v54");
+  assert.equal(capabilities.runtimeRevision, "source-fidelity-v55");
+  assert.equal(capabilities.buildId, "aku-bridge-0.6.6-source-fidelity-v55");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v17", linkedin: "linkedin-dom-v15" });
   assert.ok(capabilities.actions.includes("reload_self"));
