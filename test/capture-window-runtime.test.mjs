@@ -70,6 +70,9 @@ test("managed capture accepts a transient focus change that it successfully rest
     released: true,
     mode: "owned_window_closed",
     closedTabs: 2,
+    closedManagedTabs: 2,
+    closedTransientTabs: 0,
+    preservedUserTabs: 0,
   });
 });
 
@@ -143,13 +146,36 @@ test("managed capture state accepts only known numeric bindings", () => {
   assert.deepEqual(normalizeManagedCaptureState({
     windowId: 8,
     tabs: { x: 9, linkedin: "10", other: 11 },
+    transientTabs: { linkedin: 12, x: "13" },
     leaseId: "session-1",
   }), {
     windowId: 8,
     tabs: { x: 9 },
+    transientTabs: { linkedin: 12 },
     ownedByBridge: true,
     leaseId: "session-1",
   });
+});
+
+test("session release closes a canonical tab created by Adaptive capture", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  chrome.addTab(1, "https://x.com/home", 31);
+
+  assert.deepEqual(await runtime.trackOpenedTab("x", 31, "session-1"), {
+    tracked: true,
+    source: "x",
+  });
+  assert.equal(await runtime.isTrackedTab("x", 31, "session-1"), true);
+  assert.equal(await runtime.isTrackedTab("x", 31, "another-session"), false);
+  assert.deepEqual(await runtime.release("session-1"), {
+    released: true,
+    mode: "owned_transient_tabs_closed",
+    closedTabs: 1,
+    preservedUserTabs: 0,
+  });
+  assert.deepEqual(chrome.removedTabIds, [31]);
+  assert.equal(chrome.windowsById.has(1), true);
 });
 
 test("release closes a fully Bridge-owned managed window", async () => {
@@ -161,6 +187,9 @@ test("release closes a fully Bridge-owned managed window", async () => {
     released: true,
     mode: "owned_window_closed",
     closedTabs: 1,
+    closedManagedTabs: 1,
+    closedTransientTabs: 0,
+    preservedUserTabs: 0,
   });
   assert.deepEqual(chrome.removedWindowIds, [2]);
   assert.equal(chrome.windowsById.has(2), false);
@@ -176,6 +205,8 @@ test("release preserves user tabs added to a Bridge-owned window", async () => {
     released: true,
     mode: "owned_tabs_closed_user_window_preserved",
     closedTabs: 1,
+    closedManagedTabs: 1,
+    closedTransientTabs: 0,
     preservedUserTabs: 1,
   });
   assert.deepEqual(chrome.removedWindowIds, []);

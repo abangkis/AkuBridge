@@ -14,7 +14,6 @@ import {
 import { recoverSourceFreshness } from "./source-freshness-recovery.js";
 import {
   planCaptureVisibility,
-  requiresSameWindowRecovery,
 } from "./capture-visibility-policy.js";
 import { createManagedCaptureWindowRuntime } from "./capture-window-runtime.js";
 import { inspectCaptureSurface } from "./capture-surface-telemetry.js";
@@ -340,7 +339,7 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
       recoveryCount: sourceTabRecoveryCount,
       ownership: prepared.ownership,
       openedTabDisposition:
-        tabLifecycle.openedTabDisposition,
+        prepared.openedTabDisposition ?? tabLifecycle.openedTabDisposition,
       captureVisibilityPolicy: prepared.captureVisibilityPolicy,
       captureVisibilityMode: prepared.captureVisibilityMode,
       captureSurface,
@@ -412,7 +411,6 @@ async function findOrOpenSourceTab(
     mode,
     foregroundAuthorized,
   });
-  let excludedManagedWindowId = null;
   let targetCaptureTabId = null;
   if (visibilityPlan.initialMode === "managed_window") {
     let managed = null;
@@ -421,7 +419,6 @@ async function findOrOpenSourceTab(
         openIfMissing,
         leaseId: captureLeaseId,
       });
-      excludedManagedWindowId = managed.tab.windowId;
       if (managed.opened) await waitForTabComplete(managed.tab.id, 20_000);
       let captureTab = managed.tab;
       let captureTabOpened = managed.opened;
@@ -447,35 +444,30 @@ async function findOrOpenSourceTab(
         captureVisibilityPolicy: visibilityPlan.policy,
         captureVisibilityMode,
         workingTabPreserved: true,
+        openedTabDisposition: targetUrl ? "close_after_capture" : "close_after_session",
         requireVisualHydration: !targetUrl || visibilityPlan.foregroundAuthorized,
         restoreFocus: managed.verifyFocus,
       });
       prepared.closeOnExit = Boolean(targetUrl);
-      if (!requiresSameWindowRecovery(visibilityPlan, prepared.readiness)) {
-        return prepared;
-      }
-      await prepared.restoreFocus();
+      return prepared;
     } catch (error) {
       if (Number.isInteger(targetCaptureTabId)) {
         await chrome.tabs.remove(targetCaptureTabId).catch(() => undefined);
         targetCaptureTabId = null;
       }
       if (managed) await managed.verifyFocus().catch(() => undefined);
-      if (!visibilityPlan.allowSameWindowFallback) {
-        if (error?.code === "visible_recovery_required") throw error;
-        throw new AkuBridgeError(
-          "visible_recovery_required",
-          "capture_visibility",
-          `Quiet capture could not prepare the managed ${source} surface: ${String(error?.message ?? error)}`,
-          { source, causeCode: error?.code ?? "bridge_failure" },
-        );
-      }
+      if (error?.code === "visible_recovery_required") throw error;
+      throw new AkuBridgeError(
+        "visible_recovery_required",
+        "capture_visibility",
+        `Quiet capture could not prepare the managed ${source} surface: ${String(error?.message ?? error)}`,
+        { source, causeCode: error?.code ?? "bridge_failure" },
+      );
     }
   }
 
   const patterns = source === "x" ? ["https://x.com/*"] : ["https://www.linkedin.com/*"];
-  const tabs = (await chrome.tabs.query({ url: patterns }))
-    .filter((tab) => tab.windowId !== excludedManagedWindowId);
+  const tabs = await chrome.tabs.query({ url: patterns });
   const selected = chooseSourceTab(tabs, { source, mode });
   let tab = selected;
   let opened = false;
@@ -490,13 +482,18 @@ async function findOrOpenSourceTab(
     opened = true;
     await waitForTabComplete(tab.id, 20_000);
     tab = await chrome.tabs.get(tab.id);
+    await managedCaptureWindow.trackOpenedTab(source, tab.id, captureLeaseId);
   }
+  const bridgeOwned = opened || await managedCaptureWindow.isTrackedTab(
+    source,
+    tab.id,
+    captureLeaseId,
+  );
   return prepareSourceTab(tab, source, opened, {
-    ownership: opened ? "managed" : "shared",
+    ownership: bridgeOwned ? "managed" : "shared",
     captureVisibilityPolicy: visibilityPlan.policy,
-    captureVisibilityMode: visibilityPlan.initialMode === "managed_window"
-      ? "same_window_recovery"
-      : "same_window",
+    captureVisibilityMode: "same_window",
+    openedTabDisposition: bridgeOwned ? "close_after_session" : "preserve",
   });
 }
 
@@ -581,6 +578,7 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
     activatedForReadiness,
     activateForRetry: activate,
     ownership: options.ownership ?? (opened ? "managed" : "shared"),
+    openedTabDisposition: options.openedTabDisposition ?? (opened ? "close_after_session" : "preserve"),
     captureVisibilityPolicy: options.captureVisibilityPolicy ?? "quiet",
     captureVisibilityMode: options.captureVisibilityMode ?? "same_window",
     workingTabPreserved: options.workingTabPreserved === true,

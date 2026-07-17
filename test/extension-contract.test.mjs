@@ -71,7 +71,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v55/);
+  assert.match(contentScript, /source-fidelity-v56/);
   assert.match(contentScript, /relative_text_estimate/);
   assert.match(contentScript, /not_exposed_promoted/);
   assert.match(contentScript, /LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000/);
@@ -251,8 +251,8 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /AKU_BROWSER_MEDIA_RECAPTURE/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
   const capabilities = createBridgeCapabilities({ version: "0.6.6", manifest_version: 3 });
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v55");
-  assert.equal(capabilities.buildId, "aku-bridge-0.6.6-source-fidelity-v55");
+  assert.equal(capabilities.runtimeRevision, "source-fidelity-v56");
+  assert.equal(capabilities.buildId, "aku-bridge-0.6.6-source-fidelity-v56");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v17", linkedin: "linkedin-dom-v15" });
   assert.ok(capabilities.actions.includes("reload_self"));

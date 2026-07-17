@@ -61,20 +61,72 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
         ),
       };
     },
+    async trackOpenedTab(source, tabId, leaseId) {
+      if (!Number.isInteger(tabId) || !["x", "linkedin"].includes(source)) {
+        throw visibilityError("Bridge-created source tab tracking received an invalid binding.", {
+          source,
+          reason: "transient_tab_invalid",
+        });
+      }
+      const tab = await chromeApi.tabs.get(tabId);
+      if (!isCanonicalFeedUrl(tab.url, source)) {
+        throw visibilityError("Bridge-created source tab left its canonical feed before tracking.", {
+          source,
+          reason: "transient_tab_wrong_page",
+        });
+      }
+      const state = await loadState(chromeApi);
+      const requestedLeaseId = normalizeLeaseId(leaseId);
+      if (state.leaseId && state.leaseId !== requestedLeaseId) {
+        throw visibilityError("A different capture lease already owns the transient source tabs.", {
+          source,
+          reason: "transient_tab_lease_conflict",
+        });
+      }
+      state.transientTabs[source] = tabId;
+      state.ownedByBridge = true;
+      state.leaseId = requestedLeaseId;
+      await saveState(chromeApi, state);
+      return { tracked: true, source };
+    },
+    async isTrackedTab(source, tabId, leaseId) {
+      const state = await loadState(chromeApi);
+      return state.leaseId === normalizeLeaseId(leaseId) &&
+        state.transientTabs[source] === tabId;
+    },
     async release(leaseId) {
       const state = await loadState(chromeApi);
       const requestedLeaseId = normalizeLeaseId(leaseId);
-      if (!state.windowId || !state.ownedByBridge) {
+      const hasTransientTabs = Object.keys(state.transientTabs).length > 0;
+      if ((!state.windowId && !hasTransientTabs) || !state.ownedByBridge) {
         return { released: false, reason: "no_owned_surface" };
       }
       if (state.leaseId && state.leaseId !== requestedLeaseId) {
         return { released: false, reason: "lease_mismatch" };
+      }
+      const transient = await closeTrackedTabs(chromeApi, state.transientTabs);
+      if (!state.windowId) {
+        await clearState(chromeApi);
+        return {
+          released: transient.closedTabs > 0,
+          mode: "owned_transient_tabs_closed",
+          closedTabs: transient.closedTabs,
+          preservedUserTabs: transient.preservedTabs,
+        };
       }
       let window;
       try {
         window = await chromeApi.windows.get(state.windowId, { populate: true });
       } catch {
         await clearState(chromeApi);
+        if (transient.closedTabs > 0) {
+          return {
+            released: true,
+            mode: "owned_transient_tabs_closed",
+            closedTabs: transient.closedTabs,
+            preservedUserTabs: transient.preservedTabs,
+          };
+        }
         return { released: false, reason: "surface_already_closed" };
       }
       const ownedTabs = ownedTabsInWindow(window.tabs ?? [], state.tabs);
@@ -83,17 +135,26 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
       if (ownedTabs.length > 0 && userTabs.length === 0) {
         await chromeApi.windows.remove(state.windowId);
         await clearState(chromeApi);
-        return { released: true, mode: "owned_window_closed", closedTabs: ownedTabs.length };
+        return {
+          released: true,
+          mode: "owned_window_closed",
+          closedTabs: ownedTabs.length + transient.closedTabs,
+          closedManagedTabs: ownedTabs.length,
+          closedTransientTabs: transient.closedTabs,
+          preservedUserTabs: transient.preservedTabs,
+        };
       }
       if (ownedTabs.length > 0) {
         await chromeApi.tabs.remove(ownedTabs.map((tab) => tab.id));
       }
       await clearState(chromeApi);
       return {
-        released: ownedTabs.length > 0,
+        released: ownedTabs.length > 0 || transient.closedTabs > 0,
         mode: "owned_tabs_closed_user_window_preserved",
-        closedTabs: ownedTabs.length,
-        preservedUserTabs: userTabs.length,
+        closedTabs: ownedTabs.length + transient.closedTabs,
+        closedManagedTabs: ownedTabs.length,
+        closedTransientTabs: transient.closedTabs,
+        preservedUserTabs: userTabs.length + transient.preservedTabs,
       };
     },
   });
@@ -138,10 +199,19 @@ export function normalizeManagedCaptureState(value) {
       Number.isInteger(value?.tabs?.[source]) ? [[source, value.tabs[source]]] : [],
     ),
   );
+  const transientTabs = Object.fromEntries(
+    ["x", "linkedin"].flatMap((source) =>
+      Number.isInteger(value?.transientTabs?.[source])
+        ? [[source, value.transientTabs[source]]]
+        : [],
+    ),
+  );
   return {
     windowId,
     tabs,
-    ownedByBridge: value?.ownedByBridge === true || windowId !== null,
+    transientTabs,
+    ownedByBridge:
+      value?.ownedByBridge === true || windowId !== null || Object.keys(transientTabs).length > 0,
     leaseId: normalizeLeaseId(value?.leaseId),
   };
 }
@@ -221,6 +291,27 @@ function ownedTabsInWindow(tabs, bindings) {
     );
     return tab ? [tab] : [];
   });
+}
+
+async function closeTrackedTabs(chromeApi, bindings) {
+  const closeIds = [];
+  let preservedTabs = 0;
+  for (const [source, id] of Object.entries(bindings)) {
+    let tab;
+    try {
+      tab = await chromeApi.tabs.get(id);
+    } catch {
+      continue;
+    }
+    if (isCanonicalFeedUrl(tab.url, source)) {
+      closeIds.push(id);
+    } else {
+      // Navigation is treated as user adoption. Never close an adopted tab.
+      preservedTabs += 1;
+    }
+  }
+  if (closeIds.length > 0) await chromeApi.tabs.remove(closeIds);
+  return { closedTabs: closeIds.length, preservedTabs };
 }
 
 function normalizeLeaseId(value) {

@@ -25,4 +25,16 @@ test("source tabs are preserved unless an opened managed tab explicitly requests
     lifecycle: { openedTabDisposition: "close_after_capture" },
     captureCompleted: false,
   }), false);
+  assert.deepEqual(normalizeSourceTabLifecycle({
+    ownership: "managed",
+    openedTabDisposition: "close_after_session",
+  }), {
+    ownership: "managed",
+    openedTabDisposition: "close_after_session",
+  });
+  assert.equal(shouldCloseOpenedSourceTab({
+    opened: true,
+    lifecycle: { openedTabDisposition: "close_after_session" },
+    captureCompleted: true,
+  }), false);
 });

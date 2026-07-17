@@ -21,15 +21,16 @@ export function planCaptureVisibility({ policy, mode, foregroundAuthorized = fal
       allowSameWindowFallback: true,
     };
   }
+  if (normalizedPolicy === "adaptive_fidelity") {
+    return {
+      policy: normalizedPolicy,
+      initialMode: "same_window",
+      allowSameWindowFallback: false,
+    };
+  }
   return {
     policy: normalizedPolicy,
     initialMode: "managed_window",
-    allowSameWindowFallback: normalizedPolicy === "adaptive_fidelity",
+    allowSameWindowFallback: false,
   };
-}
-
-export function requiresSameWindowRecovery(plan, readiness) {
-  return plan?.allowSameWindowFallback === true &&
-    readiness?.visualHydrationRequired === true &&
-    readiness?.visualHydrationReady !== true;
 }

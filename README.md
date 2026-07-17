@@ -26,9 +26,10 @@ flowchart LR
 ```
 
 The generic visibility orchestrator owns the capture surface before parsing:
-Quiet catch-up uses a reusable, dedicated non-focused Chrome window, while
-Adaptive tries that path first and may fall back to bounded same-window
-activation. The source adapters own page matching, feed-root and candidate discovery,
+Quiet catch-up uses a reusable, dedicated non-focused Chrome window. Adaptive
+instead uses a canonical source tab in an ordinary Chrome window directly; it
+preserves an existing user tab, while a missing tab opened by Bridge is tracked
+under the session lease and closed at terminal cleanup. The source adapters own page matching, feed-root and candidate discovery,
 source-native text/author/presentation/relationship extraction, typed
 attachments, media
 selectors and exclusions, a versioned freshness strategy, and a versioned
@@ -207,8 +208,9 @@ snapshot. If Chrome focuses that managed surface during capture, Bridge restores
 the prior working focus and records `workingFocusRestored`. A user's later tab
 or window choice remains authoritative and is never rolled back. Failure to
 prepare the managed surface without taking focus still fails with
-`visible_recovery_required`. Adaptive coverage distinguishes quiet success from
-`same_window_recovery`.
+`visible_recovery_required`. Adaptive coverage reports `same_window` and
+distinguishes user-owned tabs from Bridge-created tabs scheduled for
+`close_after_session`.
 
 Each observation also records a privacy-bounded capture-surface snapshot:
 window state/type/focus/dimensions and tab active/discarded/load status, without

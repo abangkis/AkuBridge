@@ -1,5 +1,5 @@
 const OWNERSHIP = new Set(["shared", "managed"]);
-const OPENED_DISPOSITIONS = new Set(["preserve", "close_after_capture"]);
+const OPENED_DISPOSITIONS = new Set(["preserve", "close_after_capture", "close_after_session"]);
 
 export function normalizeSourceTabLifecycle(value = {}) {
   return {
