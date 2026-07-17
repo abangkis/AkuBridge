@@ -94,6 +94,26 @@ test("managed recapture activates its target inside the background window withou
   assert.equal(chrome.activeByWindow.get(2), target.id);
 });
 
+test("user-authorized foreground recapture is shown briefly and restores the working surface", async () => {
+  const chrome = fakeChrome();
+  const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x", {
+    leaseId: "recapture-foreground-1",
+  });
+  const target = await prepared.openTargetTab("https://x.com/aku/status/123");
+
+  await prepared.showForeground();
+
+  assert.equal(chrome.focusedWindowId, 2);
+  assert.equal(chrome.activeByWindow.get(2), target.id);
+  assert.deepEqual(await prepared.verifyFocus(), {
+    changed: true,
+    restored: true,
+    preserved: true,
+  });
+  assert.equal(chrome.focusedWindowId, 1);
+  assert.equal(chrome.activeByWindow.get(1), 11);
+});
+
 test("managed recapture fails closed and removes its target when working focus cannot be restored", async () => {
   const chrome = fakeChrome();
   const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x", {

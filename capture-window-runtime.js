@@ -47,6 +47,7 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
           binding.windowId,
           source,
         ),
+        showForeground: () => chromeApi.windows.update(binding.windowId, { focused: true }),
         verifyFocus: () => preserveWorkingFocus(
           chromeApi,
           focusSnapshot,

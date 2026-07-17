@@ -270,6 +270,7 @@ async function captureWithSourceTabRecovery(command) {
         command.payload.captureVisibilityPolicy,
         command.payload.captureLeaseId,
         command.payload.targetUrl,
+        command.payload.foregroundAuthorized === true,
       );
       const observation = await capturePreparedSource(command, prepared, attempt);
       if (shouldCloseOpenedSourceTab({
@@ -401,16 +402,19 @@ async function findOrOpenSourceTab(
   requestedVisibilityPolicy,
   captureLeaseId,
   targetUrl = null,
+  foregroundAuthorized = false,
 ) {
   const visibilityPlan = planCaptureVisibility({
     policy: requestedVisibilityPolicy,
     mode,
+    foregroundAuthorized,
   });
   let excludedManagedWindowId = null;
   let targetCaptureTabId = null;
   if (visibilityPlan.initialMode === "managed_window") {
+    let managed = null;
     try {
-      const managed = await managedCaptureWindow.prepare(source, {
+      managed = await managedCaptureWindow.prepare(source, {
         openIfMissing,
         leaseId: captureLeaseId,
       });
@@ -418,20 +422,27 @@ async function findOrOpenSourceTab(
       if (managed.opened) await waitForTabComplete(managed.tab.id, 20_000);
       let captureTab = managed.tab;
       let captureTabOpened = managed.opened;
+      let captureVisibilityMode = "managed_window";
       if (targetUrl) {
         captureTab = await managed.openTargetTab(
           assertRecaptureTarget(source, targetUrl),
         );
         targetCaptureTabId = captureTab.id;
         captureTabOpened = true;
+        if (visibilityPlan.foregroundAuthorized) {
+          await managed.showForeground();
+          captureVisibilityMode = "managed_window_foreground";
+        }
         await waitForTabComplete(captureTab.id, 20_000);
-        await managed.requireFocus("target_loaded");
+        if (!visibilityPlan.foregroundAuthorized) {
+          await managed.requireFocus("target_loaded");
+        }
         captureTab = await chrome.tabs.get(captureTab.id);
       }
       const prepared = await prepareSourceTab(captureTab, source, captureTabOpened, {
         ownership: "managed",
         captureVisibilityPolicy: visibilityPlan.policy,
-        captureVisibilityMode: "managed_window",
+        captureVisibilityMode,
         workingTabPreserved: true,
         restoreFocus: managed.verifyFocus,
       });
@@ -445,6 +456,7 @@ async function findOrOpenSourceTab(
         await chrome.tabs.remove(targetCaptureTabId).catch(() => undefined);
         targetCaptureTabId = null;
       }
+      if (managed) await managed.verifyFocus().catch(() => undefined);
       if (!visibilityPlan.allowSameWindowFallback) {
         if (error?.code === "visible_recovery_required") throw error;
         throw new AkuBridgeError(

@@ -4,13 +4,14 @@ export function normalizeCaptureVisibilityPolicy(value) {
   return POLICIES.has(value) ? value : "quiet";
 }
 
-export function planCaptureVisibility({ policy, mode }) {
+export function planCaptureVisibility({ policy, mode, foregroundAuthorized = false }) {
   const normalizedPolicy = normalizeCaptureVisibilityPolicy(policy);
   if (mode === "recapture_media") {
     return {
       policy: normalizedPolicy,
       initialMode: "managed_window",
       allowSameWindowFallback: false,
+      foregroundAuthorized: foregroundAuthorized === true,
     };
   }
   if (mode !== "catch_up") {
