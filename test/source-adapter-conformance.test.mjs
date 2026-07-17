@@ -67,6 +67,12 @@ for (const source of ["x", "linkedin"]) {
       assert.equal(presentation.timestampAvailability, "relative_text");
       assert.equal(presentation.edited, true);
       assert.equal(presentation.promoted, true);
+      const commentedCandidate = {
+        ...candidate,
+        innerText: candidate.innerText.replace("Reza Lesmana likes this", "Mohamad Ramzy commented"),
+      };
+      const commentedPresentation = adapter.extractPresentation(commentedCandidate, { compactText, normalizeHttpUrl });
+      assert.equal(commentedPresentation.socialContext, "Mohamad Ramzy commented");
       const attachments = adapter.extractAttachments(candidate, { compactText, normalizeHttpUrl });
       assert.deepEqual(JSON.parse(JSON.stringify(attachments[0])), {
         kind: "job",

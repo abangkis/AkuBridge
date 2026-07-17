@@ -12,7 +12,7 @@ or validate the complete bridge observation by themselves.
 flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
     DOM --> XA["X adapter<br/>x-dom-v17<br/>x-freshness-v1<br/>x-media-acquisition-v1"]
-    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v14<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
+    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v15<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
     XA --> R["Source-adapter registry"]
     LA --> R
     R --> F["Generic freshness recovery<br/>wake -> reveal -> proof"]
@@ -139,6 +139,11 @@ LinkedIn implementation covers native job cards and external link previews,
 including the destination URL, title, subtitle, domain, and optional rendered
 thumbnail. Attachments remain separate from post media so a logo or external
 artifact is not misreported as an authored image.
+
+LinkedIn `presentation.socialContext` preserves the source-native reason a post
+entered the feed, including compact forms such as `Mohamad Ramzy commented` as
+well as `Reza Lesmana likes this`. The optional small context avatar is kept
+separate from the post author's identity and is presentation evidence only.
 
 When a rendered media root remains empty, the generic Media Acquisition Engine
 tries source-exposed structured state, then uses at most one pre-authorized

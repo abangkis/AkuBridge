@@ -14,7 +14,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v14",
+    version: "linkedin-dom-v15",
     qualityProfile: "social-post-v1",
     qualitySelectors: Object.freeze({
       author: 'button[aria-label^="Open control menu for post by"], '
@@ -132,7 +132,7 @@
       const beforeAuthor = authorIndex >= 0 ? lines.slice(0, authorIndex) : [];
       const afterAuthor = authorIndex >= 0 ? lines.slice(authorIndex + 1) : [];
       const socialContext = beforeAuthor.find((line) =>
-        /\b(?:likes?|reposted|commented on|celebrates?|supports?) this\b/i.test(line),
+        /\b(?:likes?|reposted|commented(?:\s+on)?|celebrates?|supports?)(?:\s+this)?$/i.test(line),
       ) ?? "";
       const connectionIndex = afterAuthor.findIndex((line) =>
         /^(?:[\u2022\u00b7]\s*)?(?:1st|2nd|3rd\+?)$/i.test(line),
