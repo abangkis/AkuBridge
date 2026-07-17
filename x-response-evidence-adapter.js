@@ -1,10 +1,10 @@
 // This installer is intentionally self-contained so the manifest can run it in the MAIN
 // world at document_start. Raw GraphQL responses never cross the world boundary.
 function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
-  const RUNTIME_REVISION = "x-response-evidence-v1";
+  const RUNTIME_REVISION = "x-response-evidence-v2";
   const EVIDENCE_EVENT = "AKU_X_RESPONSE_MEDIA_EVIDENCE";
   const READY_EVENT = "AKU_X_RESPONSE_EVIDENCE_READY";
-  const GLOBAL_KEY = "__akuXResponseEvidenceAdapterV1";
+  const GLOBAL_KEY = "__akuXResponseEvidenceAdapterV2";
   const MAX_MEDIA_PER_CANDIDATE = 4;
   const maxBodyBytes = clamp(configuration.maxBodyBytes, 16_384, 4_194_304, 2_097_152);
   const maxTraversalNodes = clamp(configuration.maxTraversalNodes, 100, 20_000, 5_000);
@@ -62,6 +62,7 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
     if (stopped || typeof nativePostMessage !== "function") return;
     const safeCandidates = sanitizeCandidateBatch(candidates, maxCandidatesPerResponse);
     const mediaCount = safeCandidates.reduce((sum, candidate) => sum + candidate.media.length, 0);
+    const avatarCount = safeCandidates.reduce((sum, candidate) => sum + (candidate.avatarUrl ? 1 : 0), 0);
     const message = Object.freeze({
       type: EVIDENCE_EVENT,
       runtimeRevision: RUNTIME_REVISION,
@@ -72,6 +73,7 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
         rejectedResponseCount: clamp(counters.rejectedResponseCount, 0, 100_000, 0),
         candidateCount: safeCandidates.length,
         mediaCount,
+        avatarCount,
         traversedNodeCount: clamp(diagnostics.traversedNodeCount, 0, maxTraversalNodes, 0),
         bounded: diagnostics.bounded === true,
       }),
@@ -86,10 +88,16 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
   function retainAndEmit(candidates, diagnostics) {
     const safeCandidates = sanitizeCandidateBatch(candidates, maxCandidatesPerResponse);
     for (const candidate of safeCandidates) {
-      const prior = cache.get(candidate.candidateId)?.media ?? [];
+      const cached = cache.get(candidate.candidateId);
+      const prior = cached?.media ?? [];
       const merged = sanitizeMedia([...candidate.media, ...prior]);
+      const avatarUrl = safeXAvatarURL(candidate.avatarUrl) ?? cached?.avatarUrl ?? null;
       cache.delete(candidate.candidateId);
-      cache.set(candidate.candidateId, Object.freeze({ candidateId: candidate.candidateId, media: merged }));
+      cache.set(candidate.candidateId, Object.freeze({
+        candidateId: candidate.candidateId,
+        media: merged,
+        ...(avatarUrl ? { avatarUrl } : {}),
+      }));
     }
     while (cache.size > maxCachedCandidates) cache.delete(cache.keys().next().value);
     emit(safeCandidates, diagnostics);
@@ -270,9 +278,14 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
       const tweetId = explicitTweetId(value);
       if (tweetId && !candidateIds.has(tweetId)) {
         const media = mediaForTweet(value, tweetId);
-        if (media.length > 0) {
+        const avatarUrl = avatarForTweet(value);
+        if (media.length > 0 || avatarUrl) {
           candidateIds.add(tweetId);
-          candidates.push(Object.freeze({ candidateId: `x:status:${tweetId}`, media }));
+          candidates.push(Object.freeze({
+            candidateId: `x:status:${tweetId}`,
+            media,
+            ...(avatarUrl ? { avatarUrl } : {}),
+          }));
         }
       }
       const children = dataValues(value, maxProperties);
@@ -315,6 +328,19 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
     return sanitizeMedia(media);
   }
 
+  function avatarForTweet(tweet) {
+    const core = dataProperty(tweet, "core");
+    const userResults = dataProperty(core, "user_results");
+    let user = dataProperty(userResults, "result");
+    for (let depth = 0; depth < 2; depth += 1) {
+      const nested = dataProperty(user, "result");
+      if (!isObject(nested)) break;
+      user = nested;
+    }
+    const legacy = dataProperty(user, "legacy");
+    return safeXAvatarURL(dataProperty(legacy, "profile_image_url_https"));
+  }
+
   function mediaFromEntity(entity) {
     const posterUrl = safeXMediaURL(
       dataProperty(entity, "media_url_https") ?? dataProperty(entity, "media_url") ?? dataProperty(entity, "url"),
@@ -354,9 +380,10 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
     for (const value of Array.isArray(values) ? values : []) {
       const candidateId = normalizeCandidateId(dataProperty(value, "candidateId"));
       const media = sanitizeMedia(dataProperty(value, "media"));
-      if (!candidateId || media.length === 0 || seen.has(candidateId)) continue;
+      const avatarUrl = safeXAvatarURL(dataProperty(value, "avatarUrl"));
+      if (!candidateId || (media.length === 0 && !avatarUrl) || seen.has(candidateId)) continue;
       seen.add(candidateId);
-      output.push(Object.freeze({ candidateId, media }));
+      output.push(Object.freeze({ candidateId, media, ...(avatarUrl ? { avatarUrl } : {}) }));
       if (output.length >= maximum) break;
     }
     return Object.freeze(output);
@@ -442,6 +469,24 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
       } else {
         return null;
       }
+      url.hash = "";
+      return url.href;
+    } catch {
+      return null;
+    }
+  }
+
+  function safeXAvatarURL(value) {
+    if (typeof value !== "string") return null;
+    try {
+      const url = new URL(value);
+      if (
+        url.protocol !== "https:" ||
+        url.username ||
+        url.password ||
+        url.hostname.toLowerCase() !== "pbs.twimg.com" ||
+        !url.pathname.startsWith("/profile_images/")
+      ) return null;
       url.hash = "";
       return url.href;
     } catch {

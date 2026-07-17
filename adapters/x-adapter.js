@@ -4,7 +4,7 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v18",
+    version: "x-dom-v19",
     qualityProfile: "social-post-v1",
     qualitySelectors: Object.freeze({
       author: '[data-testid="User-Name"]',
@@ -71,7 +71,9 @@
         const url = imageUrls(image).map(normalizeHttpUrl).find(Boolean);
         if (url) return url;
       }
-      return null;
+      return normalizeHttpUrl(
+        globalThis.AkuXMediaEvidenceRuntime?.lookupAvatarContainer?.(container),
+      );
     },
     contentRootSelector: '[data-testid="tweetText"]',
     extractText: (container, { compactText, structuredText }) => {

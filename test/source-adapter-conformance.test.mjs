@@ -135,6 +135,28 @@ for (const source of ["x", "linkedin"]) {
   });
 }
 
+test("X adapter uses response-backed avatar evidence when the DOM avatar is not hydrated", () => {
+  const document = syntheticDocument("x", fixtures.x.selector, syntheticCandidate("x"));
+  const context = vm.createContext({
+    document,
+    window: { document, location: { hostname: "x.com", pathname: "/home" } },
+    URL,
+    AkuXMediaEvidenceRuntime: {
+      lookupAvatarContainer: () => "https://pbs.twimg.com/profile_images/12345/fallback_normal.jpg",
+    },
+  });
+  context.globalThis = context;
+  run(context, "source-adapter-runtime.js");
+  run(context, "adapters/x-adapter.js");
+  const adapter = context.AkuSourceAdapters.get("x");
+  const container = { querySelector: () => null };
+
+  assert.equal(
+    adapter.findAvatar(container, { normalizeHttpUrl }),
+    "https://pbs.twimg.com/profile_images/12345/fallback_normal.jpg",
+  );
+});
+
 function syntheticDocument(source, selector, candidate) {
   return {
     body: {},

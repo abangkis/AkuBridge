@@ -26,16 +26,50 @@ test("fetch observation emits only sanitized owning and quoted Tweet evidence wi
 
     assert.equal(harness.messages.length, 1);
     const detail = harness.messages[0];
-    assert.equal(detail.runtimeRevision, "x-response-evidence-v1");
+    assert.equal(detail.runtimeRevision, "x-response-evidence-v2");
     assert.equal(detail.type, "AKU_X_RESPONSE_MEDIA_EVIDENCE");
     assert.deepEqual(detail.candidates.map((value) => value.candidateId), ["x:status:12345", "x:status:67890"]);
     assert.equal(detail.candidates[0].media[0].url, "https://pbs.twimg.com/media/outer.jpg?format=jpg&name=large");
     assert.equal(detail.candidates[1].media[0].url, "https://pbs.twimg.com/media/quoted.jpg?format=jpg&name=large");
     assert.equal(JSON.stringify(detail).includes("Private"), false);
     assert.deepEqual(Object.keys(detail.diagnostics).sort(), [
-      "bounded", "candidateCount", "mediaCount", "observedResponseCount",
+      "avatarCount", "bounded", "candidateCount", "mediaCount", "observedResponseCount",
       "parsedResponseCount", "rejectedResponseCount", "traversedNodeCount",
     ]);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("response evidence emits each Tweet owner's avatar separately from post media", async () => {
+  const payload = timelinePayload({
+    outerId: "12456",
+    outerMedia: [],
+    outerAvatar: "https://pbs.twimg.com/profile_images/12456/outer_normal.jpg",
+    quotedId: "67901",
+    quotedMedia: [],
+    quotedAvatar: "https://pbs.twimg.com/profile_images/67901/quoted_normal.jpg",
+  });
+  const harness = installHarness(() => Promise.resolve(jsonResponse(payload, HOME_URL)));
+  try {
+    await globalThis.fetch(HOME_URL);
+    await settle();
+
+    const detail = harness.messages[0];
+    assert.deepEqual(detail.candidates, [
+      {
+        candidateId: "x:status:12456",
+        media: [],
+        avatarUrl: "https://pbs.twimg.com/profile_images/12456/outer_normal.jpg",
+      },
+      {
+        candidateId: "x:status:67901",
+        media: [],
+        avatarUrl: "https://pbs.twimg.com/profile_images/67901/quoted_normal.jpg",
+      },
+    ]);
+    assert.equal(detail.diagnostics.avatarCount, 2);
+    assert.equal(detail.diagnostics.mediaCount, 0);
   } finally {
     harness.restore();
   }
@@ -284,7 +318,7 @@ test("non-X documents are left completely unpatched", () => {
     const controller = installXResponseEvidenceAdapterInMainWorld();
     assert.equal(controller.installed, false);
     assert.equal(globalThis.fetch, originalFetch);
-    assert.equal(globalThis.__akuXResponseEvidenceAdapterV1, undefined);
+    assert.equal(globalThis.__akuXResponseEvidenceAdapterV2, undefined);
   } finally {
     if (priorLocation) Object.defineProperty(globalThis, "location", priorLocation);
     else delete globalThis.location;
@@ -355,7 +389,7 @@ function installHarness(fetchImpl, options = {}, XHR = FakeXMLHttpRequest) {
     ready() {
       globalThis.postMessage({
         type: "AKU_X_RESPONSE_EVIDENCE_READY",
-        runtimeRevision: "x-response-evidence-v1",
+        runtimeRevision: "x-response-evidence-v2",
       }, "https://x.com");
     },
     restore() {
@@ -364,7 +398,7 @@ function installHarness(fetchImpl, options = {}, XHR = FakeXMLHttpRequest) {
         if (descriptor) Object.defineProperty(globalThis, key, descriptor);
         else delete globalThis[key];
       }
-      delete globalThis.__akuXResponseEvidenceAdapterV1;
+      delete globalThis.__akuXResponseEvidenceAdapterV2;
     },
   };
 }
@@ -380,14 +414,14 @@ class FakeXMLHttpRequest extends EventTarget {
   }
 }
 
-function timelinePayload({ outerId, outerMedia, quotedId, quotedMedia }) {
-  const outer = tweet(outerId, outerMedia);
-  if (quotedId) outer.quoted_status_result = { result: tweet(quotedId, quotedMedia) };
+function timelinePayload({ outerId, outerMedia, outerAvatar, quotedId, quotedMedia, quotedAvatar }) {
+  const outer = tweet(outerId, outerMedia, outerAvatar);
+  if (quotedId) outer.quoted_status_result = { result: tweet(quotedId, quotedMedia, quotedAvatar) };
   return { data: { home: { instructions: [{ entries: [{ content: { itemContent: { tweet_results: { result: outer } } } }] }] } } };
 }
 
-function tweet(id, media) {
-  return {
+function tweet(id, media, avatarUrl) {
+  const value = {
     __typename: "Tweet",
     rest_id: id,
     legacy: {
@@ -395,6 +429,10 @@ function tweet(id, media) {
       extended_entities: { media: Array.isArray(media) ? media : [media] },
     },
   };
+  if (avatarUrl) {
+    value.core = { user_results: { result: { legacy: { profile_image_url_https: avatarUrl } } } };
+  }
+  return value;
 }
 
 function photo(name, text = "") {

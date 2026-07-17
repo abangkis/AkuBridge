@@ -11,7 +11,7 @@ or validate the complete bridge observation by themselves.
 ```mermaid
 flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
-    DOM --> XA["X adapter<br/>x-dom-v18<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
+    DOM --> XA["X adapter<br/>x-dom-v19<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
     DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v15<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
     XA --> R["Source-adapter registry"]
     LA --> R
@@ -23,10 +23,12 @@ flowchart LR
     XG["Already-requested X GraphQL responses<br/>3 exact operations"] --> XR["X response evidence adapter<br/>document_start / MAIN world"]
     XE --> XC["Sanitized bounded URL cache<br/>30 min TTL / 128 posts / 4 media"]
     XR --> XC
+    XR --> AC["Ephemeral avatar cache<br/>30 min TTL / 128 posts"]
     XC --> M
     XC --> AE["Async retained-item enrichment<br/>AkuBrowser relay -> Sidecar override"]
     M --> P["Bounded retry/capture policy"]
     P --> O["Canonical observation<br/>quality reports + adapterHealth"]
+    AC --> O
     O --> SW["Service worker transport"]
     SW --> S["AkuSidecar validation<br/>and admission"]
 ```
@@ -70,8 +72,8 @@ does not apply to the post.
 X media evidence has passive DOM and response-backed paths. Live v57 validation
 showed why both are needed: in a Quiet X surface, media roots were detected but
 hydrated media containers and recoverable URLs remained at zero, while the same
-source could hydrate after foreground visibility. In v58, the
-`x-response-evidence-v1` adapter starts in the MAIN world at `document_start`
+source could hydrate after foreground visibility. In v59, the
+`x-response-evidence-v2` adapter starts in the MAIN world at `document_start`
 and observes only successful JSON responses that X already requested for the
 exact `HomeTimeline`, `HomeLatestTimeline`, and `TweetDetail` GraphQL
 operations. It neither originates nor retries a provider request.
@@ -82,10 +84,14 @@ objects, operation URLs, account state, and provider authentication never
 cross into the isolated world or persistent storage. Only a normalized
 `x:status:<id>` plus at most four allowlisted `pbs.twimg.com` or
 `video.twimg.com` media records, dimensions, type, and
-`x_response_graphql` provenance can enter the existing cache. The DOM watcher
-and bounded MAIN-world React resolver remain complementary inputs. The
-sanitized cache keeps at most 128 posts for 30 minutes with four media entries
-each. It uses the existing `storage` permission; v58 adds no permission and
+`x_response_graphql` provenance can enter the existing media cache. The owning
+Tweet author's allowlisted `pbs.twimg.com/profile_images/` URL may enter a
+separate isolated-world cache. This avatar cache is presentation-only and
+ephemeral: it is never published to the service worker, extension storage, or
+Sidecar as post media. The DOM watcher and bounded MAIN-world React resolver
+remain complementary inputs. The sanitized media cache keeps at most 128 posts
+for 30 minutes with four media entries each; the avatar cache uses the same
+30-minute and 128-post bounds. It uses the existing `storage` permission; v59 adds no permission and
 never opens, activates, focuses, scrolls, or navigates a tab. It cannot affect
 selection, ranking, semantic grouping, or Timeline capacity.
 

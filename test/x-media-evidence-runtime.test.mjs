@@ -134,7 +134,7 @@ test("structured evidence is sanitized before entering the shared bounded cache"
   assert.equal(published.length, 1);
 });
 
-test("response evidence bridge accepts only a strict media-only envelope", () => {
+test("response evidence bridge keeps avatars ephemeral and publishes only post media", () => {
   const evidence = loadEvidence({ hostname: "x.com", origin: "https://x.com" });
   const published = [];
   const runtime = evidence.createRuntime({
@@ -156,7 +156,7 @@ test("response evidence bridge accepts only a strict media-only envelope", () =>
   assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{
     message: {
       type: "AKU_X_RESPONSE_EVIDENCE_READY",
-      runtimeRevision: "x-response-evidence-v1",
+      runtimeRevision: "x-response-evidence-v2",
     },
     targetOrigin: "https://x.com",
   }]);
@@ -166,9 +166,10 @@ test("response evidence bridge accepts only a strict media-only envelope", () =>
     origin: "https://x.com",
     data: {
       type: "AKU_X_RESPONSE_MEDIA_EVIDENCE",
-      runtimeRevision: "x-response-evidence-v1",
+      runtimeRevision: "x-response-evidence-v2",
       candidates: [{
         candidateId: "x:status:12345",
+        avatarUrl: "https://pbs.twimg.com/profile_images/12345/avatar_normal.jpg",
         media: [{
           kind: "image",
           url: "https://pbs.twimg.com/media/from-response.jpg",
@@ -186,6 +187,7 @@ test("response evidence bridge accepts only a strict media-only envelope", () =>
         rejectedResponseCount: 0,
         candidateCount: 1,
         mediaCount: 1,
+        avatarCount: 1,
         traversedNodeCount: 50,
         bounded: false,
       },
@@ -193,17 +195,24 @@ test("response evidence bridge accepts only a strict media-only envelope", () =>
   });
 
   assert.equal(runtime.lookup("x:status:12345")[0].provenance, "x_response_graphql");
+  assert.equal(
+    runtime.lookupAvatar("x:status:12345"),
+    "https://pbs.twimg.com/profile_images/12345/avatar_normal.jpg",
+  );
   assert.equal(published.length, 1);
+  assert.equal(JSON.stringify(published).includes("profile_images"), false);
   assert.deepEqual(JSON.parse(JSON.stringify(runtime.responseDiagnostics())), {
-    runtimeRevision: "x-response-evidence-v1",
+    runtimeRevision: "x-response-evidence-v2",
     messagesReceived: 1,
     messagesRejected: 0,
     acceptedCandidateCount: 1,
+    acceptedAvatarCandidateCount: 1,
     observedResponseCount: 1,
     parsedResponseCount: 1,
     rejectedResponseCount: 0,
     lastCandidateCount: 1,
     lastMediaCount: 1,
+    lastAvatarCount: 1,
     lastTraversedNodeCount: 50,
     lastBounded: false,
   });
@@ -213,7 +222,7 @@ test("response evidence bridge accepts only a strict media-only envelope", () =>
     origin: "https://x.com",
     data: {
       type: "AKU_X_RESPONSE_MEDIA_EVIDENCE",
-      runtimeRevision: "x-response-evidence-v1",
+      runtimeRevision: "x-response-evidence-v2",
       candidates: [],
       diagnostics: {},
       rawResponse: { forbidden: true },
@@ -224,25 +233,51 @@ test("response evidence bridge accepts only a strict media-only envelope", () =>
     origin: "https://evil.example",
     data: {
       type: "AKU_X_RESPONSE_MEDIA_EVIDENCE",
-      runtimeRevision: "x-response-evidence-v1",
+      runtimeRevision: "x-response-evidence-v2",
       candidates: [],
     },
   });
 
   assert.equal(published.length, 1);
   assert.deepEqual(JSON.parse(JSON.stringify(runtime.responseDiagnostics())), {
-    runtimeRevision: "x-response-evidence-v1",
+    runtimeRevision: "x-response-evidence-v2",
     messagesReceived: 2,
     messagesRejected: 1,
     acceptedCandidateCount: 1,
+    acceptedAvatarCandidateCount: 1,
     observedResponseCount: 1,
     parsedResponseCount: 1,
     rejectedResponseCount: 0,
     lastCandidateCount: 1,
     lastMediaCount: 1,
+    lastAvatarCount: 1,
     lastTraversedNodeCount: 50,
     lastBounded: false,
   });
+});
+
+test("avatar evidence is strict, bounded, and independent from the post-media cache", () => {
+  const evidence = loadEvidence();
+  let now = 5_000;
+  const avatars = evidence.createAvatarCache({ now: () => now, maxCandidates: 1, ttlMs: 500 });
+
+  assert.equal(
+    avatars.put("x:status:11111", "https://pbs.twimg.com/profile_images/11111/one_normal.jpg#fragment"),
+    "https://pbs.twimg.com/profile_images/11111/one_normal.jpg",
+  );
+  assert.equal(avatars.put("x:status:22222", "https://evil.example/profile_images/no.jpg"), null);
+  assert.equal(avatars.put("x:status:22222", "https://pbs.twimg.com/media/not-avatar.jpg"), null);
+  assert.equal(
+    avatars.put("x:status:22222", "https://pbs.twimg.com/profile_images/22222/two_normal.jpg"),
+    "https://pbs.twimg.com/profile_images/22222/two_normal.jpg",
+  );
+  assert.equal(avatars.get("x:status:11111"), null);
+  assert.equal(avatars.diagnostics().evicted, 1);
+  assert.equal(avatars.diagnostics().rejected, 2);
+
+  now += 501;
+  assert.equal(avatars.get("x:status:22222"), null);
+  assert.equal(avatars.diagnostics().expired, 1);
 });
 
 test("document-start watcher observes bounded URL attributes and keeps media after DOM mutation", () => {

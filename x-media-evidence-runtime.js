@@ -1,6 +1,6 @@
 (() => {
-  const runtimeRevision = "x-media-evidence-runtime-v2";
-  const responseEvidenceRevision = "x-response-evidence-v1";
+  const runtimeRevision = "x-media-evidence-runtime-v3";
+  const responseEvidenceRevision = "x-response-evidence-v2";
   if (
     globalThis.AkuXMediaEvidence?.runtimeRevision === runtimeRevision &&
     globalThis.AkuXMediaEvidenceRuntime?.runtimeRevision === runtimeRevision
@@ -120,6 +120,63 @@
     return Object.freeze({ put, get, clear, diagnostics });
   }
 
+  function createAvatarCache(options = {}) {
+    const now = typeof options.now === "function" ? options.now : () => Date.now();
+    const maxCandidates = clampInteger(options.maxCandidates, 1, 512, defaults.maxCandidates);
+    const ttlMs = clampInteger(options.ttlMs, 100, 24 * 60 * 60 * 1_000, defaults.ttlMs);
+    const entries = new Map();
+    const counters = { accepted: 0, rejected: 0, expired: 0, evicted: 0 };
+
+    function put(candidateId, value) {
+      const key = normalizeCandidateId(candidateId);
+      const url = safeXAvatarUrl(value);
+      if (!key || !url) {
+        counters.rejected += 1;
+        return null;
+      }
+      purgeExpired();
+      entries.delete(key);
+      entries.set(key, { url, expiresAtMs: now() + ttlMs });
+      counters.accepted += 1;
+      while (entries.size > maxCandidates) {
+        entries.delete(entries.keys().next().value);
+        counters.evicted += 1;
+      }
+      return url;
+    }
+
+    function get(candidateId) {
+      const key = normalizeCandidateId(candidateId);
+      if (!key) return null;
+      purgeExpired();
+      const entry = entries.get(key);
+      if (!entry) return null;
+      entries.delete(key);
+      entries.set(key, entry);
+      return entry.url;
+    }
+
+    function purgeExpired() {
+      const current = now();
+      for (const [key, entry] of entries) {
+        if (entry.expiresAtMs > current) continue;
+        entries.delete(key);
+        counters.expired += 1;
+      }
+    }
+
+    function clear() {
+      entries.clear();
+    }
+
+    function diagnostics() {
+      purgeExpired();
+      return Object.freeze({ candidateCount: entries.size, maxCandidates, ttlMs, ...counters });
+    }
+
+    return Object.freeze({ put, get, clear, diagnostics });
+  }
+
   function createRuntime(options = {}) {
     const documentObject = options.document ?? globalThis.document;
     const MutationObserverConstructor = options.MutationObserver ?? globalThis.MutationObserver;
@@ -127,6 +184,7 @@
       ? options.queueMicrotask
       : globalThis.queueMicrotask?.bind(globalThis) ?? ((callback) => Promise.resolve().then(callback));
     const cache = options.cache ?? createCache(options);
+    const avatarCache = options.avatarCache ?? createAvatarCache(options);
     const publish = typeof options.publish === "function" ? options.publish : publishEvidence;
     const dirtyContainers = new Set();
     const lastPublished = new Map();
@@ -136,11 +194,13 @@
       messagesReceived: 0,
       messagesRejected: 0,
       acceptedCandidateCount: 0,
+      acceptedAvatarCandidateCount: 0,
       observedResponseCount: 0,
       parsedResponseCount: 0,
       rejectedResponseCount: 0,
       lastCandidateCount: 0,
       lastMediaCount: 0,
+      lastAvatarCount: 0,
       lastTraversedNodeCount: 0,
       lastBounded: false,
     };
@@ -219,6 +279,14 @@
       return cache.get(candidateId);
     }
 
+    function lookupAvatarContainer(container) {
+      return avatarCache.get(candidateIdFromContainer(container));
+    }
+
+    function lookupAvatar(candidateId) {
+      return avatarCache.get(candidateId);
+    }
+
     function ingestCandidates(payload, provenance) {
       const candidates = Array.isArray(payload) ? payload : payload?.candidates;
       let acceptedCandidateCount = 0;
@@ -246,10 +314,18 @@
       responseEvidence.rejectedResponseCount = diagnostics.rejectedResponseCount ?? 0;
       responseEvidence.lastCandidateCount = diagnostics.candidateCount ?? 0;
       responseEvidence.lastMediaCount = diagnostics.mediaCount ?? 0;
+      responseEvidence.lastAvatarCount = diagnostics.avatarCount ?? 0;
       responseEvidence.lastTraversedNodeCount = diagnostics.traversedNodeCount ?? 0;
       responseEvidence.lastBounded = diagnostics.bounded === true;
       const accepted = ingestCandidates(payload, "x_response_graphql");
+      let acceptedAvatars = 0;
+      for (const candidate of payload.candidates) {
+        if (candidate.avatarUrl && avatarCache.put(candidate.candidateId, candidate.avatarUrl)) {
+          acceptedAvatars += 1;
+        }
+      }
       responseEvidence.acceptedCandidateCount += accepted;
+      responseEvidence.acceptedAvatarCandidateCount += acceptedAvatars;
       return accepted;
     }
 
@@ -290,10 +366,13 @@
       captureContainer,
       lookupContainer,
       lookup,
+      lookupAvatarContainer,
+      lookupAvatar,
       ingestStructured,
       ingestResponseEvidence,
       responseDiagnostics,
       diagnostics: cache.diagnostics,
+      avatarDiagnostics: avatarCache.diagnostics,
     });
   }
 
@@ -333,8 +412,9 @@
     if (!Array.isArray(candidates) || candidates.length > 24) return false;
     for (const candidate of candidates) {
       if (!candidate || typeof candidate !== "object") return false;
-      if (!hasOnlyKeys(candidate, ["candidateId", "media"])) return false;
+      if (!hasOnlyKeys(candidate, ["candidateId", "media", "avatarUrl"])) return false;
       if (!normalizeCandidateId(candidate.candidateId)) return false;
+      if (candidate.avatarUrl !== undefined && !safeXAvatarUrl(candidate.avatarUrl)) return false;
       if (!Array.isArray(candidate.media) || candidate.media.length > defaults.maxMediaPerCandidate) {
         return false;
       }
@@ -354,7 +434,7 @@
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
     if (!hasOnlyKeys(value, [
       "observedResponseCount", "parsedResponseCount", "rejectedResponseCount",
-      "candidateCount", "mediaCount", "traversedNodeCount", "bounded",
+      "candidateCount", "mediaCount", "avatarCount", "traversedNodeCount", "bounded",
     ])) return false;
     return Object.entries(value).every(([key, entry]) => (
       key === "bounded"
@@ -516,6 +596,11 @@
     }
   }
 
+  function safeXAvatarUrl(value) {
+    const url = safeXMediaUrl(value);
+    return url?.startsWith("https://pbs.twimg.com/profile_images/") ? url : null;
+  }
+
   function mediaIdentity(value) {
     return [
       value.kind,
@@ -585,12 +670,14 @@
     runtimeRevision,
     defaults,
     createCache,
+    createAvatarCache,
     createRuntime,
     installResponseEvidenceBridge,
     validResponseEvidenceEnvelope,
     normalizeCandidateId,
     candidateIdFromContainer,
     safeXMediaUrl,
+    safeXAvatarUrl,
   });
   globalThis.AkuXMediaEvidence = api;
 
