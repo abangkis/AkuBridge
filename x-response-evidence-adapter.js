@@ -337,8 +337,10 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
       if (!isObject(nested)) break;
       user = nested;
     }
+    const avatar = dataProperty(user, "avatar");
     const legacy = dataProperty(user, "legacy");
-    return safeXAvatarURL(dataProperty(legacy, "profile_image_url_https"));
+    return safeXAvatarURL(dataProperty(avatar, "image_url")) ??
+      safeXAvatarURL(dataProperty(legacy, "profile_image_url_https"));
   }
 
   function mediaFromEntity(entity) {

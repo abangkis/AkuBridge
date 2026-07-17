@@ -50,6 +50,10 @@ test("response evidence emits each Tweet owner's avatar separately from post med
     quotedMedia: [],
     quotedAvatar: "https://pbs.twimg.com/profile_images/67901/quoted_normal.jpg",
   });
+  const quotedUser = payload.data.home.instructions[0].entries[0].content.itemContent
+    .tweet_results.result.quoted_status_result.result.core.user_results.result;
+  quotedUser.legacy = { profile_image_url_https: quotedUser.avatar.image_url };
+  delete quotedUser.avatar;
   const harness = installHarness(() => Promise.resolve(jsonResponse(payload, HOME_URL)));
   try {
     await globalThis.fetch(HOME_URL);
@@ -430,7 +434,7 @@ function tweet(id, media, avatarUrl) {
     },
   };
   if (avatarUrl) {
-    value.core = { user_results: { result: { legacy: { profile_image_url_https: avatarUrl } } } };
+    value.core = { user_results: { result: { avatar: { image_url: avatarUrl } } } };
   }
   return value;
 }
