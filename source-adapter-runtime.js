@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v7";
+  const runtimeRevision = "source-adapters-v8";
 
   const adapters = new Map();
 
@@ -37,14 +37,17 @@
         `AkuBridge ${adapter.source} adapter requires a bounded reveal observation window.`,
       );
     }
-    if (!adapter.mediaRecovery || typeof adapter.mediaRecovery !== "object") {
-      throw new Error(`AkuBridge ${adapter.source} adapter requires a media-recovery strategy.`);
+    if (!adapter.mediaAcquisition || typeof adapter.mediaAcquisition !== "object") {
+      throw new Error(`AkuBridge ${adapter.source} adapter requires a media-acquisition strategy.`);
     }
-    if (typeof adapter.mediaRecovery.version !== "string" || !adapter.mediaRecovery.version) {
-      throw new Error(`AkuBridge ${adapter.source} adapter requires a media-recovery version.`);
+    if (typeof adapter.mediaAcquisition.version !== "string" || !adapter.mediaAcquisition.version) {
+      throw new Error(`AkuBridge ${adapter.source} adapter requires a media-acquisition version.`);
     }
-    if (typeof adapter.mediaRecovery.extractCandidates !== "function") {
-      throw new Error(`AkuBridge ${adapter.source} adapter requires media recovery extraction.`);
+    if (typeof adapter.mediaAcquisition.detectExpectedKinds !== "function") {
+      throw new Error(`AkuBridge ${adapter.source} adapter requires media-kind detection.`);
+    }
+    if (typeof adapter.mediaAcquisition.extractCandidates !== "function") {
+      throw new Error(`AkuBridge ${adapter.source} adapter requires media acquisition extraction.`);
     }
     adapters.set(adapter.source, Object.freeze({ ...adapter }));
   }
@@ -61,7 +64,7 @@
       version: adapter.version,
       qualityProfile: adapter.qualityProfile,
       freshnessVersion: adapter.freshness.version,
-      mediaRecoveryVersion: adapter.mediaRecovery.version,
+      mediaAcquisitionVersion: adapter.mediaAcquisition.version,
       actions: [
         "probe_readiness",
         "probe_freshness",
@@ -70,7 +73,7 @@
         "detect_pending_content",
         "report_adapter_health",
         "report_capture_quality",
-        "recover_missing_media",
+        "acquire_missing_media",
         "extract_source_semantics",
         "report_frontier",
         "report_source_events",

@@ -67,7 +67,8 @@ for (const source of ["x", "linkedin"]) {
       assert.equal(presentation.timestampAvailability, "relative_text");
       assert.equal(presentation.edited, true);
       assert.equal(presentation.promoted, true);
-      assert.deepEqual(JSON.parse(JSON.stringify(presentation.attachment)), {
+      const attachments = adapter.extractAttachments(candidate, { compactText, normalizeHttpUrl });
+      assert.deepEqual(JSON.parse(JSON.stringify(attachments[0])), {
         kind: "job",
         title: "Management Intern",
         subtitle: "Kargo Technologies",
@@ -78,6 +79,31 @@ for (const source of ["x", "linkedin"]) {
         imageUrl: "https://media.licdn.com/dms/image/job-logo",
         verified: true,
       });
+      const externalCard = syntheticExternalCard();
+      const externalCandidate = {
+        ...candidate,
+        querySelector(selector) {
+          if (selector === '[data-testid="expandable-text-box"]') return linkedinTextForExternalCard();
+          return candidate.querySelector(selector);
+        },
+        querySelectorAll(selector) {
+          if (selector === 'a[href]') return [externalCard];
+          return candidate.querySelectorAll(selector);
+        },
+      };
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(adapter.extractAttachments(externalCandidate, { compactText, normalizeHttpUrl }))),
+        [{
+          kind: "link_preview",
+          title: "Head of IT (ERP Developer)",
+          subtitle: "Robert Walters",
+          detail: "",
+          actionLabel: "Open link",
+          url: "https://www.aplitrak.com/job/head-of-it",
+          domain: "aplitrak.com",
+          imageUrl: "https://media.licdn.com/dms/image/link-card-logo",
+        }],
+      );
       assert.deepEqual(JSON.parse(JSON.stringify(semantics.engagement)), { like: "53", repost: "1" });
       const collaborativeAvatar = syntheticImage(
         "https://media.licdn.com/dms/image/linkedin-collaborative-avatar",
@@ -175,6 +201,7 @@ function syntheticCandidate(source) {
       if (source === "linkedin" && selector === 'button,[role="button"]') return [menuButton, reactionButton, repostButton];
       if (source === "linkedin" && selector === 'a[href] img') return [socialAvatar, mainAvatar];
       if (source === "linkedin" && selector === 'a[href*="/in/"] img') return [socialAvatar, mainAvatar];
+      if (source === "linkedin" && selector === 'a[href]') return [linkedinAttachment];
       return [];
     },
   };
@@ -208,6 +235,20 @@ function syntheticImage(src, alt, size, currentSrc = src) {
 
 function socialAvatarForTest() {
   return syntheticImage("https://media.licdn.com/dms/image/context-avatar", "", 24);
+}
+
+function linkedinTextForExternalCard() {
+  return { innerText: "Hi all, I am currently recruiting for this position.", contains: () => false };
+}
+
+function syntheticExternalCard() {
+  const image = syntheticImage("https://media.licdn.com/dms/image/link-card-logo", "Robert Walters", 72);
+  return {
+    href: "https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fwww.aplitrak.com%2Fjob%2Fhead-of-it",
+    innerText: "Head of IT (ERP Developer)\nRobert Walters\naplitrak.com",
+    getBoundingClientRect: () => ({ width: 440, height: 120 }),
+    querySelectorAll: (selector) => selector === "img" ? [image] : [],
+  };
 }
 
 function compactText(value) { return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : ""; }

@@ -11,9 +11,9 @@ const cases = JSON.parse(fs.readFileSync(
   "utf8",
 ));
 
-test("media recovery accepts already complete primary media without retry", async () => {
+test("media acquisition accepts already complete primary media without retry", async () => {
   const context = runtimeContext(() => []);
-  const result = await context.AkuMediaRecoveryRuntime.recover({
+  const result = await context.AkuMediaAcquisitionEngine.acquire({
     source: "x",
     container: {},
     initialMedia: [media("https://pbs.twimg.com/media/primary.jpg")],
@@ -27,11 +27,11 @@ test("media recovery accepts already complete primary media without retry", asyn
   assert.deepEqual([...result.audit.trace], ["primary_complete"]);
 });
 
-test("media recovery retries primary hydration before adapter fallback", async () => {
+test("media acquisition retries primary hydration before adapter fallback", async () => {
   const context = runtimeContext(() => {
     throw new Error("adapter fallback must not run after primary hydration");
   });
-  const result = await context.AkuMediaRecoveryRuntime.recover({
+  const result = await context.AkuMediaAcquisitionEngine.acquire({
     source: "x",
     container: {},
     initialMedia: [],
@@ -45,14 +45,14 @@ test("media recovery retries primary hydration before adapter fallback", async (
   assert.equal(result.media.length, 1);
   assert.deepEqual(
     [...result.audit.trace],
-    ["primary_missing", "media_root_detected", "primary_hydration_complete"],
+    ["primary_missing", "media_root_detected", "structured_state_empty", "primary_hydration_complete"],
   );
 });
 
-test("media recovery honors the bounded-load settle override", async () => {
+test("media acquisition honors the bounded-load settle override", async () => {
   const delays = [];
   const context = runtimeContext(() => []);
-  await context.AkuMediaRecoveryRuntime.recover({
+  await context.AkuMediaAcquisitionEngine.acquire({
     source: "x",
     container: {},
     initialMedia: [],
@@ -65,9 +65,9 @@ test("media recovery honors the bounded-load settle override", async () => {
   assert.deepEqual(delays, [1_000]);
 });
 
-test("media recovery uses one adapter-specific alternate extraction", async () => {
+test("media acquisition uses one adapter-specific alternate extraction", async () => {
   const context = runtimeContext(() => [media("https://pbs.twimg.com/media/alternate.jpg")]);
-  const result = await context.AkuMediaRecoveryRuntime.recover({
+  const result = await context.AkuMediaAcquisitionEngine.acquire({
     source: "x",
     container: {},
     initialMedia: [],
@@ -84,15 +84,16 @@ test("media recovery uses one adapter-specific alternate extraction", async () =
     [
       "primary_missing",
       "media_root_detected",
+      "structured_state_empty",
       "primary_hydration_empty",
       "alternate_dom_complete",
     ],
   );
 });
 
-test("media recovery fails soft with an explicit unavailable outcome", async () => {
+test("media acquisition fails soft with an explicit unavailable outcome", async () => {
   const context = runtimeContext(() => []);
-  const result = await context.AkuMediaRecoveryRuntime.recover({
+  const result = await context.AkuMediaAcquisitionEngine.acquire({
     source: "linkedin",
     container: {},
     initialMedia: [],
@@ -108,15 +109,16 @@ test("media recovery fails soft with an explicit unavailable outcome", async () 
     [
       "primary_missing",
       "media_root_detected",
+      "structured_state_empty",
       "primary_hydration_empty",
       "alternate_dom_empty",
     ],
   );
 });
 
-test("media recovery summaries expose bounded stage counts", async () => {
+test("media acquisition summaries expose bounded stage counts", async () => {
   const context = runtimeContext(() => []);
-  const recovery = await context.AkuMediaRecoveryRuntime.recover({
+  const recovery = await context.AkuMediaAcquisitionEngine.acquire({
     source: "x",
     container: {},
     initialMedia: [],
@@ -125,15 +127,42 @@ test("media recovery summaries expose bounded stage counts", async () => {
     extractPrimary: () => [],
     delay: async () => {},
   });
-  const summary = context.AkuMediaRecoveryRuntime.summarize([recovery.audit]);
+  const summary = context.AkuMediaAcquisitionEngine.summarize([recovery.audit]);
   assert.equal(summary.stageCounts.primary_missing, 1);
   assert.equal(summary.stageCounts.alternate_dom_empty, 1);
+  assert.equal(summary.expectedKindCounts.image, 1);
+});
+
+test("quiet acquisition exhausts bounded background paths before requiring foreground", async () => {
+  const delays = [];
+  const context = runtimeContext(() => [], {
+    quietRecovery: "bounded_dom",
+    foregroundAfterQuietExhaustion: true,
+    expectedKinds: ["video"],
+  });
+  const result = await context.AkuMediaAcquisitionEngine.acquire({
+    source: "x",
+    container: {},
+    initialMedia: [],
+    mediaRootDetected: true,
+    attemptsAvailable: 1,
+    captureVisibilityMode: "managed_window",
+    extractPrimary: () => [],
+    delay: async (milliseconds) => delays.push(milliseconds),
+  });
+  assert.equal(result.audit.outcome, "unavailable");
+  assert.equal(result.audit.foregroundRequired, true);
+  assert.equal(result.audit.visibilityRequirement, "foreground_window");
+  assert.equal(result.audit.attempts, 1);
+  assert.deepEqual(delays, [100]);
+  assert.ok(result.audit.trace.includes("primary_hydration_empty"));
+  assert.ok(result.audit.trace.includes("alternate_dom_empty"));
 });
 
 test("X adapter fallback covers the captured regression shapes", () => {
   const context = adapterContext();
   runScript(context, path.join("adapters", "x-adapter.js"));
-  const strategy = context.adapter.mediaRecovery;
+  const strategy = context.adapter.mediaAcquisition;
   const photoPermalinkSelector = 'a[href*="/status/"][href*="/photo/"]';
   assert.ok(context.adapter.qualitySelectors.media.includes(photoPermalinkSelector));
   assert.ok(context.adapter.imageSelector.includes(`${photoPermalinkSelector} img`));
@@ -163,12 +192,15 @@ test("X adapter fallback covers the captured regression shapes", () => {
   }
 });
 
-function runtimeContext(extractCandidates) {
+function runtimeContext(extractCandidates, options = {}) {
   const adapter = {
-    mediaRecovery: {
+    mediaAcquisition: {
       version: "fixture-media-v1",
       maxAttempts: 1,
       settleMs: 100,
+      quietRecovery: options.quietRecovery ?? "bounded_dom",
+      foregroundAfterQuietExhaustion: options.foregroundAfterQuietExhaustion === true,
+      detectExpectedKinds() { return options.expectedKinds ?? ["image"]; },
       extractCandidates,
     },
   };
@@ -182,7 +214,7 @@ function runtimeContext(extractCandidates) {
   };
   context.globalThis = context;
   const sandbox = vm.createContext(context);
-  runScript(sandbox, "media-recovery-runtime.js");
+  runScript(sandbox, "media-acquisition-engine.js");
   return sandbox;
 }
 

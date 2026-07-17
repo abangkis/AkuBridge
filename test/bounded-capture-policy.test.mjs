@@ -254,7 +254,7 @@ test("the policy is loaded before the source content script", () => {
     "adapters/x-adapter.js",
     "adapters/linkedin-adapter.js",
     "source-freshness-runtime.js",
-    "media-recovery-runtime.js",
+    "media-acquisition-engine.js",
     "content-script.js",
   ]);
 
@@ -266,5 +266,5 @@ test("the policy is loaded before the source content script", () => {
   assert.match(worker, /"adapters\/x-adapter\.js"/);
   assert.match(worker, /"adapters\/linkedin-adapter\.js"/);
   assert.match(worker, /"source-freshness-runtime\.js"/);
-  assert.match(worker, /"media-recovery-runtime\.js"/);
+  assert.match(worker, /"media-acquisition-engine\.js"/);
 });

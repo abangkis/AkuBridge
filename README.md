@@ -11,14 +11,14 @@ or validate the complete bridge observation by themselves.
 ```mermaid
 flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
-    DOM --> XA["X adapter<br/>x-dom-v16<br/>x-freshness-v1<br/>x-media-recovery-v1"]
-    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v13<br/>linkedin-freshness-v2<br/>linkedin-media-recovery-v1"]
+    DOM --> XA["X adapter<br/>x-dom-v17<br/>x-freshness-v1<br/>x-media-acquisition-v1"]
+    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v14<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
     XA --> R["Source-adapter registry"]
     LA --> R
     R --> F["Generic freshness recovery<br/>wake -> reveal -> proof"]
     F --> C["Shared content runtime"]
     C --> Q["Generic quality evaluator<br/>social-post-v1"]
-    Q --> M["Generic media recovery<br/>hydrate -> adapter alternate DOM"]
+    Q --> M["Generic media acquisition<br/>primary -> structured -> hydrate -> alternate DOM"]
     M --> P["Bounded retry/capture policy"]
     P --> O["Canonical observation<br/>quality reports + adapterHealth"]
     O --> SW["Service worker transport"]
@@ -29,9 +29,10 @@ The generic visibility orchestrator owns the capture surface before parsing:
 Quiet catch-up uses a reusable, dedicated non-focused Chrome window, while
 Adaptive tries that path first and may fall back to bounded same-window
 activation. The source adapters own page matching, feed-root and candidate discovery,
-source-native text/author/presentation/relationship extraction, media
+source-native text/author/presentation/relationship extraction, typed
+attachments, media
 selectors and exclusions, a versioned freshness strategy, and a versioned
-alternate-media strategy. The shared content
+media-acquisition capability. The shared content
 runtime owns canonical block assembly, URL/date/media normalization, bounded
 snapshot collection, scrolling and restoration, field-presence diagnostics,
 and extension messaging. Trusted `social-post-v1` policy requires text,
@@ -133,11 +134,21 @@ tabs and working windows are never registered as owned cleanup targets.
 
 Each captured evidence block may include up to four rendered content images or video posters for Source layout. AkuBridge excludes small images and LinkedIn actor avatars, accepts only the allowlisted X/LinkedIn media CDNs, and never downloads or transforms media itself.
 
-When a rendered media root remains empty, the generic media-recovery runtime
-uses at most one pre-authorized attempt: it waits within the existing deadline,
-reruns primary extraction, then calls the adapter's alternate DOM extractor.
-The runtime never navigates, downloads, screenshots, or uses OCR. Each block
-reports `mediaRecovery`; coverage aggregates outcomes and marks
+Source cards may also emit up to three typed `attachments`. The first
+LinkedIn implementation covers native job cards and external link previews,
+including the destination URL, title, subtitle, domain, and optional rendered
+thumbnail. Attachments remain separate from post media so a logo or external
+artifact is not misreported as an authored image.
+
+When a rendered media root remains empty, the generic Media Acquisition Engine
+tries source-exposed structured state, then uses at most one pre-authorized
+background hydration attempt and the adapter's alternate DOM extractor. X
+quiet recapture exhausts those bounded paths before declaring that foreground
+visibility is required. The engine never navigates, downloads, screenshots,
+or uses OCR. Each block
+reports a `mediaRecovery` acquisition audit for the stable observation
+transport; coverage aggregates outcomes, expected media kinds, foreground
+requirements, and marks
 `fallbackUsed` only after successful recovery. Exhausted media is transported
 as explicitly degraded evidence. Source layout keeps Open native post and adds
 an item-scoped Recapture action. Recapture first opens only the canonical native

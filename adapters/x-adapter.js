@@ -4,7 +4,7 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v16",
+    version: "x-dom-v17",
     qualityProfile: "social-post-v1",
     qualitySelectors: Object.freeze({
       author: '[data-testid="User-Name"]',
@@ -28,10 +28,13 @@
       rejectInsideFeedCandidate: true,
       pendingContentPattern: /^(?:new posts?|show(?: \d+)? posts?)$/i,
     }),
-    mediaRecovery: Object.freeze({
-      version: "x-media-recovery-v1",
+    mediaAcquisition: Object.freeze({
+      version: "x-media-acquisition-v1",
       maxAttempts: 1,
       settleMs: 700,
+      quietRecovery: "bounded_dom",
+      foregroundAfterQuietExhaustion: true,
+      detectExpectedKinds: detectXExpectedMediaKinds,
       extractCandidates: extractXRecoveryCandidates,
     }),
     matchesPage: () => window.location.hostname === "x.com",
@@ -150,6 +153,19 @@
     collectRootCandidates,
     uniqueElements,
   }) {
+    return xMediaRoots(container, { excludeRoot, uniqueElements }).flatMap(({ root, kind }) =>
+      collectRootCandidates(root, {
+        kind,
+        alt: root.getAttribute?.("aria-label") ||
+          root.closest?.('a[aria-label]')?.getAttribute?.("aria-label") || "",
+      }));
+  }
+
+  function detectXExpectedMediaKinds(container, { excludeRoot, uniqueElements }) {
+    return xMediaRoots(container, { excludeRoot, uniqueElements }).map(({ kind }) => kind);
+  }
+
+  function xMediaRoots(container, { excludeRoot, uniqueElements }) {
     const videoSelector = [
       '[data-testid="previewInterstitial"]',
       '[data-testid="videoPlayer"]',
@@ -162,13 +178,9 @@
       ...container.querySelectorAll(videoSelector),
       ...container.querySelectorAll('a[aria-label][href] img, a[aria-label][href] [style*="/card_img/"]'),
     ]).filter((root) => !excludeRoot?.contains?.(root));
-    return roots.flatMap((root) => {
+    return roots.map((root) => {
       const videoRoot = root.matches?.(videoSelector) || root.closest?.(videoSelector);
-      return collectRootCandidates(root, {
-        kind: videoRoot ? "video" : "image",
-        alt: root.getAttribute?.("aria-label") ||
-          root.closest?.('a[aria-label]')?.getAttribute?.("aria-label") || "",
-      });
+      return { root, kind: videoRoot ? "video" : "image" };
     });
   }
 

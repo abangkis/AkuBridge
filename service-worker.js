@@ -38,7 +38,7 @@ const SOURCE_SCRIPT_FILES = [
   "adapters/x-adapter.js",
   "adapters/linkedin-adapter.js",
   "source-freshness-runtime.js",
-  "media-recovery-runtime.js",
+  "media-acquisition-engine.js",
   "content-script.js",
 ];
 
@@ -444,6 +444,7 @@ async function findOrOpenSourceTab(
         captureVisibilityPolicy: visibilityPlan.policy,
         captureVisibilityMode,
         workingTabPreserved: true,
+        requireVisualHydration: !targetUrl || visibilityPlan.foregroundAuthorized,
         restoreFocus: managed.verifyFocus,
       });
       prepared.closeOnExit = Boolean(targetUrl);
@@ -511,6 +512,7 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
   const startedAt = Date.now();
   const backgroundAtDispatch = tab.active !== true;
   let activatedForReadiness = false;
+  const requireVisualHydration = options.requireVisualHydration ?? source === "x";
   let previousActiveTabId = null;
   const activate = async () => {
     if (previousActiveTabId === null) {
@@ -534,14 +536,14 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
       tab.id,
       source,
       12_000,
-      { requireVisualHydration: true },
+      { requireVisualHydration },
     );
   } else {
     readiness = await waitForSourceReady(
       tab.id,
       source,
       source === "linkedin" ? 3_000 : 12_000,
-      { requireVisualHydration: source === "x" },
+      { requireVisualHydration },
     );
   }
   if (source === "linkedin" && readiness.state !== "feed_ready") {

@@ -15,7 +15,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version, packageJson.version);
-  assert.equal(manifest.version, "0.6.3");
+  assert.equal(manifest.version, "0.6.4");
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:47821/*",
@@ -66,12 +66,12 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
     linkedInAdapter,
     /\[data-testid="mainFeed"\] \[role="listitem"\]/,
   );
-  assert.match(linkedInAdapter, /linkedin-dom-v13/);
+  assert.match(linkedInAdapter, /linkedin-dom-v14/);
   assert.match(contentScript, /platformId/);
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v51/);
+  assert.match(contentScript, /source-fidelity-v52/);
   assert.match(contentScript, /relative_text_estimate/);
   assert.match(contentScript, /not_exposed_promoted/);
   assert.match(contentScript, /LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000/);
@@ -142,8 +142,8 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
     path.join(projectRoot, "source-freshness-runtime.js"),
     "utf8",
   );
-  const mediaRecoveryRuntime = fs.readFileSync(
-    path.join(projectRoot, "media-recovery-runtime.js"),
+  const mediaAcquisitionEngine = fs.readFileSync(
+    path.join(projectRoot, "media-acquisition-engine.js"),
     "utf8",
   );
 
@@ -167,14 +167,19 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
   assert.match(freshnessRuntime, /adapter\.freshness\.revealObservationMs/);
   assert.match(linkedInAdapter, /revealObservationMs: 12_000/);
   assert.match(linkedInAdapter, /rejectInsideFeedCandidate: true/);
-  assert.match(mediaRecoveryRuntime, /media-recovery-runtime-v1/);
-  assert.match(mediaRecoveryRuntime, /primary_hydration/);
-  assert.match(mediaRecoveryRuntime, /alternate_dom/);
-  assert.doesNotMatch(mediaRecoveryRuntime, /source\s*===\s*["'](?:x|linkedin)["']/);
-  assert.match(xAdapter, /x-media-recovery-v1/);
-  assert.match(linkedInAdapter, /linkedin-media-recovery-v1/);
-  assert.match(contentScript, /mediaRecoveryRuntime\.recover/);
-  assert.match(contentScript, /fallbackUsed: mediaRecovery\.outcomes\.recovered > 0/);
+  assert.match(mediaAcquisitionEngine, /media-acquisition-engine-v1/);
+  assert.match(mediaAcquisitionEngine, /structured_state/);
+  assert.match(mediaAcquisitionEngine, /primary_hydration/);
+  assert.match(mediaAcquisitionEngine, /alternate_dom/);
+  assert.match(mediaAcquisitionEngine, /quiet_recovery_unsupported/);
+  assert.doesNotMatch(mediaAcquisitionEngine, /source\s*===\s*["'](?:x|linkedin)["']/);
+  assert.match(xAdapter, /x-media-acquisition-v1/);
+  assert.match(linkedInAdapter, /linkedin-media-acquisition-v1/);
+  assert.match(contentScript, /mediaAcquisitionEngine\.acquire/);
+  assert.match(contentScript, /const captureVisibilityMode =\s*payload\.tabAcquisition\?\.captureVisibilityMode \?\? "same_window"/);
+  assert.match(contentScript, /operationDeadlineAtMs,\s*captureVisibilityMode,\s*\);/);
+  assert.doesNotMatch(contentScript, /captureVisibilityMode: payload\.tabAcquisition/);
+  assert.match(contentScript, /fallbackUsed: mediaAcquisition\.outcomes\.recovered > 0/);
   assert.match(contentScript, /restorationScope: feedMutation \? "post_reveal_start"/);
   assert.equal(freshnessRuntime.match(/signal\.element\.click\(\)/g)?.length, 1);
   assert.equal(contentScript.match(/menuButton\.click\(\)/g)?.length, 2);
@@ -207,9 +212,10 @@ test("background X capture activates for the full bounded capture so scrolled me
   assert.match(worker, /source === "x" && backgroundAtDispatch/);
   assert.match(
     worker,
-    /if \(source === "x" && backgroundAtDispatch\) \{[\s\S]*?await activate\(\);[\s\S]*?waitForSourceReady\([\s\S]*?requireVisualHydration: true/,
+    /if \(source === "x" && backgroundAtDispatch\) \{[\s\S]*?await activate\(\);[\s\S]*?waitForSourceReady\([\s\S]*?\{ requireVisualHydration \}/,
   );
-  assert.match(worker, /requireVisualHydration: source === "x"/);
+  assert.match(worker, /const requireVisualHydration = options\.requireVisualHydration \?\? source === "x"/);
+  assert.match(worker, /requireVisualHydration: !targetUrl \|\| visibilityPlan\.foregroundAuthorized/);
   assert.match(worker, /function isSourceCaptureReady\(readiness\) \{\s*return readiness\.state === "feed_ready";/);
   assert.match(worker, /restoreTabFocus/);
   assert.doesNotMatch(worker, /X_BACKGROUND_PROBE_TIMEOUT_MS/);
@@ -235,15 +241,15 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
   assert.match(tabBridge, /AKU_BROWSER_MEDIA_RECAPTURE/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
-  const capabilities = createBridgeCapabilities({ version: "0.6.3", manifest_version: 3 });
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v51");
-  assert.equal(capabilities.buildId, "aku-bridge-0.6.3-source-fidelity-v51");
+  const capabilities = createBridgeCapabilities({ version: "0.6.4", manifest_version: 3 });
+  assert.equal(capabilities.runtimeRevision, "source-fidelity-v52");
+  assert.equal(capabilities.buildId, "aku-bridge-0.6.4-source-fidelity-v52");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v16", linkedin: "linkedin-dom-v13" });
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v17", linkedin: "linkedin-dom-v14" });
   assert.ok(capabilities.actions.includes("reload_self"));
   assert.ok(capabilities.actions.includes("report_capture_quality"));
   assert.ok(capabilities.actions.includes("recover_source_freshness"));
-  assert.ok(capabilities.actions.includes("recover_missing_media"));
+  assert.ok(capabilities.actions.includes("acquire_missing_media"));
   assert.ok(capabilities.actions.includes("recapture_missing_media"));
   assert.match(worker, /dispatchMediaRecapture/);
   assert.match(worker, /assertRecaptureTarget/);

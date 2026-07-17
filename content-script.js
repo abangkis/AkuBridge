@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v51";
+  const runtimeRevision = "source-fidelity-v52";
   const LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000;
   const LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS = 50;
   const LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8;
@@ -14,12 +14,12 @@
   const qualityPolicy = globalThis.AkuCaptureQualityPolicy;
   const sourceAdapters = globalThis.AkuSourceAdapters;
   const freshnessRuntime = globalThis.AkuSourceFreshnessRuntime;
-  const mediaRecoveryRuntime = globalThis.AkuMediaRecoveryRuntime;
+  const mediaAcquisitionEngine = globalThis.AkuMediaAcquisitionEngine;
   if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
   if (!qualityPolicy) throw new Error("AkuBridge capture-quality policy was not loaded.");
   if (!sourceAdapters) throw new Error("AkuBridge source-adapter runtime was not loaded.");
   if (!freshnessRuntime) throw new Error("AkuBridge source-freshness runtime was not loaded.");
-  if (!mediaRecoveryRuntime) throw new Error("AkuBridge media-recovery runtime was not loaded.");
+  if (!mediaAcquisitionEngine) throw new Error("AkuBridge media-acquisition engine was not loaded.");
   updateCaptureProgress("idle");
 
   const messageHandler = (message, _sender, sendResponse) => {
@@ -136,6 +136,8 @@
     }
 
     const plan = capturePolicy.normalizeCapturePlan(payload);
+    const captureVisibilityMode =
+      payload.tabAcquisition?.captureVisibilityMode ?? "same_window";
     updateCaptureProgress("capture_started", { source, scrolls: plan.scrolls });
     const startedAt = performance.now();
     const operationDeadlineAtMs = Date.now() + Math.max(
@@ -193,6 +195,7 @@
           plan,
           scrollContext,
           operationDeadlineAtMs,
+          captureVisibilityMode,
         );
         snapshot.index = index;
         if (index === 0 && plan.continuation) {
@@ -258,7 +261,7 @@
       snapshots.flatMap((snapshot) => snapshot.qualityReports ?? []),
       { retryBudget: plan.qualityRetryBudget },
     );
-    const mediaRecovery = mediaRecoveryRuntime.summarize(
+    const mediaAcquisition = mediaAcquisitionEngine.summarize(
       snapshots.flatMap((snapshot) => snapshot.blocks ?? []).map((block) => block.mediaRecovery),
     );
     const lastSnapshot = snapshots.at(-1);
@@ -294,7 +297,7 @@
           ).join("|"),
         },
         captureQuality,
-        mediaRecovery,
+        mediaAcquisition,
         sourceFreshness,
         frontier: {
           scrollY: lastSnapshot?.scrollY ?? captureStartPosition.y,
@@ -308,7 +311,7 @@
           pendingNewContentAction,
           candidateCount,
         }),
-        fallbackUsed: mediaRecovery.outcomes.recovered > 0,
+        fallbackUsed: mediaAcquisition.outcomes.recovered > 0,
         scrollContainer: describeScrollContext(scrollContext),
         pendingNewContent: Boolean(pendingNewContentSignal),
         pendingNewContentLabel: pendingNewContentSignal?.label ?? "",
@@ -365,8 +368,9 @@
             ? `Source visual hydration: ${payload.sourceReadiness.visualHydrationReady ? "ready" : "incomplete"}; ${payload.sourceReadiness.hydratedPrimaryAvatarCount ?? 0}/${payload.sourceReadiness.primaryAvatarContainerCount ?? 0} primary avatar(s), ${payload.sourceReadiness.hydratedMediaContainerCount ?? 0}/${payload.sourceReadiness.mediaContainerCount ?? 0} media container(s).`
             : null,
           `Capture quality: ${captureQuality.verdict}; ${captureQuality.candidateReportCount} candidate report(s), ${captureQuality.retryAttempts} bounded retry attempt(s).`,
-          `Media recovery: ${mediaRecovery.outcomes.recovered} recovered, ` +
-            `${mediaRecovery.outcomes.unavailable} unavailable, ${mediaRecovery.attempts} bounded attempt(s).`,
+          `Media acquisition: ${mediaAcquisition.outcomes.recovered} recovered, ` +
+            `${mediaAcquisition.outcomes.unavailable} unavailable, ${mediaAcquisition.attempts} bounded attempt(s), ` +
+            `${mediaAcquisition.foregroundRequiredCount} foreground-required.`,
           payload.tabAcquisition?.opened
             ? "AkuBridge opened one inactive canonical source tab for this initial acquisition."
             : null,
@@ -423,7 +427,13 @@
     };
   }
 
-  async function captureVisibleSnapshot(source, payload, scrollContext, operationDeadlineAtMs) {
+  async function captureVisibleSnapshot(
+    source,
+    payload,
+    scrollContext,
+    operationDeadlineAtMs,
+    captureVisibilityMode,
+  ) {
     const capturedAt = new Date().toISOString();
     const discovery = discoverSourceCandidates(source);
     const selectorCandidates = discovery.candidates;
@@ -498,7 +508,7 @@
           );
           if (mediaIssue) {
             const quotedRoot = source === "x" ? findXQuotedPostContainer(container) : null;
-            mediaRecovery = await mediaRecoveryRuntime.recover({
+            mediaRecovery = await mediaAcquisitionEngine.acquire({
               source,
               container,
               excludeRoot: quotedRoot,
@@ -507,6 +517,7 @@
               attemptsAvailable,
               settleMs: payload.qualityRetrySettleMs,
               deadlineAtMs: operationDeadlineAtMs,
+              captureVisibilityMode,
               extractPrimary: () => findMedia(container, source, { excludeRoot: quotedRoot }),
               delay,
             });
@@ -551,7 +562,7 @@
           );
         }
         if (!mediaRecovery) {
-          mediaRecovery = await mediaRecoveryRuntime.recover({
+          mediaRecovery = await mediaAcquisitionEngine.acquire({
             source,
             container,
             excludeRoot: source === "x" ? findXQuotedPostContainer(container) : null,
@@ -560,6 +571,7 @@
             attemptsAvailable: 0,
             settleMs: payload.qualityRetrySettleMs,
             deadlineAtMs: operationDeadlineAtMs,
+            captureVisibilityMode,
             extractPrimary: () => block.media,
             delay,
           });
@@ -693,6 +705,10 @@
       compactText,
       normalizeHttpUrl,
     }) ?? {};
+    const attachments = adapter.extractAttachments?.(container, {
+      compactText,
+      normalizeHttpUrl,
+    }) ?? [];
     const nativePublishedAt = normalizeDate(time?.getAttribute("datetime"));
     const relativeTimestamp = source === "linkedin" && !nativePublishedAt
       ? globalThis.AkuLinkedInTimestampPolicy?.estimateFromRelativeText(
@@ -739,6 +755,7 @@
       quotedPost,
       engagement: semantics.engagement ?? {},
       presentation,
+      attachments,
       media,
       links: [...contentRoot.querySelectorAll("a[href]")]
         .map((anchor) => ({

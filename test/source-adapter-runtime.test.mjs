@@ -16,8 +16,8 @@ test("source adapters register independently behind one contract", () => {
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v16" },
-      { source: "linkedin", version: "linkedin-dom-v13" },
+      { source: "x", version: "x-dom-v17" },
+      { source: "linkedin", version: "linkedin-dom-v14" },
     ],
   );
   assert.equal(context.AkuSourceAdapters.get("x").matchesPage(), true);
@@ -25,8 +25,8 @@ test("source adapters register independently behind one contract", () => {
   assert.equal(context.AkuSourceAdapters.get("x").qualityProfile, "social-post-v1");
   assert.equal(context.AkuSourceAdapters.capabilities()[0].qualityProfile, "social-post-v1");
   assert.equal(
-    context.AkuSourceAdapters.capabilities()[0].mediaRecoveryVersion,
-    "x-media-recovery-v1",
+    context.AkuSourceAdapters.capabilities()[0].mediaAcquisitionVersion,
+    "x-media-acquisition-v1",
   );
 });
 
@@ -43,10 +43,11 @@ test("adapter registry rejects duplicates and unknown sources", () => {
       revealObservationMs: 5_000,
       pendingContentPattern: /new posts/i,
     },
-    mediaRecovery: {
+    mediaAcquisition: {
       version: "fixture-media-v1",
       maxAttempts: 1,
       settleMs: 500,
+      detectExpectedKinds() { return []; },
       extractCandidates() { return []; },
     },
     matchesPage() { return true; },
@@ -64,7 +65,7 @@ test("a reinjected adapter runtime replaces the stale registry generation", () =
   context.AkuSourceAdapters = previous;
   runScript(context, "source-adapter-runtime.js");
   assert.notEqual(context.AkuSourceAdapters, previous);
-  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v7");
+  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v8");
   assert.deepEqual([...context.AkuSourceAdapters.capabilities()], []);
 });
 
@@ -83,8 +84,8 @@ test("the complete adapter bundle can replace its current registry generation", 
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v16" },
-      { source: "linkedin", version: "linkedin-dom-v13" },
+      { source: "x", version: "x-dom-v17" },
+      { source: "linkedin", version: "linkedin-dom-v14" },
     ],
   );
 });

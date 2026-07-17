@@ -14,7 +14,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v13",
+    version: "linkedin-dom-v14",
     qualityProfile: "social-post-v1",
     qualitySelectors: Object.freeze({
       author: 'button[aria-label^="Open control menu for post by"], '
@@ -41,10 +41,12 @@
       rejectInsideFeedCandidate: true,
       pendingContentPattern: /^(?:new posts?|show new posts?)$/i,
     }),
-    mediaRecovery: Object.freeze({
-      version: "linkedin-media-recovery-v1",
+    mediaAcquisition: Object.freeze({
+      version: "linkedin-media-acquisition-v1",
       maxAttempts: 1,
       settleMs: 900,
+      quietRecovery: "bounded_dom",
+      detectExpectedKinds: detectLinkedInExpectedMediaKinds,
       extractCandidates: extractLinkedInRecoveryCandidates,
     }),
     matchesPage: () => window.location.hostname === "www.linkedin.com",
@@ -171,9 +173,10 @@
             : "unavailable",
         edited: /\bEdited\b/i.test(timestampText),
         promoted,
-        attachment: extractLinkedInAttachment(container, { compactText, normalizeHttpUrl }),
       };
     },
+    extractAttachments: (container, { compactText, normalizeHttpUrl }) =>
+      extractLinkedInAttachments(container, { compactText, normalizeHttpUrl }),
     findAvatar: (container, { compactText, normalizeHttpUrl }) => {
       const author = postAuthor(container, compactText);
       const image = [...container.querySelectorAll('a[href*="/in/"] img')].find((candidate) => {
@@ -207,16 +210,32 @@
     collectRootCandidates,
     uniqueElements,
   }) {
+    return linkedInMediaRoots(container, { excludeRoot, uniqueElements }).flatMap(({ root, kind }) =>
+      collectRootCandidates(root, {
+        kind: kind === "document" ? "image" : kind,
+        alt: root.getAttribute?.("aria-label") || root.getAttribute?.("title") || "",
+      }));
+  }
+
+  function detectLinkedInExpectedMediaKinds(container, { excludeRoot, uniqueElements }) {
+    return linkedInMediaRoots(container, { excludeRoot, uniqueElements }).map(({ kind }) => kind);
+  }
+
+  function linkedInMediaRoots(container, { excludeRoot, uniqueElements }) {
+    const imageSelector = ".update-components-image, .feed-shared-image";
     const videoSelector = "video, [data-view-name*='video' i], [aria-label*='video' i]";
-    const roots = uniqueElements([
-      ...container.querySelectorAll(".update-components-image, .feed-shared-image"),
-      ...container.querySelectorAll(videoSelector),
-      ...container.querySelectorAll("[data-test-document-container], iframe[title*='document' i]"),
-    ]).filter((root) => !excludeRoot?.contains?.(root));
-    return roots.flatMap((root) => collectRootCandidates(root, {
-      kind: root.matches?.(videoSelector) || root.closest?.(videoSelector) ? "video" : "image",
-      alt: root.getAttribute?.("aria-label") || root.getAttribute?.("title") || "",
-    }));
+    const documentSelector = "[data-test-document-container], iframe[title*='document' i]";
+    const values = [
+      ...uniqueElements([...container.querySelectorAll(imageSelector)])
+        .map((root) => ({ root, kind: "image" })),
+      ...uniqueElements([...container.querySelectorAll(videoSelector)])
+        .map((root) => ({ root, kind: "video" })),
+      ...uniqueElements([...container.querySelectorAll(documentSelector)])
+        .map((root) => ({ root, kind: "document" })),
+    ];
+    return values.filter(({ root }, index, all) =>
+      !excludeRoot?.contains?.(root) && all.findIndex((entry) => entry.root === root) === index,
+    );
   }
 
   function filterCandidates(candidates) {
@@ -290,10 +309,22 @@
     return result;
   }
 
-  function extractLinkedInAttachment(container, { compactText, normalizeHttpUrl }) {
-    const link = container.querySelector('a[href*="/jobs/view/"]');
-    const url = normalizeHttpUrl(link?.href);
-    if (!link || !url) return null;
+  function extractLinkedInAttachments(container, helpers) {
+    const attachments = [];
+    for (const link of container.querySelectorAll('a[href]')) {
+      const directUrl = helpers.normalizeHttpUrl(link.href);
+      if (!directUrl) continue;
+      const attachment = /\/jobs\/view\//i.test(directUrl)
+        ? extractLinkedInJob(link, directUrl, helpers)
+        : extractLinkedInExternalCard(link, directUrl, container, helpers);
+      if (!attachment || attachments.some((value) => value.url === attachment.url)) continue;
+      attachments.push(attachment);
+      if (attachments.length >= 3) break;
+    }
+    return attachments;
+  }
+
+  function extractLinkedInJob(link, url, { compactText, normalizeHttpUrl }) {
     const lines = String(link.innerText ?? "")
       .split(/\n+/)
       .map((line) => compactText(line))
@@ -314,15 +345,80 @@
     });
     return {
       kind: "job",
-      title,
-      subtitle: distinctDetails[0] ?? "",
-      detail: distinctDetails[1] ?? "",
-      actionLabel,
-      footnote,
+      title: compactText(title).slice(0, 300),
+      subtitle: compactText(distinctDetails[0] ?? "").slice(0, 300),
+      detail: compactText(distinctDetails[1] ?? "").slice(0, 300),
+      actionLabel: compactText(actionLabel).slice(0, 80),
+      footnote: compactText(footnote).slice(0, 300),
       url,
-      imageUrl: normalizeHttpUrl(images[0]?.currentSrc || images[0]?.src),
+      imageUrl: linkedInThumbnailUrl(images[0]?.currentSrc || images[0]?.src, normalizeHttpUrl),
       verified,
     };
+  }
+
+  function extractLinkedInExternalCard(link, directUrl, container, { compactText, normalizeHttpUrl }) {
+    const url = unwrapLinkedInExternalUrl(directUrl, normalizeHttpUrl);
+    if (!url) return null;
+    const contentRoot = container.querySelector('[data-testid="expandable-text-box"]');
+    if (contentRoot?.contains?.(link)) return null;
+    const images = [...link.querySelectorAll("img")].sort((left, right) => {
+      const leftRect = left.getBoundingClientRect();
+      const rightRect = right.getBoundingClientRect();
+      return (rightRect.width * rightRect.height) - (leftRect.width * leftRect.height);
+    });
+    const rect = link.getBoundingClientRect?.() ?? { width: 0, height: 0 };
+    const lines = String(link.innerText ?? "")
+      .split(/\n+/)
+      .map((line) => compactText(line))
+      .filter(Boolean);
+    const domain = new URL(url).hostname.replace(/^www\./i, "");
+    const details = lines.filter((line) =>
+      !/^https?:\/\//i.test(line) &&
+      line.toLowerCase() !== domain.toLowerCase() &&
+      !/^(?:learn more|visit website|open link)$/i.test(line),
+    );
+    const cardSized = rect.width >= 180 && rect.height >= 40;
+    if (!cardSized && images.length === 0 && details.length < 2) return null;
+    const title = details[0] || images[0]?.alt || domain;
+    return {
+      kind: "link_preview",
+      title: compactText(title).slice(0, 300),
+      subtitle: compactText(details[1] || "").slice(0, 300),
+      detail: compactText(details[2] || "").slice(0, 300),
+      actionLabel: "Open link",
+      url,
+      domain,
+      imageUrl: linkedInThumbnailUrl(images[0]?.currentSrc || images[0]?.src, normalizeHttpUrl),
+    };
+  }
+
+  function unwrapLinkedInExternalUrl(value, normalizeHttpUrl) {
+    try {
+      const url = new URL(value);
+      const linkedInHost = url.hostname === "linkedin.com" || url.hostname.endsWith(".linkedin.com");
+      if (!linkedInHost) return normalizeHttpUrl(url.href);
+      if (!/^\/safety\/go\/?$/i.test(url.pathname)) return null;
+      const target = normalizeHttpUrl(url.searchParams.get("url"));
+      if (!target) return null;
+      const targetURL = new URL(target);
+      if (targetURL.hostname === "linkedin.com" || targetURL.hostname.endsWith(".linkedin.com")) return null;
+      return targetURL.href;
+    } catch {
+      return null;
+    }
+  }
+
+  function linkedInThumbnailUrl(value, normalizeHttpUrl) {
+    const normalized = normalizeHttpUrl(value);
+    if (!normalized) return null;
+    try {
+      const url = new URL(normalized);
+      return url.hostname === "media.licdn.com" || url.hostname.endsWith(".licdn.com")
+        ? url.href
+        : null;
+    } catch {
+      return null;
+    }
   }
 
   function stripExpansionControl(value) {
