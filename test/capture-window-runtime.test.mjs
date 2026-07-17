@@ -73,6 +73,43 @@ test("managed capture accepts a transient focus change that it successfully rest
   });
 });
 
+test("managed recapture activates its target inside the background window without foregrounding it", async () => {
+  const chrome = fakeChrome();
+  const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x", {
+    leaseId: "recapture-1",
+  });
+  chrome.focusManagedWindowOnTabActivation = true;
+
+  const target = await prepared.openTargetTab("https://x.com/aku/status/123");
+
+  assert.equal(target.url, "https://x.com/aku/status/123");
+  assert.equal(target.active, true);
+  assert.deepEqual(chrome.createdTabOptions.at(-1), {
+    windowId: 2,
+    url: "https://x.com/aku/status/123",
+    active: false,
+  });
+  assert.equal(chrome.focusedWindowId, 1);
+  assert.equal(chrome.activeByWindow.get(1), 11);
+  assert.equal(chrome.activeByWindow.get(2), target.id);
+});
+
+test("managed recapture fails closed and removes its target when working focus cannot be restored", async () => {
+  const chrome = fakeChrome();
+  const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x", {
+    leaseId: "recapture-1",
+  });
+  chrome.focusManagedWindowOnTabActivation = true;
+  chrome.failFocusRestore = true;
+
+  await assert.rejects(
+    prepared.openTargetTab("https://x.com/aku/status/123"),
+    (error) => error.code === "visible_recovery_required" &&
+      error.details?.reason === "managed_target_activation_took_focus",
+  );
+  assert.deepEqual(chrome.removedTabIds, [22]);
+});
+
 test("managed capture refuses creation when missing-tab policy forbids it", async () => {
   const chrome = fakeChrome();
   await assert.rejects(
@@ -154,7 +191,9 @@ function fakeChrome() {
     windowsById: windows,
     removedWindowIds: [],
     removedTabIds: [],
+    createdTabOptions: [],
     focusManagedWindowOnTabActivation: false,
+    failFocusRestore: false,
     addTab(windowId, url, id) {
       const tab = { id, windowId, active: false, url };
       tabs.set(id, tab);
@@ -182,6 +221,7 @@ function fakeChrome() {
         return { id: 2, tabs: [tab] };
       },
       async update(id, options) {
+        if (options.focused && state.failFocusRestore) throw new Error("Focus restore blocked");
         if (options.focused) state.focusedWindowId = id;
         return { id };
       },
@@ -214,6 +254,7 @@ function fakeChrome() {
         return { ...tab, active: options.active === true };
       },
       async create(options) {
+        state.createdTabOptions.push({ ...options });
         const id = Math.max(...tabs.keys()) + 1;
         const tab = state.addTab(options.windowId, options.url, id);
         if (options.active) activeByWindow.set(options.windowId, id);

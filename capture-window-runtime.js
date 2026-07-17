@@ -30,26 +30,33 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
 
       const current = await chromeApi.tabs.get(binding.tabId);
       if (current.active !== true) await chromeApi.tabs.update(binding.tabId, { active: true });
-      const focusOutcome = await preserveWorkingFocus(
-        chromeApi,
-        focusSnapshot,
-        binding.windowId,
-      );
-      if (focusOutcome.changed && focusOutcome.preserved !== true) {
-        throw visibilityError(
-          "Chrome focused the managed capture surface while Quiet capture was preparing it.",
-          { source, reason: "managed_window_took_focus", focusOutcome },
-        );
-      }
+      await requirePreservedFocus(chromeApi, focusSnapshot, binding.windowId, {
+        source,
+        reason: "managed_window_took_focus",
+        phase: "prepare",
+      });
 
       return {
         tab: await chromeApi.tabs.get(binding.tabId),
         opened,
         focusSnapshot,
+        openTargetTab: (url) => openManagedTargetTab(
+          chromeApi,
+          url,
+          focusSnapshot,
+          binding.windowId,
+          source,
+        ),
         verifyFocus: () => preserveWorkingFocus(
           chromeApi,
           focusSnapshot,
           binding.windowId,
+        ),
+        requireFocus: (phase) => requirePreservedFocus(
+          chromeApi,
+          focusSnapshot,
+          binding.windowId,
+          { source, reason: "managed_window_took_focus", phase },
         ),
       };
     },
@@ -89,6 +96,38 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
       };
     },
   });
+}
+
+async function openManagedTargetTab(chromeApi, url, focusSnapshot, managedWindowId, source) {
+  let targetTab = null;
+  try {
+    // Creating the target inactive avoids the most common Chrome foreground
+    // transition. It is activated only inside the already-unfocused managed
+    // window so the native post can hydrate without replacing the user's tab.
+    targetTab = await chromeApi.tabs.create({
+      windowId: managedWindowId,
+      url,
+      active: false,
+    });
+    await requirePreservedFocus(chromeApi, focusSnapshot, managedWindowId, {
+      source,
+      reason: "managed_target_creation_took_focus",
+      phase: "target_created",
+    });
+    await chromeApi.tabs.update(targetTab.id, { active: true });
+    await requirePreservedFocus(chromeApi, focusSnapshot, managedWindowId, {
+      source,
+      reason: "managed_target_activation_took_focus",
+      phase: "target_activated",
+    });
+    return chromeApi.tabs.get(targetTab.id);
+  } catch (error) {
+    if (Number.isInteger(targetTab?.id)) {
+      await chromeApi.tabs.remove(targetTab.id).catch(() => undefined);
+    }
+    await preserveWorkingFocus(chromeApi, focusSnapshot, managedWindowId).catch(() => undefined);
+    throw error;
+  }
 }
 
 export function normalizeManagedCaptureState(value) {
@@ -234,6 +273,17 @@ async function preserveWorkingFocus(chromeApi, snapshot, managedWindowId) {
   } catch {
     return { changed: true, restored: false, preserved: false };
   }
+}
+
+async function requirePreservedFocus(chromeApi, snapshot, managedWindowId, details) {
+  const focusOutcome = await preserveWorkingFocus(chromeApi, snapshot, managedWindowId);
+  if (focusOutcome.changed && focusOutcome.preserved !== true) {
+    throw visibilityError(
+      "Chrome focused the managed capture surface and AkuBridge could not restore the user's working surface.",
+      { ...details, focusOutcome },
+    );
+  }
+  return focusOutcome;
 }
 
 function visibilityError(message, details) {

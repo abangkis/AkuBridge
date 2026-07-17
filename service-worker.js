@@ -419,14 +419,13 @@ async function findOrOpenSourceTab(
       let captureTab = managed.tab;
       let captureTabOpened = managed.opened;
       if (targetUrl) {
-        captureTab = await chrome.tabs.create({
-          windowId: managed.tab.windowId,
-          url: assertRecaptureTarget(source, targetUrl),
-          active: true,
-        });
+        captureTab = await managed.openTargetTab(
+          assertRecaptureTarget(source, targetUrl),
+        );
         targetCaptureTabId = captureTab.id;
         captureTabOpened = true;
         await waitForTabComplete(captureTab.id, 20_000);
+        await managed.requireFocus("target_loaded");
         captureTab = await chrome.tabs.get(captureTab.id);
       }
       const prepared = await prepareSourceTab(captureTab, source, captureTabOpened, {
