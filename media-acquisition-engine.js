@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "media-acquisition-engine-v1";
+  const runtimeRevision = "media-acquisition-engine-v2";
   const policyVersion = "media-acquisition-v1";
   const sourceAdapters = globalThis.AkuSourceAdapters;
   const capturePolicy = globalThis.AkuBoundedCapturePolicy;
@@ -199,8 +199,9 @@
     const values = [];
     for (const image of root.matches?.("img") ? [root] : root.querySelectorAll?.("img") ?? []) {
       const rect = image.getBoundingClientRect?.() ?? {};
-      const url = image.currentSrc || image.src || image.getAttribute?.("src") || "";
-      values.push({ kind, url, posterUrl: kind === "video" ? url : null, alt: image.alt || alt, width: rect.width, height: rect.height });
+      for (const url of imageUrls(image)) {
+        values.push({ kind, url, posterUrl: kind === "video" ? url : null, alt: image.alt || alt, width: rect.width, height: rect.height });
+      }
     }
     for (const video of root.matches?.("video") ? [root] : root.querySelectorAll?.("video") ?? []) {
       const rect = video.getBoundingClientRect?.() ?? {};
@@ -221,18 +222,39 @@
         height: rect.height,
       });
     }
-    const backgroundUrl = renderedBackgroundUrl(root);
-    if (backgroundUrl) {
-      const rect = root.getBoundingClientRect?.() ?? {};
+    for (const element of uniqueElements([root, ...(root.querySelectorAll?.("*") ?? [])])) {
+      const backgroundUrl = renderedBackgroundUrl(element);
+      if (!backgroundUrl) continue;
+      const rect = element.getBoundingClientRect?.() ?? root.getBoundingClientRect?.() ?? {};
       values.push({ kind, url: backgroundUrl, posterUrl: kind === "video" ? backgroundUrl : null, alt, width: rect.width, height: rect.height });
     }
     return values;
   }
 
+  function imageUrls(image) {
+    if (!image) return [];
+    const srcsets = [image.srcset, image.getAttribute?.("srcset")].filter(Boolean);
+    const srcsetUrls = srcsets.flatMap((srcset) => String(srcset).split(",")
+      .map((candidate) => candidate.trim().split(/\s+/)[0])
+      .filter(Boolean));
+    return [...new Set([
+      image.currentSrc,
+      image.src,
+      image.getAttribute?.("src"),
+      image.getAttribute?.("data-src"),
+      image.getAttribute?.("data-original"),
+      ...srcsetUrls,
+    ].filter(Boolean))];
+  }
+
   function renderedBackgroundUrl(element) {
     if (!element) return null;
-    const value = element.style?.backgroundImage || globalThis.getComputedStyle?.(element)?.backgroundImage;
-    return capturePolicy.mediaUrlFromCssBackground(value);
+    try {
+      const value = element.style?.backgroundImage || globalThis.getComputedStyle?.(element)?.backgroundImage;
+      return capturePolicy.mediaUrlFromCssBackground(value);
+    } catch {
+      return null;
+    }
   }
 
   function normalizeMedia(source, values) {

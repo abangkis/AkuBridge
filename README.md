@@ -147,7 +147,10 @@ separate from the post author's identity and is presentation evidence only.
 
 When a rendered media root remains empty, the generic Media Acquisition Engine
 tries source-exposed structured state, then uses at most one pre-authorized
-background hydration attempt and the adapter's alternate DOM extractor. X
+background hydration attempt and the adapter's alternate DOM extractor. The
+alternate extractor reads every bounded image source candidate, including
+lazy `srcset` values and computed backgrounds on descendants of the declared
+media root; it does not expand beyond that post-local root. X
 quiet recapture exhausts those bounded paths before declaring that foreground
 visibility is required. The engine never navigates, downloads, screenshots,
 or uses OCR. Each block

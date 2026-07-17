@@ -15,7 +15,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version, packageJson.version);
-  assert.equal(manifest.version, "0.6.5");
+  assert.equal(manifest.version, "0.6.6");
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:47821/*",
@@ -71,7 +71,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v53/);
+  assert.match(contentScript, /source-fidelity-v54/);
   assert.match(contentScript, /relative_text_estimate/);
   assert.match(contentScript, /not_exposed_promoted/);
   assert.match(contentScript, /LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000/);
@@ -167,7 +167,7 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
   assert.match(freshnessRuntime, /adapter\.freshness\.revealObservationMs/);
   assert.match(linkedInAdapter, /revealObservationMs: 12_000/);
   assert.match(linkedInAdapter, /rejectInsideFeedCandidate: true/);
-  assert.match(mediaAcquisitionEngine, /media-acquisition-engine-v1/);
+  assert.match(mediaAcquisitionEngine, /media-acquisition-engine-v2/);
   assert.match(mediaAcquisitionEngine, /structured_state/);
   assert.match(mediaAcquisitionEngine, /primary_hydration/);
   assert.match(mediaAcquisitionEngine, /alternate_dom/);
@@ -241,9 +241,9 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
   assert.match(tabBridge, /AKU_BROWSER_MEDIA_RECAPTURE/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
-  const capabilities = createBridgeCapabilities({ version: "0.6.5", manifest_version: 3 });
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v53");
-  assert.equal(capabilities.buildId, "aku-bridge-0.6.5-source-fidelity-v53");
+  const capabilities = createBridgeCapabilities({ version: "0.6.6", manifest_version: 3 });
+  assert.equal(capabilities.runtimeRevision, "source-fidelity-v54");
+  assert.equal(capabilities.buildId, "aku-bridge-0.6.6-source-fidelity-v54");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v17", linkedin: "linkedin-dom-v15" });
   assert.ok(capabilities.actions.includes("reload_self"));

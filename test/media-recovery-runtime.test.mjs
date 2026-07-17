@@ -159,6 +159,54 @@ test("quiet acquisition exhausts bounded background paths before requiring foreg
   assert.ok(result.audit.trace.includes("alternate_dom_empty"));
 });
 
+test("alternate DOM recovery reads lazy srcset and descendant computed backgrounds", async () => {
+  const background = {
+    backgroundImage: 'url("https://pbs.twimg.com/media/background.jpg")',
+    getBoundingClientRect: () => ({ width: 640, height: 360 }),
+  };
+  const image = {
+    currentSrc: "",
+    src: "",
+    srcset: "https://pbs.twimg.com/media/srcset-small.jpg 1x, https://pbs.twimg.com/media/srcset-large.jpg 2x",
+    alt: "Recovered image",
+    getAttribute(name) { return name === "srcset" ? this.srcset : ""; },
+    getBoundingClientRect: () => ({ width: 640, height: 360 }),
+  };
+  const root = {
+    matches: () => false,
+    querySelectorAll(selector) {
+      if (selector === "img") return [image];
+      if (selector === "video") return [];
+      if (selector === "*") return [background];
+      return [];
+    },
+    getBoundingClientRect: () => ({ width: 640, height: 360 }),
+  };
+  const context = runtimeContext((_container, { collectRootCandidates }) =>
+    collectRootCandidates(root), {
+      getComputedStyle: (element) => ({ backgroundImage: element.backgroundImage ?? "none" }),
+      mediaUrlFromCssBackground: (value) => value.match(/https:\/\/[^"')]+/)?.[0] ?? null,
+    });
+  const result = await context.AkuMediaAcquisitionEngine.acquire({
+    source: "x",
+    container: {},
+    initialMedia: [],
+    mediaRootDetected: true,
+    attemptsAvailable: 1,
+    extractPrimary: () => [],
+    delay: async () => {},
+  });
+  assert.equal(result.audit.method, "alternate_dom");
+  assert.deepEqual(
+    [...result.media].map((entry) => entry.url),
+    [
+      "https://pbs.twimg.com/media/srcset-small.jpg",
+      "https://pbs.twimg.com/media/srcset-large.jpg",
+      "https://pbs.twimg.com/media/background.jpg",
+    ],
+  );
+});
+
 test("X adapter fallback covers the captured regression shapes", () => {
   const context = adapterContext();
   runScript(context, path.join("adapters", "x-adapter.js"));
@@ -208,9 +256,9 @@ function runtimeContext(extractCandidates, options = {}) {
     AkuSourceAdapters: { get: () => adapter },
     AkuBoundedCapturePolicy: {
       normalizeMediaCandidates: (_source, values) => values.filter((entry) => entry?.url),
-      mediaUrlFromCssBackground: () => null,
+      mediaUrlFromCssBackground: options.mediaUrlFromCssBackground ?? (() => null),
     },
-    getComputedStyle: () => ({ backgroundImage: "none" }),
+    getComputedStyle: options.getComputedStyle ?? (() => ({ backgroundImage: "none" })),
   };
   context.globalThis = context;
   const sandbox = vm.createContext(context);
