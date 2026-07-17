@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "media-acquisition-engine-v2";
+  const runtimeRevision = "media-acquisition-engine-v3";
   const policyVersion = "media-acquisition-v1";
   const sourceAdapters = globalThis.AkuSourceAdapters;
   const capturePolicy = globalThis.AkuBoundedCapturePolicy;
@@ -21,6 +21,8 @@
   }) {
     const adapter = sourceAdapters.get(source);
     const strategy = adapter.mediaAcquisition;
+    const candidateDiagnostics = [];
+    recordDiagnostics(candidateDiagnostics, "initial_dom", initialMedia);
     const expectedKinds = normalizeKinds(strategy.detectExpectedKinds(container, {
       excludeRoot,
       uniqueElements,
@@ -39,6 +41,7 @@
       foregroundRequired: false,
       limitation: "",
       trace: [],
+      candidateDiagnostics,
     };
     const primary = normalizeMedia(source, initialMedia);
     if (primary.length > 0) {
@@ -65,6 +68,7 @@
         uniqueElements,
       }) ?? [],
     );
+    recordDiagnostics(candidateDiagnostics, "structured_state", structured);
     if (structured.length > 0) {
       return result(structured, {
         ...base,
@@ -119,6 +123,7 @@
     for (; attempts < maximumAttempts && Date.now() < deadlineAtMs; attempts += 1) {
       await delay(clampInteger(settleMs ?? strategy.settleMs, 100, 2_000, 700));
       const hydrated = normalizeMedia(source, extractPrimary?.() ?? []);
+      recordDiagnostics(candidateDiagnostics, "primary_hydration", hydrated);
       if (hydrated.length > 0) {
         return result(hydrated, {
           ...base,
@@ -139,6 +144,7 @@
           uniqueElements,
         }),
       );
+      recordDiagnostics(candidateDiagnostics, "alternate_dom", alternate);
       if (alternate.length > 0) {
         return result(alternate, {
           ...base,
@@ -258,7 +264,25 @@
   }
 
   function normalizeMedia(source, values) {
+    if (Array.isArray(values) && values.diagnostics) return values;
     return capturePolicy.normalizeMediaCandidates(source, Array.isArray(values) ? values : []);
+  }
+
+  function recordDiagnostics(target, stage, values) {
+    const diagnostics = values?.diagnostics;
+    if (!diagnostics || typeof diagnostics !== "object") return;
+    target.push(Object.freeze({
+      stage,
+      candidateCount: Number(diagnostics.candidateCount ?? 0),
+      urlPresentCount: Number(diagnostics.urlPresentCount ?? 0),
+      urlMissingCount: Number(diagnostics.urlMissingCount ?? 0),
+      rejectedHostCount: Number(diagnostics.rejectedHostCount ?? 0),
+      rejectedGeometryCount: Number(diagnostics.rejectedGeometryCount ?? 0),
+      duplicateCount: Number(diagnostics.duplicateCount ?? 0),
+      acceptedCount: Number(diagnostics.acceptedCount ?? 0),
+      trustedUnknownGeometryAcceptedCount: Number(diagnostics.trustedUnknownGeometryAcceptedCount ?? 0),
+      urlSources: Object.freeze({ ...(diagnostics.urlSources ?? {}) }),
+    }));
   }
 
   function normalizeKinds(values) {

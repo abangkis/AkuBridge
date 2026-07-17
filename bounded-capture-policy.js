@@ -130,15 +130,47 @@
   function normalizeMediaCandidates(source, values) {
     const seen = new Set();
     const media = [];
+    const diagnostics = {
+      candidateCount: 0,
+      urlPresentCount: 0,
+      urlMissingCount: 0,
+      rejectedHostCount: 0,
+      rejectedGeometryCount: 0,
+      duplicateCount: 0,
+      acceptedCount: 0,
+      trustedUnknownGeometryAcceptedCount: 0,
+      urlSources: {},
+    };
     for (const value of Array.isArray(values) ? values : []) {
       if (!value || typeof value !== "object") continue;
+      diagnostics.candidateCount += 1;
+      const rawURL = value.posterUrl || value.url;
+      if (rawURL) diagnostics.urlPresentCount += 1;
+      else diagnostics.urlMissingCount += 1;
+      const urlSource = typeof value.urlSource === "string" && value.urlSource.trim()
+        ? value.urlSource.trim().slice(0, 40)
+        : "unknown";
+      diagnostics.urlSources[urlSource] = (diagnostics.urlSources[urlSource] ?? 0) + 1;
       const kind = value.kind === "video" || value.kind === "video_poster" ? "video" : "image";
-      const url = safeMediaUrl(source, value.posterUrl || value.url);
-      if (!url || seen.has(url)) continue;
+      const url = safeMediaUrl(source, rawURL);
+      if (!url) {
+        if (rawURL) diagnostics.rejectedHostCount += 1;
+        continue;
+      }
+      if (seen.has(url)) {
+        diagnostics.duplicateCount += 1;
+        continue;
+      }
       const playbackUrl = kind === "video" ? safeMediaUrl(source, value.playbackUrl) : null;
       const width = clampInteger(Math.round(value.width), 0, 8_192, 0);
       const height = clampInteger(Math.round(value.height), 0, 8_192, 0);
-      if (width < 180 || height < 90) continue;
+      const unknownGeometry = width === 0 && height === 0;
+      const trustedUnknownGeometry = source === "x" && value.trustedMediaRoot === true && unknownGeometry;
+      if ((width < 180 || height < 90) && !trustedUnknownGeometry) {
+        diagnostics.rejectedGeometryCount += 1;
+        continue;
+      }
+      if (trustedUnknownGeometry) diagnostics.trustedUnknownGeometryAcceptedCount += 1;
       seen.add(url);
       media.push(Object.freeze({
         kind,
@@ -156,6 +188,14 @@
       }));
       if (media.length >= limits.maxMediaPerBlock) break;
     }
+    diagnostics.acceptedCount = media.length;
+    diagnostics.urlSources = Object.freeze({ ...diagnostics.urlSources });
+    Object.defineProperty(media, "diagnostics", {
+      value: Object.freeze(diagnostics),
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    });
     return Object.freeze(media);
   }
 

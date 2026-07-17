@@ -22,6 +22,8 @@ import {
   BRIDGE_ID,
   createBridgeCapabilities,
 } from "./bridge-capabilities.js";
+import { resolveXStructuredMediaInMainWorld } from "./x-main-world-media-resolver.js";
+import { createXMediaEvidenceStore } from "./x-media-evidence-store.js";
 
 const AKU_BROWSER_ORIGIN = "http://127.0.0.1:47821";
 const CAPTURE_DELAY_MAX_MS = 2_000;
@@ -29,7 +31,9 @@ const PENDING_SELF_RELOAD_KEY = "akuBridgePendingSelfReload";
 const PENDING_SELF_RELOAD_MAX_AGE_MS = 30_000;
 const commandGuard = createCommandGuard();
 const managedCaptureWindow = createManagedCaptureWindowRuntime(chrome);
+const xMediaEvidenceStore = createXMediaEvidenceStore(chrome.storage.local);
 const SOURCE_SCRIPT_FILES = [
+  "x-media-evidence-runtime.js",
   "bounded-capture-policy.js",
   "capture-quality-policy.js",
   "linkedin-permalink-policy.js",
@@ -51,6 +55,26 @@ chrome.action.onClicked.addListener(() => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "AKU_X_MEDIA_EVIDENCE_OBSERVED") {
+    if (!isTrustedXSourceContentSender(sender)) {
+      sendResponse({ ok: false, message: "X media evidence rejected: invalid source tab." });
+      return false;
+    }
+    xMediaEvidenceStore.put(message.candidateId, message.media)
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+    return true;
+  }
+  if (message?.type === "AKU_BROWSER_X_MEDIA_EVIDENCE_LOOKUP") {
+    if (!sender.url?.startsWith(`${AKU_BROWSER_ORIGIN}/`)) {
+      sendResponse({ ok: false, message: "X media evidence lookup rejected: invalid AkuBrowser origin." });
+      return false;
+    }
+    xMediaEvidenceStore.lookup(message.candidateIds)
+      .then((evidence) => sendResponse({ ok: true, evidence }))
+      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+    return true;
+  }
   if (message?.type === "AKU_BRIDGE_GET_CAPABILITIES") {
     sendResponse({ ok: true, capabilities: bridgeCapabilities() });
     return false;
@@ -125,6 +149,15 @@ function isTrustedSourceContentSender(sender) {
       url.hostname === "x.com" ||
       url.hostname === "www.linkedin.com"
     );
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedXSourceContentSender(sender) {
+  if (!isTrustedSourceContentSender(sender)) return false;
+  try {
+    return new URL(sender.url).hostname === "x.com";
   } catch {
     return false;
   }
@@ -328,9 +361,13 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
     probe: () => probeSourceFreshness(prepared.tab.id, command.payload.source),
     reveal: () => revealPendingSourceContent(prepared.tab.id, command.payload),
   });
+  const xStructuredMediaEvidence = command.payload.source === "x"
+    ? await collectXStructuredMediaEvidence(prepared.tab.id)
+    : null;
   const payload = {
     ...command.payload,
     sourceFreshness,
+    xStructuredMediaEvidence,
     sourceReadiness: prepared.readiness,
     tabAcquisition: {
       opened: prepared.opened,
@@ -349,6 +386,33 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
   if (!response?.ok) throw new Error(response?.message || "Source content script failed.");
   await assertTabLease(prepared.lease, "after_capture");
   return response.observation;
+}
+
+async function collectXStructuredMediaEvidence(tabId) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: resolveXStructuredMediaInMainWorld,
+      args: [{
+        maxCandidates: 16,
+        maxMediaPerCandidate: 4,
+        maxTraversalNodes: 1_500,
+        maxDepth: 9,
+      }],
+    });
+    return results?.[0]?.result ?? null;
+  } catch (error) {
+    return {
+      runtimeRevision: "x-main-world-media-resolver-v1",
+      resolverVersion: "x-structured-media-v1",
+      candidates: [],
+      diagnostics: {
+        status: "unavailable",
+        reason: String(error?.message ?? error).slice(0, 300),
+      },
+    };
+  }
 }
 
 async function claimCommand(endpoint, token, runId) {

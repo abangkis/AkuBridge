@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AkuBridge",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "description": "Read-only, bounded browser observation bridge for AkuBrowser.",
   "permissions": [
     "tabs",
@@ -24,6 +24,15 @@
       ],
       "js": [
         "aku-browser-tab-bridge.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://x.com/*"
+      ],
+      "js": [
+        "x-media-evidence-runtime.js"
       ],
       "run_at": "document_start"
     },

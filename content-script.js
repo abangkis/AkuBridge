@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v56";
+  const runtimeRevision = "source-fidelity-v57";
   const LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000;
   const LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS = 50;
   const LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8;
@@ -134,6 +134,12 @@
     if (!sourceMatchesPage(source)) {
       throw new Error(`The active source page does not match ${source}.`);
     }
+    const xMediaEvidenceRuntime = source === "x"
+      ? globalThis.AkuXMediaEvidenceRuntime
+      : null;
+    const structuredMediaAcceptedCandidateCount = xMediaEvidenceRuntime?.ingestStructured?.(
+      payload.xStructuredMediaEvidence,
+    ) ?? 0;
 
     const plan = capturePolicy.normalizeCapturePlan(payload);
     const captureVisibilityMode =
@@ -298,6 +304,11 @@
         },
         captureQuality,
         mediaAcquisition,
+        xStructuredMediaEvidence: source === "x" ? {
+          resolver: payload.xStructuredMediaEvidence?.diagnostics ?? null,
+          cache: xMediaEvidenceRuntime?.diagnostics?.() ?? null,
+          acceptedCandidateCount: structuredMediaAcceptedCandidateCount,
+        } : null,
         sourceFreshness,
         frontier: {
           scrollY: lastSnapshot?.scrollY ?? captureStartPosition.y,
@@ -371,6 +382,9 @@
           `Media acquisition: ${mediaAcquisition.outcomes.recovered} recovered, ` +
             `${mediaAcquisition.outcomes.unavailable} unavailable, ${mediaAcquisition.attempts} bounded attempt(s), ` +
             `${mediaAcquisition.foregroundRequiredCount} foreground-required.`,
+          source === "x"
+            ? `X structured media: ${structuredMediaAcceptedCandidateCount} candidate(s) accepted into the bounded evidence cache.`
+            : null,
           payload.tabAcquisition?.opened
             ? "AkuBridge opened one inactive canonical source tab for this initial acquisition."
             : null,
@@ -1048,11 +1062,16 @@
       if (excludeRoot?.contains?.(image)) continue;
       if (adapter.shouldSkipImage?.(image)) continue;
       const rect = image.getBoundingClientRect();
+      const trustedRoot = source === "x" && adapter.qualitySelectors?.media
+        ? image.closest(adapter.qualitySelectors.media)
+        : null;
+      const trustedRect = trustedRoot?.getBoundingClientRect?.() ?? {};
       const videoRoot = source === "x" ? image.closest(
         '[data-testid="previewInterstitial"], [data-testid="videoPlayer"], '
           + '[data-testid="videoComponent"], [aria-label*="Video" i]',
       ) : null;
-      const imageUrl = readImageUrl(image);
+      const imageCandidate = readImageCandidate(image);
+      const imageUrl = imageCandidate?.url ?? null;
       candidates.push({
         kind: videoRoot
           ? "video"
@@ -1065,8 +1084,10 @@
           ? "native"
           : undefined,
         alt: image.alt || "",
-        width: rect.width || image.naturalWidth,
-        height: rect.height || image.naturalHeight,
+        width: rect.width || image.naturalWidth || trustedRect.width,
+        height: rect.height || image.naturalHeight || trustedRect.height,
+        trustedMediaRoot: Boolean(trustedRoot),
+        urlSource: imageCandidate?.source ?? "missing",
       });
     }
     for (const video of container.querySelectorAll("video")) {
@@ -1091,6 +1112,8 @@
         alt: video.getAttribute("aria-label") || "Video preview",
         width: rect.width || video.videoWidth,
         height: rect.height || video.videoHeight,
+        trustedMediaRoot: source === "x",
+        urlSource: video.poster || video.getAttribute("poster") ? "poster" : "css_background",
       });
     }
     if (source === "x") {
@@ -1109,6 +1132,8 @@
           alt: element.closest('[data-testid="tweetPhoto"]')?.getAttribute("aria-label") || "Image",
           width: rect.width,
           height: rect.height,
+          trustedMediaRoot: true,
+          urlSource: "css_background",
         });
       }
       const linkCardBackgrounds = container.querySelectorAll(
@@ -1126,6 +1151,8 @@
           alt: element.closest('a[aria-label][href]')?.getAttribute("aria-label") || "Link preview",
           width: rect.width,
           height: rect.height,
+          trustedMediaRoot: true,
+          urlSource: "css_background",
         });
       }
       const videoRoots = container.querySelectorAll([
@@ -1145,6 +1172,8 @@
           alt: videoRoot.getAttribute("aria-label") || "Video preview",
           width: rect.width,
           height: rect.height,
+          trustedMediaRoot: true,
+          urlSource: "css_background",
         });
       }
     }
@@ -1436,21 +1465,41 @@
   }
 
   function readImageUrl(image) {
-    return readImageUrls(image).map(normalizeHttpUrl).find(Boolean) ?? null;
+    return readImageCandidate(image)?.url ?? null;
+  }
+
+  function readImageCandidate(image) {
+    for (const candidate of readImageCandidates(image)) {
+      const url = normalizeHttpUrl(candidate.url);
+      if (url) return { url, source: candidate.source };
+    }
+    return null;
   }
 
   function readImageUrls(image) {
+    return readImageCandidates(image).map((candidate) => candidate.url);
+  }
+
+  function readImageCandidates(image) {
     if (!image) return [];
     const srcsets = [image.srcset, image.getAttribute?.("srcset")].filter(Boolean);
     const srcsetUrls = srcsets.flatMap((srcset) => String(srcset).split(",")
       .map((candidate) => candidate.trim().split(/\s+/)[0])
       .filter(Boolean));
-    return [...new Set([
-      image.currentSrc,
-      image.src,
-      image.getAttribute?.("src"),
-      ...srcsetUrls,
-    ].filter(Boolean))];
+    const candidates = [
+      { source: "current_src", url: image.currentSrc },
+      { source: "src_property", url: image.src },
+      { source: "src_attribute", url: image.getAttribute?.("src") },
+      ...srcsetUrls.map((url) => ({ source: "srcset", url })),
+      { source: "data_src", url: image.getAttribute?.("data-src") },
+      { source: "data_original", url: image.getAttribute?.("data-original") },
+    ].filter((candidate) => candidate.url);
+    const seen = new Set();
+    return candidates.filter((candidate) => {
+      if (seen.has(candidate.url)) return false;
+      seen.add(candidate.url);
+      return true;
+    });
   }
 
   function renderedBackgroundUrl(root) {

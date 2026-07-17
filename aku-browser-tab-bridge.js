@@ -120,6 +120,30 @@
       return;
     }
 
+    if (message.type === "AKU_BROWSER_X_MEDIA_EVIDENCE_LOOKUP") {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "AKU_BROWSER_X_MEDIA_EVIDENCE_LOOKUP",
+          candidateIds: message.candidateIds,
+        });
+        if (!response?.ok) {
+          throw new Error(response?.message || "AkuBridge rejected X media evidence lookup.");
+        }
+        window.postMessage({
+          type: "AKU_BROWSER_X_MEDIA_EVIDENCE_RESULT",
+          requestId: message.requestId,
+          evidence: response.evidence ?? null,
+        }, allowedOrigin);
+      } catch (error) {
+        window.postMessage({
+          type: "AKU_BROWSER_X_MEDIA_EVIDENCE_FAILED",
+          requestId: message.requestId,
+          message: String(error?.message ?? error),
+        }, allowedOrigin);
+      }
+      return;
+    }
+
     if (message.type !== "AKU_BROWSER_DISPATCH") return;
     try {
       const response = await chrome.runtime.sendMessage({

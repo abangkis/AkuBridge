@@ -16,7 +16,7 @@ test("source adapters register independently behind one contract", () => {
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v17" },
+      { source: "x", version: "x-dom-v18" },
       { source: "linkedin", version: "linkedin-dom-v15" },
     ],
   );
@@ -26,7 +26,7 @@ test("source adapters register independently behind one contract", () => {
   assert.equal(context.AkuSourceAdapters.capabilities()[0].qualityProfile, "social-post-v1");
   assert.equal(
     context.AkuSourceAdapters.capabilities()[0].mediaAcquisitionVersion,
-    "x-media-acquisition-v1",
+    "x-media-acquisition-v2",
   );
 });
 
@@ -84,7 +84,7 @@ test("the complete adapter bundle can replace its current registry generation", 
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v17" },
+      { source: "x", version: "x-dom-v18" },
       { source: "linkedin", version: "linkedin-dom-v15" },
     ],
   );

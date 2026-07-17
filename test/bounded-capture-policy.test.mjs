@@ -162,6 +162,68 @@ test("captured media is bounded to rendered source CDN images", () => {
   assert.equal(Object.isFrozen(linkedInMedia), true);
 });
 
+test("trusted X media roots survive unknown background geometry with bounded diagnostics", () => {
+  const policy = loadPolicy();
+  const media = policy.normalizeMediaCandidates("x", [
+    {
+      url: "https://pbs.twimg.com/media/background.jpg",
+      width: 0,
+      height: 0,
+      trustedMediaRoot: true,
+      urlSource: "current_src",
+    },
+    {
+      url: "https://pbs.twimg.com/profile_images/avatar.jpg",
+      width: 48,
+      height: 48,
+      trustedMediaRoot: false,
+      urlSource: "src",
+    },
+    {
+      url: "https://evil.example/tracker.png",
+      width: 0,
+      height: 0,
+      trustedMediaRoot: true,
+      urlSource: "css_background",
+    },
+    {
+      url: null,
+      width: 0,
+      height: 0,
+      trustedMediaRoot: true,
+      urlSource: "missing",
+    },
+    {
+      url: "https://pbs.twimg.com/media/partial-geometry.jpg",
+      width: 1,
+      height: 0,
+      trustedMediaRoot: true,
+      urlSource: "partial_geometry",
+    },
+  ]);
+
+  assert.equal(media.length, 1);
+  assert.equal(media[0].url, "https://pbs.twimg.com/media/background.jpg");
+  assert.deepEqual(JSON.parse(JSON.stringify(media.diagnostics)), {
+    candidateCount: 5,
+    urlPresentCount: 4,
+    urlMissingCount: 1,
+    rejectedHostCount: 1,
+    rejectedGeometryCount: 2,
+    duplicateCount: 0,
+    acceptedCount: 1,
+    trustedUnknownGeometryAcceptedCount: 1,
+    urlSources: {
+      current_src: 1,
+      src: 1,
+      css_background: 1,
+      missing: 1,
+      partial_geometry: 1,
+    },
+  });
+  assert.equal(Object.keys(media).includes("diagnostics"), false);
+});
+
 test("X video thumbnails can be extracted from a bounded CSS background", () => {
   const policy = loadPolicy();
   assert.equal(
@@ -243,7 +305,7 @@ test("X video playback remains inline only for an allowlisted stable CDN URL", (
 test("the policy is loaded before the source content script", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"));
   const sourceEntry = manifest.content_scripts.find((entry) =>
-    entry.matches.includes("https://x.com/*"),
+    entry.matches.includes("https://x.com/*") && entry.js.includes("content-script.js"),
   );
   assert.deepEqual(sourceEntry.js, [
     "bounded-capture-policy.js",

@@ -4,7 +4,7 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v17",
+    version: "x-dom-v18",
     qualityProfile: "social-post-v1",
     qualitySelectors: Object.freeze({
       author: '[data-testid="User-Name"]',
@@ -29,12 +29,19 @@
       pendingContentPattern: /^(?:new posts?|show(?: \d+)? posts?)$/i,
     }),
     mediaAcquisition: Object.freeze({
-      version: "x-media-acquisition-v1",
+      version: "x-media-acquisition-v2",
       maxAttempts: 1,
       settleMs: 700,
       quietRecovery: "bounded_dom",
       foregroundAfterQuietExhaustion: true,
       detectExpectedKinds: detectXExpectedMediaKinds,
+      extractStructuredCandidates: (container) => (
+        globalThis.AkuXMediaEvidenceRuntime?.lookupContainer?.(container) ?? []
+      ).filter((entry) => entry.kind !== "avatar").map((entry) => ({
+        ...entry,
+        trustedMediaRoot: true,
+        urlSource: entry.provenance ?? "x_structured_state",
+      })),
       extractCandidates: extractXRecoveryCandidates,
     }),
     matchesPage: () => window.location.hostname === "x.com",

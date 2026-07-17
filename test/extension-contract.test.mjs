@@ -15,7 +15,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version, packageJson.version);
-  assert.equal(manifest.version, "0.6.6");
+  assert.equal(manifest.version, "0.6.7");
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:47821/*",
@@ -32,6 +32,9 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     "adapters/x-adapter.js",
     "adapters/linkedin-adapter.js",
     "aku-browser-tab-bridge.js",
+    "x-media-evidence-runtime.js",
+    "x-media-evidence-store.js",
+    "x-main-world-media-resolver.js",
   ]
     .map((file) => fs.readFileSync(path.join(projectRoot, file), "utf8"))
     .join("\n");
@@ -71,7 +74,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v56/);
+  assert.match(contentScript, /source-fidelity-v57/);
   assert.match(contentScript, /relative_text_estimate/);
   assert.match(contentScript, /not_exposed_promoted/);
   assert.match(contentScript, /LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000/);
@@ -167,13 +170,13 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
   assert.match(freshnessRuntime, /adapter\.freshness\.revealObservationMs/);
   assert.match(linkedInAdapter, /revealObservationMs: 12_000/);
   assert.match(linkedInAdapter, /rejectInsideFeedCandidate: true/);
-  assert.match(mediaAcquisitionEngine, /media-acquisition-engine-v2/);
+  assert.match(mediaAcquisitionEngine, /media-acquisition-engine-v3/);
   assert.match(mediaAcquisitionEngine, /structured_state/);
   assert.match(mediaAcquisitionEngine, /primary_hydration/);
   assert.match(mediaAcquisitionEngine, /alternate_dom/);
   assert.match(mediaAcquisitionEngine, /quiet_recovery_unsupported/);
   assert.doesNotMatch(mediaAcquisitionEngine, /source\s*===\s*["'](?:x|linkedin)["']/);
-  assert.match(xAdapter, /x-media-acquisition-v1/);
+  assert.match(xAdapter, /x-media-acquisition-v2/);
   assert.match(linkedInAdapter, /linkedin-media-acquisition-v1/);
   assert.match(contentScript, /mediaAcquisitionEngine\.acquire/);
   assert.match(contentScript, /const captureVisibilityMode =\s*payload\.tabAcquisition\?\.captureVisibilityMode \?\? "same_window"/);
@@ -231,6 +234,29 @@ test("background X capture activates for the full bounded capture so scrolled me
   assert.match(surfaceTelemetry, /windowFocused/);
 });
 
+test("X media enrichment stays passive, bounded, and media-only", () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"));
+  const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
+  const tabBridge = fs.readFileSync(path.join(projectRoot, "aku-browser-tab-bridge.js"), "utf8");
+  const evidenceRuntime = fs.readFileSync(path.join(projectRoot, "x-media-evidence-runtime.js"), "utf8");
+  const earlyEntry = manifest.content_scripts.find((entry) =>
+    entry.run_at === "document_start" && entry.js?.includes("x-media-evidence-runtime.js"),
+  );
+  assert.deepEqual(earlyEntry?.matches, ["https://x.com/*"]);
+  assert.match(worker, /world: "MAIN"/);
+  assert.match(worker, /createXMediaEvidenceStore/);
+  assert.match(worker, /AKU_X_MEDIA_EVIDENCE_OBSERVED/);
+  assert.match(tabBridge, /AKU_BROWSER_X_MEDIA_EVIDENCE_LOOKUP/);
+  assert.match(evidenceRuntime, /maxCandidates: 128/);
+  assert.match(evidenceRuntime, /ttlMs: 30 \* 60 \* 1_000/);
+  assert.doesNotMatch(evidenceRuntime, /rawGraphQlResponse|full_text/);
+  const lookupHandler = worker.slice(
+    worker.indexOf('message?.type === "AKU_BROWSER_X_MEDIA_EVIDENCE_LOOKUP"'),
+    worker.indexOf('message?.type === "AKU_BRIDGE_GET_CAPABILITIES"'),
+  );
+  assert.doesNotMatch(lookupHandler, /chrome\.tabs\.(?:create|update)/);
+});
+
 test("initial stale-tab recovery is bounded and follow-up remains anchored", () => {
   const contentScript = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
   const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
@@ -250,16 +276,18 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
   assert.match(tabBridge, /AKU_BROWSER_MEDIA_RECAPTURE/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
-  const capabilities = createBridgeCapabilities({ version: "0.6.6", manifest_version: 3 });
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v56");
-  assert.equal(capabilities.buildId, "aku-bridge-0.6.6-source-fidelity-v56");
+  const capabilities = createBridgeCapabilities({ version: "0.6.7", manifest_version: 3 });
+  assert.equal(capabilities.runtimeRevision, "source-fidelity-v57");
+  assert.equal(capabilities.buildId, "aku-bridge-0.6.7-source-fidelity-v57");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v17", linkedin: "linkedin-dom-v15" });
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v18", linkedin: "linkedin-dom-v15" });
   assert.ok(capabilities.actions.includes("reload_self"));
   assert.ok(capabilities.actions.includes("report_capture_quality"));
   assert.ok(capabilities.actions.includes("recover_source_freshness"));
   assert.ok(capabilities.actions.includes("acquire_missing_media"));
   assert.ok(capabilities.actions.includes("recapture_missing_media"));
+  assert.ok(capabilities.actions.includes("cache_passive_media_evidence"));
+  assert.ok(capabilities.actions.includes("lookup_passive_media_evidence"));
   assert.match(worker, /dispatchMediaRecapture/);
   assert.match(worker, /assertRecaptureTarget/);
   assert.match(worker, /managed\.openTargetTab/);
