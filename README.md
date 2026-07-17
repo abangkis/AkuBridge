@@ -116,8 +116,9 @@ managed-window readiness or hydration cannot be proven. `openIfMissing` still
 controls whether a missing managed tab may be created; `fail_fast` therefore
 fails when no reusable managed binding exists. Manual Live may use the active
 page for the selected source. A follow-up round never opens a replacement tab.
-Gate 0B permits at most two native scrolls and three viewports. Computer Use is
-not part of this native path.
+The fresh Standard 1x plan permits two native scrolls and three snapshots;
+explicit bounded profiles may raise the contract to at most six scrolls and
+seven snapshots. Computer Use is not part of this native path.
 
 Every managed surface is owned through a bounded capture lease. Standalone
 runs use the run ID; both X and LinkedIn children of a unified check share the
@@ -138,10 +139,16 @@ reruns primary extraction, then calls the adapter's alternate DOM extractor.
 The runtime never navigates, downloads, screenshots, or uses OCR. Each block
 reports `mediaRecovery`; coverage aggregates outcomes and marks
 `fallbackUsed` only after successful recovery. Exhausted media is transported
-as explicitly degraded evidence and Source layout links to the native post.
-The audit also records the bounded extraction stages (`primary`, hydration,
-adapter alternate DOM, and terminal outcome) so an unavailable URL can be
-located without replaying or exposing post content.
+as explicitly degraded evidence. Source layout keeps Open native post and adds
+an item-scoped Recapture action. Recapture first opens only the canonical native
+post in the unfocused managed window and performs one zero-scroll capture. If
+media remains unavailable, the page may offer a separate foreground job; it is
+valid only with explicit per-item consent and a completed unavailable quiet
+attempt. The authorization is one-time and never changes the persisted Quiet
+setting. The temporary tab and managed surface are released on every terminal
+path. The audit also records the bounded extraction stages (`primary`,
+hydration, adapter alternate DOM, and terminal outcome) so an unavailable URL
+can be located without replaying or exposing post content.
 
 LinkedIn keeps the visible relative timestamp text. When the source exposes a
 valid relative time but no native `datetime`, AkuBridge records a deterministic
