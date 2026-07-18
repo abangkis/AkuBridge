@@ -34,6 +34,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     "aku-browser-tab-bridge.js",
     "x-media-evidence-runtime.js",
     "x-media-evidence-store.js",
+    "x-avatar-evidence-store.js",
     "x-response-evidence-adapter.js",
     "x-main-world-media-resolver.js",
   ]
@@ -181,7 +182,10 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
   assert.match(linkedInAdapter, /linkedin-media-acquisition-v1/);
   assert.match(contentScript, /mediaAcquisitionEngine\.acquire/);
   assert.match(contentScript, /const captureVisibilityMode =\s*payload\.tabAcquisition\?\.captureVisibilityMode \?\? "same_window"/);
-  assert.match(contentScript, /operationDeadlineAtMs,\s*captureVisibilityMode,\s*\);/);
+  assert.match(
+    contentScript,
+    /operationDeadlineAtMs,\s*captureVisibilityMode,\s*xMediaEvidenceRuntime,\s*\);/,
+  );
   assert.doesNotMatch(contentScript, /captureVisibilityMode: payload\.tabAcquisition/);
   assert.match(contentScript, /fallbackUsed: mediaAcquisition\.outcomes\.recovered > 0/);
   assert.match(contentScript, /restorationScope: feedMutation \? "post_reveal_start"/);
@@ -238,6 +242,7 @@ test("background X capture activates for the full bounded capture so scrolled me
 test("X media enrichment stays passive, bounded, and media-only", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"));
   const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
+  const contentScript = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
   const tabBridge = fs.readFileSync(path.join(projectRoot, "aku-browser-tab-bridge.js"), "utf8");
   const evidenceRuntime = fs.readFileSync(path.join(projectRoot, "x-media-evidence-runtime.js"), "utf8");
   const responseAdapter = fs.readFileSync(path.join(projectRoot, "x-response-evidence-adapter.js"), "utf8");
@@ -253,6 +258,13 @@ test("X media enrichment stays passive, bounded, and media-only", () => {
   assert.match(worker, /world: "MAIN"/);
   assert.match(worker, /createXMediaEvidenceStore/);
   assert.match(worker, /AKU_X_MEDIA_EVIDENCE_OBSERVED/);
+  assert.match(worker, /AKU_X_AVATAR_EVIDENCE_OBSERVED/);
+  assert.match(worker, /AKU_X_AVATAR_EVIDENCE_LOOKUP/);
+  assert.match(contentScript, /hydratePersistentXAvatarEvidence/);
+  assert.match(
+    contentScript,
+    /hydratePersistentXAvatarEvidence\(\s*boundedContainers,\s*operationDeadlineAtMs,\s*xMediaEvidenceRuntime,\s*\)/,
+  );
   assert.match(tabBridge, /AKU_BROWSER_X_MEDIA_EVIDENCE_LOOKUP/);
   assert.match(evidenceRuntime, /maxCandidates: 128/);
   assert.match(evidenceRuntime, /ttlMs: 30 \* 60 \* 1_000/);

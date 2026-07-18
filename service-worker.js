@@ -24,6 +24,7 @@ import {
 } from "./bridge-capabilities.js";
 import { resolveXStructuredMediaInMainWorld } from "./x-main-world-media-resolver.js";
 import { createXMediaEvidenceStore } from "./x-media-evidence-store.js";
+import { createXAvatarEvidenceStore } from "./x-avatar-evidence-store.js";
 
 const AKU_BROWSER_ORIGIN = "http://127.0.0.1:47821";
 const CAPTURE_DELAY_MAX_MS = 2_000;
@@ -32,6 +33,7 @@ const PENDING_SELF_RELOAD_MAX_AGE_MS = 30_000;
 const commandGuard = createCommandGuard();
 const managedCaptureWindow = createManagedCaptureWindowRuntime(chrome);
 const xMediaEvidenceStore = createXMediaEvidenceStore(chrome.storage.local);
+const xAvatarEvidenceStore = createXAvatarEvidenceStore(chrome.storage.local);
 const SOURCE_SCRIPT_FILES = [
   "x-media-evidence-runtime.js",
   "bounded-capture-policy.js",
@@ -55,6 +57,26 @@ chrome.action.onClicked.addListener(() => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "AKU_X_AVATAR_EVIDENCE_OBSERVED") {
+    if (!isTrustedXSourceContentSender(sender)) {
+      sendResponse({ ok: false, message: "X avatar evidence rejected: invalid source tab." });
+      return false;
+    }
+    xAvatarEvidenceStore.put(message.keys, message.url)
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+    return true;
+  }
+  if (message?.type === "AKU_X_AVATAR_EVIDENCE_LOOKUP") {
+    if (!isTrustedXSourceContentSender(sender)) {
+      sendResponse({ ok: false, message: "X avatar evidence lookup rejected: invalid source tab." });
+      return false;
+    }
+    xAvatarEvidenceStore.lookup(message.keys)
+      .then((evidence) => sendResponse({ ok: true, evidence }))
+      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+    return true;
+  }
   if (message?.type === "AKU_X_MEDIA_EVIDENCE_OBSERVED") {
     if (!isTrustedXSourceContentSender(sender)) {
       sendResponse({ ok: false, message: "X media evidence rejected: invalid source tab." });

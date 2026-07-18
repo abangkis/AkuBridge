@@ -175,8 +175,8 @@
         promoted,
       };
     },
-    extractAttachments: (container, { compactText, normalizeHttpUrl }) =>
-      extractLinkedInAttachments(container, { compactText, normalizeHttpUrl }),
+    extractAttachments: (container, { compactText, normalizeHttpUrl, normalizeHttpsUrl }) =>
+      extractLinkedInAttachments(container, { compactText, normalizeHttpUrl, normalizeHttpsUrl }),
     findAvatar: (container, { compactText, normalizeHttpUrl }) => {
       const author = postAuthor(container, compactText);
       const image = [...container.querySelectorAll('a[href*="/in/"] img')].find((candidate) => {
@@ -312,7 +312,7 @@
   function extractLinkedInAttachments(container, helpers) {
     const attachments = [];
     for (const link of container.querySelectorAll('a[href]')) {
-      const directUrl = helpers.normalizeHttpUrl(link.href);
+      const directUrl = helpers.normalizeHttpsUrl(link.href);
       if (!directUrl) continue;
       const attachment = /\/jobs\/view\//i.test(directUrl)
         ? extractLinkedInJob(link, directUrl, helpers)
@@ -324,7 +324,7 @@
     return attachments;
   }
 
-  function extractLinkedInJob(link, url, { compactText, normalizeHttpUrl }) {
+  function extractLinkedInJob(link, url, { compactText, normalizeHttpsUrl }) {
     const lines = String(link.innerText ?? "")
       .split(/\n+/)
       .map((line) => compactText(line))
@@ -351,13 +351,13 @@
       actionLabel: compactText(actionLabel).slice(0, 80),
       footnote: compactText(footnote).slice(0, 300),
       url,
-      imageUrl: linkedInThumbnailUrl(images[0]?.currentSrc || images[0]?.src, normalizeHttpUrl),
+      imageUrl: linkedInThumbnailUrl(images[0]?.currentSrc || images[0]?.src, normalizeHttpsUrl),
       verified,
     };
   }
 
-  function extractLinkedInExternalCard(link, directUrl, container, { compactText, normalizeHttpUrl }) {
-    const url = unwrapLinkedInExternalUrl(directUrl, normalizeHttpUrl);
+  function extractLinkedInExternalCard(link, directUrl, container, { compactText, normalizeHttpsUrl }) {
+    const url = unwrapLinkedInExternalUrl(directUrl, normalizeHttpsUrl);
     if (!url) return null;
     const contentRoot = container.querySelector('[data-testid="expandable-text-box"]');
     if (contentRoot?.contains?.(link)) return null;
@@ -388,17 +388,17 @@
       actionLabel: "Open link",
       url,
       domain,
-      imageUrl: linkedInThumbnailUrl(images[0]?.currentSrc || images[0]?.src, normalizeHttpUrl),
+      imageUrl: linkedInThumbnailUrl(images[0]?.currentSrc || images[0]?.src, normalizeHttpsUrl),
     };
   }
 
-  function unwrapLinkedInExternalUrl(value, normalizeHttpUrl) {
+  function unwrapLinkedInExternalUrl(value, normalizeHttpsUrl) {
     try {
       const url = new URL(value);
       const linkedInHost = url.hostname === "linkedin.com" || url.hostname.endsWith(".linkedin.com");
-      if (!linkedInHost) return normalizeHttpUrl(url.href);
+      if (!linkedInHost) return normalizeHttpsUrl(url.href);
       if (!/^\/safety\/go\/?$/i.test(url.pathname)) return null;
-      const target = normalizeHttpUrl(url.searchParams.get("url"));
+      const target = normalizeHttpsUrl(url.searchParams.get("url"));
       if (!target) return null;
       const targetURL = new URL(target);
       if (targetURL.hostname === "linkedin.com" || targetURL.hostname.endsWith(".linkedin.com")) return null;
@@ -408,8 +408,8 @@
     }
   }
 
-  function linkedInThumbnailUrl(value, normalizeHttpUrl) {
-    const normalized = normalizeHttpUrl(value);
+  function linkedInThumbnailUrl(value, normalizeHttpsUrl) {
+    const normalized = normalizeHttpsUrl(value);
     if (!normalized) return null;
     try {
       const url = new URL(normalized);

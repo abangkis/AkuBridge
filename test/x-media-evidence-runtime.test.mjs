@@ -134,12 +134,14 @@ test("structured evidence is sanitized before entering the shared bounded cache"
   assert.equal(published.length, 1);
 });
 
-test("response evidence bridge keeps avatars ephemeral and publishes only post media", () => {
+test("response evidence bridge publishes avatars separately from post media", () => {
   const evidence = loadEvidence({ hostname: "x.com", origin: "https://x.com" });
   const published = [];
+  const publishedAvatars = [];
   const runtime = evidence.createRuntime({
     document: null,
     publish: (candidateId, media) => published.push({ candidateId, media }),
+    publishAvatar: (keys, url) => publishedAvatars.push({ keys, url }),
   });
   let messageHandler;
   const posted = [];
@@ -219,12 +221,17 @@ test("response evidence bridge keeps avatars ephemeral and publishes only post m
   );
   assert.equal(published.length, 1);
   assert.equal(JSON.stringify(published).includes("profile_images"), false);
+  assert.deepEqual(JSON.parse(JSON.stringify(publishedAvatars)), [{
+    keys: ["x:status:12345", "x:user:owner_name"],
+    url: "https://pbs.twimg.com/profile_images/12345/avatar_normal.jpg",
+  }]);
   assert.deepEqual(JSON.parse(JSON.stringify(runtime.responseDiagnostics())), {
     runtimeRevision: "x-response-evidence-v2",
     messagesReceived: 1,
     messagesRejected: 0,
     acceptedCandidateCount: 1,
     acceptedAvatarCandidateCount: 1,
+    acceptedPersistentAvatarCount: 0,
     observedResponseCount: 1,
     parsedResponseCount: 1,
     rejectedResponseCount: 0,
@@ -263,6 +270,7 @@ test("response evidence bridge keeps avatars ephemeral and publishes only post m
     messagesRejected: 1,
     acceptedCandidateCount: 1,
     acceptedAvatarCandidateCount: 1,
+    acceptedPersistentAvatarCount: 0,
     observedResponseCount: 1,
     parsedResponseCount: 1,
     rejectedResponseCount: 0,
@@ -272,6 +280,40 @@ test("response evidence bridge keeps avatars ephemeral and publishes only post m
     lastTraversedNodeCount: 50,
     lastBounded: false,
   });
+});
+
+test("cross-run avatar evidence hydrates the ephemeral cache without republishing", () => {
+  const evidence = loadEvidence();
+  const publishedAvatars = [];
+  const runtime = evidence.createRuntime({
+    document: null,
+    publishAvatar: (...values) => publishedAvatars.push(values),
+  });
+  const authorAnchor = { href: "https://x.com/Owner_Name", closest: () => null };
+  const authorRoot = {
+    querySelectorAll: (selector) => selector === "a[href]" ? [authorAnchor] : [],
+  };
+  const container = {
+    querySelector(selector) {
+      return selector === '[data-testid="User-Name"]' ? authorRoot : null;
+    },
+    querySelectorAll: () => [],
+  };
+  assert.deepEqual(
+    Array.from(runtime.avatarKeysForContainer(container)),
+    ["x:user:owner_name"],
+  );
+  assert.equal(runtime.ingestPersistentAvatarEvidence({ entries: [{
+    key: "x:user:owner_name",
+    url: "https://pbs.twimg.com/profile_images/12345/avatar_normal.jpg",
+  }] }), 1);
+  assert.equal(
+    runtime.lookupAvatarContainer(container),
+    "https://pbs.twimg.com/profile_images/12345/avatar_normal.jpg",
+  );
+  assert.deepEqual(Array.from(runtime.avatarKeysForContainer(container)), []);
+  assert.equal(runtime.responseDiagnostics().acceptedPersistentAvatarCount, 1);
+  assert.equal(publishedAvatars.length, 0);
 });
 
 test("avatar evidence is strict, bounded, and independent from the post-media cache", () => {

@@ -73,7 +73,11 @@ for (const source of ["x", "linkedin"]) {
       };
       const commentedPresentation = adapter.extractPresentation(commentedCandidate, { compactText, normalizeHttpUrl });
       assert.equal(commentedPresentation.socialContext, "Mohamad Ramzy commented");
-      const attachments = adapter.extractAttachments(candidate, { compactText, normalizeHttpUrl });
+      const attachments = adapter.extractAttachments(candidate, {
+        compactText,
+        normalizeHttpUrl,
+        normalizeHttpsUrl,
+      });
       assert.deepEqual(JSON.parse(JSON.stringify(attachments[0])), {
         kind: "job",
         title: "Management Intern",
@@ -98,7 +102,11 @@ for (const source of ["x", "linkedin"]) {
         },
       };
       assert.deepEqual(
-        JSON.parse(JSON.stringify(adapter.extractAttachments(externalCandidate, { compactText, normalizeHttpUrl }))),
+        JSON.parse(JSON.stringify(adapter.extractAttachments(externalCandidate, {
+          compactText,
+          normalizeHttpUrl,
+          normalizeHttpsUrl,
+        }))),
         [{
           kind: "link_preview",
           title: "Head of IT (ERP Developer)",
@@ -109,6 +117,23 @@ for (const source of ["x", "linkedin"]) {
           domain: "aplitrak.com",
           imageUrl: "https://media.licdn.com/dms/image/link-card-logo",
         }],
+      );
+      const insecureCard = syntheticExternalCard();
+      insecureCard.href = "https://www.linkedin.com/safety/go?url=http%3A%2F%2Finsecure.example%2Fjob";
+      const insecureCandidate = {
+        ...externalCandidate,
+        querySelectorAll(selector) {
+          if (selector === 'a[href]') return [insecureCard];
+          return externalCandidate.querySelectorAll(selector);
+        },
+      };
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(adapter.extractAttachments(insecureCandidate, {
+          compactText,
+          normalizeHttpUrl,
+          normalizeHttpsUrl,
+        }))),
+        [],
       );
       assert.deepEqual(JSON.parse(JSON.stringify(semantics.engagement)), { like: "53", repost: "1" });
       const collaborativeAvatar = syntheticImage(
@@ -282,5 +307,8 @@ function syntheticExternalCard() {
 function compactText(value) { return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : ""; }
 function normalizeHttpUrl(value) {
   return /^https?:\/\//i.test(value ?? "") ? value : null;
+}
+function normalizeHttpsUrl(value) {
+  return /^https:\/\//i.test(value ?? "") ? value : null;
 }
 function run(context, file) { vm.runInContext(fs.readFileSync(path.join(root, file), "utf8"), context); }

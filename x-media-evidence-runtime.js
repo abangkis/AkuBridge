@@ -192,6 +192,9 @@
     const cache = options.cache ?? createCache(options);
     const avatarCache = options.avatarCache ?? createAvatarCache(options);
     const publish = typeof options.publish === "function" ? options.publish : publishEvidence;
+    const publishAvatar = typeof options.publishAvatar === "function"
+      ? options.publishAvatar
+      : publishAvatarEvidence;
     const dirtyContainers = new Set();
     const lastPublished = new Map();
     let observer = null;
@@ -201,6 +204,7 @@
       messagesRejected: 0,
       acceptedCandidateCount: 0,
       acceptedAvatarCandidateCount: 0,
+      acceptedPersistentAvatarCount: 0,
       observedResponseCount: 0,
       parsedResponseCount: 0,
       rejectedResponseCount: 0,
@@ -330,10 +334,33 @@
         if (candidate.avatarUrl && avatarCache.put(candidate.candidateId, candidate.avatarUrl)) {
           acceptedAvatars += 1;
           if (candidate.avatarKey) avatarCache.put(candidate.avatarKey, candidate.avatarUrl);
+          publishAvatar(
+            [candidate.candidateId, candidate.avatarKey].filter(Boolean),
+            candidate.avatarUrl,
+          );
         }
       }
       responseEvidence.acceptedCandidateCount += accepted;
       responseEvidence.acceptedAvatarCandidateCount += acceptedAvatars;
+      return accepted;
+    }
+
+    function avatarKeysForContainer(container) {
+      const keys = [...new Set([
+        candidateIdFromContainer(container),
+        avatarKeyFromContainer(container),
+      ].filter(Boolean))].slice(0, 2);
+      return keys.some((key) => avatarCache.get(key)) ? [] : keys;
+    }
+
+    function ingestPersistentAvatarEvidence(payload) {
+      const entries = Array.isArray(payload) ? payload : payload?.entries;
+      let accepted = 0;
+      for (const entry of Array.isArray(entries) ? entries.slice(0, 48) : []) {
+        if (!entry || typeof entry !== "object") continue;
+        if (avatarCache.put(entry.key, entry.url)) accepted += 1;
+      }
+      responseEvidence.acceptedPersistentAvatarCount += accepted;
       return accepted;
     }
 
@@ -376,6 +403,8 @@
       lookup,
       lookupAvatarContainer,
       lookupAvatar,
+      avatarKeysForContainer,
+      ingestPersistentAvatarEvidence,
       ingestStructured,
       ingestResponseEvidence,
       responseDiagnostics,
@@ -674,6 +703,20 @@
         type: "AKU_X_MEDIA_EVIDENCE_OBSERVED",
         candidateId,
         media,
+      });
+      pending?.catch?.(() => undefined);
+    } catch {
+      // Extension reloads and page teardown may invalidate the message port.
+    }
+  }
+
+  function publishAvatarEvidence(keys, url) {
+    if (typeof globalThis.chrome?.runtime?.sendMessage !== "function") return;
+    try {
+      const pending = globalThis.chrome.runtime.sendMessage({
+        type: "AKU_X_AVATAR_EVIDENCE_OBSERVED",
+        keys,
+        url,
       });
       pending?.catch?.(() => undefined);
     } catch {

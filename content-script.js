@@ -202,6 +202,7 @@
           scrollContext,
           operationDeadlineAtMs,
           captureVisibilityMode,
+          xMediaEvidenceRuntime,
         );
         snapshot.index = index;
         if (index === 0 && plan.continuation) {
@@ -468,12 +469,45 @@
     };
   }
 
+  async function hydratePersistentXAvatarEvidence(
+    containers,
+    operationDeadlineAtMs,
+    xMediaEvidenceRuntime,
+  ) {
+    if (
+      typeof chrome?.runtime?.sendMessage !== "function" ||
+      !xMediaEvidenceRuntime?.avatarKeysForContainer ||
+      !xMediaEvidenceRuntime?.ingestPersistentAvatarEvidence
+    ) return 0;
+    const keys = [...new Set((Array.isArray(containers) ? containers : [])
+      .flatMap((container) => xMediaEvidenceRuntime.avatarKeysForContainer(container)))]
+      .slice(0, 48);
+    if (keys.length === 0) return 0;
+    const lookupBudgetMs = Math.min(250, Math.max(0, operationDeadlineAtMs - Date.now()));
+    if (lookupBudgetMs === 0) return 0;
+    try {
+      const response = await Promise.race([
+        chrome.runtime.sendMessage({
+          type: "AKU_X_AVATAR_EVIDENCE_LOOKUP",
+          keys,
+        }),
+        new Promise((resolve) => setTimeout(() => resolve(null), lookupBudgetMs)),
+      ]);
+      if (!response?.ok) return 0;
+      return xMediaEvidenceRuntime.ingestPersistentAvatarEvidence(response.evidence);
+    } catch {
+      // Persistent avatar reuse is a best-effort fallback and never blocks capture.
+      return 0;
+    }
+  }
+
   async function captureVisibleSnapshot(
     source,
     payload,
     scrollContext,
     operationDeadlineAtMs,
     captureVisibilityMode,
+    xMediaEvidenceRuntime,
   ) {
     const capturedAt = new Date().toISOString();
     const discovery = discoverSourceCandidates(source);
@@ -492,6 +526,14 @@
       visibleContainerCount: containers.length,
       boundedContainerCount: boundedContainers.length,
     });
+
+    if (source === "x") {
+      await hydratePersistentXAvatarEvidence(
+        boundedContainers,
+        operationDeadlineAtMs,
+        xMediaEvidenceRuntime,
+      );
+    }
 
     updateCaptureProgress("permalink_recovery_started", { source });
     const recoveredPermalinks = source === "linkedin"
@@ -749,6 +791,7 @@
     const attachments = adapter.extractAttachments?.(container, {
       compactText,
       normalizeHttpUrl,
+      normalizeHttpsUrl,
     }) ?? [];
     const nativePublishedAt = normalizeDate(time?.getAttribute("datetime"));
     const relativeTimestamp = source === "linkedin" && !nativePublishedAt
@@ -1427,6 +1470,16 @@
     try {
       const url = new URL(value, window.location.href);
       return url.protocol === "https:" || url.protocol === "http:" ? url.href : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function normalizeHttpsUrl(value) {
+    const normalized = normalizeHttpUrl(value);
+    if (!normalized) return null;
+    try {
+      return new URL(normalized).protocol === "https:" ? normalized : null;
     } catch {
       return null;
     }

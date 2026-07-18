@@ -23,7 +23,9 @@ flowchart LR
     XG["Already-requested X GraphQL responses<br/>3 exact operations"] --> XR["X response evidence adapter<br/>document_start / MAIN world"]
     XE --> XC["Sanitized bounded URL cache<br/>30 min TTL / 128 posts / 4 media"]
     XR --> XC
-    XR --> AC["Ephemeral avatar cache<br/>30 min TTL / 128 posts"]
+    XR --> AC["Ephemeral avatar cache<br/>30 min TTL / 256 keys"]
+    XR --> AP["Sanitized avatar fallback<br/>7 day TTL / 512 status-or-handle keys"]
+    AP --> AC
     XC --> M
     XC --> AE["Async retained-item enrichment<br/>AkuBrowser relay -> Sidecar override"]
     M --> P["Bounded retry/capture policy"]
@@ -86,12 +88,17 @@ cross into the isolated world or persistent storage. Only a normalized
 `video.twimg.com` media records, dimensions, type, and
 `x_response_graphql` provenance can enter the existing media cache. The owning
 Tweet author's allowlisted `pbs.twimg.com/profile_images/` URL may enter a
-separate isolated-world cache. This avatar cache is presentation-only and
-ephemeral: it is never published to the service worker, extension storage, or
-Sidecar as post media. The DOM watcher and bounded MAIN-world React resolver
-remain complementary inputs. The sanitized media cache keeps at most 128 posts
-for 30 minutes with four media entries each; the avatar cache uses the same
-30-minute and 128-post bounds. It uses the existing `storage` permission; v59 adds no permission and
+separate presentation-only cache. The isolated-world hot cache keeps at most
+256 status-or-handle keys for 30 minutes. A sanitized cross-run fallback keeps
+only the same avatar URL plus normalized `x:status:<id>` and/or
+`x:user:<handle>` keys in extension-local storage for seven days, capped at
+512 keys. It is consulted only when the current DOM and current response
+evidence do not expose the avatar. It never stores post text, raw responses,
+account state, or provider authentication, and never crosses into Sidecar as
+post media. The DOM watcher and bounded MAIN-world React resolver remain
+complementary inputs. The sanitized post-media cache keeps at most 128 posts
+for 30 minutes with four media entries each. Both stores use the existing
+`storage` permission; v59 adds no permission and
 never opens, activates, focuses, scrolls, or navigates a tab. It cannot affect
 selection, ranking, semantic grouping, or Timeline capacity.
 
@@ -182,7 +189,9 @@ Source cards may also emit up to three typed `attachments`. The first
 LinkedIn implementation covers native job cards and external link previews,
 including the destination URL, title, subtitle, domain, and optional rendered
 thumbnail. Attachments remain separate from post media so a logo or external
-artifact is not misreported as an authored image.
+artifact is not misreported as an authored image. Destination and thumbnail
+URLs must be HTTPS; a non-HTTPS presentation card is omitted without rejecting
+the otherwise valid post.
 
 LinkedIn `presentation.socialContext` preserves the source-native reason a post
 entered the feed, including compact forms such as `Mohamad Ramzy commented` as
