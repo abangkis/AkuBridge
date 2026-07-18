@@ -19,7 +19,7 @@ test("source catalog exposes Facebook without changing the X media capability", 
   assert.deepEqual(sourceAdapterVersions(), {
     x: "x-dom-v19",
     linkedin: "linkedin-dom-v15",
-    facebook: "facebook-dom-v1",
+    facebook: "facebook-dom-v2",
   });
   assert.equal(sourceForUrl("https://www.facebook.com/"), "facebook");
   assert.equal(isCanonicalFeed("https://www.facebook.com/", "facebook"), true);
@@ -55,7 +55,7 @@ test("Facebook adapter passes synthetic Home Feed conformance", () => {
   const discovery = adapter.discoverCandidates({ uniqueElements: (items) => [...new Set(items)] });
   const helpers = { compactText, normalizeHttpUrl, structuredText: (element) => element?.innerText ?? "" };
 
-  assert.equal(adapter.version, "facebook-dom-v1");
+  assert.equal(adapter.version, "facebook-dom-v2");
   assert.equal(discovery.candidates.length, 1);
   assert.equal(adapter.findAuthor(candidate, helpers), "Aku Example");
   assert.equal(adapter.findAvatar(candidate, helpers), "https://scontent.fcgk1-2.fna.fbcdn.net/avatar.jpg");
@@ -71,6 +71,36 @@ test("Facebook adapter passes synthetic Home Feed conformance", () => {
     url: "https://www.facebook.com/aku.example/posts/1234567890/",
     source: "direct_anchor",
   });
+});
+
+test("Facebook adapter discovers the live Home Feed aria-posinset structure", () => {
+  const candidate = facebookCandidate();
+  candidate.parentElement = { closest: () => null };
+  candidate.querySelectorAll = (selector) => {
+    if (selector === '[role="button"], button') {
+      return ["Like", "Leave a comment", "Send this to friends or post it on your profile."].map((label) => ({
+        innerText: "",
+        getAttribute: (name) => name === "aria-label" ? label : null,
+      }));
+    }
+    return [];
+  };
+  const liveSelector = 'div[aria-posinset]';
+  const document = {
+    body: {},
+    querySelector(value) { return value.includes(liveSelector) ? candidate : null; },
+    querySelectorAll(value) { return value === liveSelector ? [candidate] : []; },
+  };
+  const context = vm.createContext({ document, window: { document, location: { hostname: "www.facebook.com", pathname: "/" } }, URL });
+  context.globalThis = context;
+  run(context, "source-adapter-runtime.js");
+  run(context, "adapters/facebook-adapter.js");
+  const adapter = context.AkuSourceAdapters.get("facebook");
+  const discovery = adapter.discoverCandidates({ uniqueElements: (items) => [...new Set(items)] });
+
+  assert.equal(adapter.feedRootPresent(), true);
+  assert.equal(discovery.strategy, liveSelector);
+  assert.equal(discovery.candidates.length, 1);
 });
 
 function facebookCandidate() {

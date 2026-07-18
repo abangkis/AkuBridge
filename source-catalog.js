@@ -32,7 +32,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "facebook",
     displayName: "Facebook",
-    adapterVersion: "facebook-dom-v1",
+    adapterVersion: "facebook-dom-v2",
     adapterScript: "adapters/facebook-adapter.js",
     supportScripts: Object.freeze([]),
     feedUrl: "https://www.facebook.com/",
@@ -40,7 +40,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
     hostnames: Object.freeze(["www.facebook.com", "facebook.com"]),
     canonicalFeedPath: /^\/$/,
     nativePostPath: /\/(?:posts\/|permalink\/|story\.php|photo|videos\/|reel\/)/,
-    readiness: Object.freeze({ initialTimeoutMs: 12_000 }),
+    readiness: Object.freeze({ initialTimeoutMs: 25_000 }),
   }),
 ]);
 

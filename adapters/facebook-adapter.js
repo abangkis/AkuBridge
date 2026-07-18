@@ -3,6 +3,7 @@
   if (!registry) throw new Error("AkuBridge source-adapter runtime was not loaded.");
 
   const candidateSelectors = Object.freeze([
+    'div[aria-posinset]',
     '[role="feed"] > div [role="article"]',
     'main [role="feed"] [role="article"]',
     'main [role="article"]',
@@ -17,7 +18,7 @@
 
   registry.register({
     source: "facebook",
-    version: "facebook-dom-v1",
+    version: "facebook-dom-v2",
     mediaHosts: Object.freeze(["fbcdn.net", "fbsbx.com"]),
     platformIdFromCandidates: (values) => {
       for (const value of Array.isArray(values) ? values : []) {
@@ -61,7 +62,7 @@
     loginRequired: () => /\/login|\/checkpoint/i.test(window.location.pathname) || Boolean(
       document.querySelector('input[name="email"], input[name="pass"], form[action*="login"]'),
     ),
-    feedRootPresent: () => Boolean(document.querySelector('main [role="feed"], [role="feed"], main')),
+    feedRootPresent: () => Boolean(document.querySelector('div[aria-posinset], main [role="feed"], [role="feed"], main')),
     discoverCandidates: ({ uniqueElements }) => {
       const selectorCounts = Object.fromEntries(candidateSelectors.map((selector) => [
         selector,
@@ -158,9 +159,17 @@
   function isTopLevelFeedPost(candidate) {
     const actions = [...candidate.querySelectorAll('[role="button"], button')]
       .map((button) => String(button.getAttribute?.("aria-label") || button.innerText || "").trim())
-      .filter((label) => /^(?:Like|Comment|Share|Send)(?:\b|$)/i.test(label));
-    if (new Set(actions.map((label) => label.match(/^[A-Za-z]+/)?.[0]?.toLowerCase())).size < 2) return false;
+      .map(facebookActionKind)
+      .filter(Boolean);
+    if (new Set(actions).size < 2) return false;
     return !candidate.parentElement?.closest?.('[role="article"]');
+  }
+
+  function facebookActionKind(label) {
+    if (/^(?:Like|React)(?:\b|$)/i.test(label)) return "like";
+    if (/^(?:Comment|Leave a comment)(?:\b|$)/i.test(label)) return "comment";
+    if (/^(?:Share|Send)(?:\b|$)/i.test(label)) return "share";
+    return "";
   }
 
   function nativePostAnchors(container, normalizeHttpUrl) {
