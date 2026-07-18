@@ -10,18 +10,20 @@ const [manifest, packageJson, packageLock] = await Promise.all([
   readJson(lockUrl),
 ]);
 
-if (manifest.version !== packageJson.version || packageJson.version !== packageLock.version) {
+if (manifest.version_name !== packageJson.version || packageJson.version !== packageLock.version) {
   throw new Error("Refusing to bump divergent manifest, package, and lockfile versions.");
 }
 
-const parts = manifest.version.split(".").map(Number);
-if (parts.length !== 3 || parts.some((part) => !Number.isInteger(part) || part < 0)) {
-  throw new Error(`Unsupported extension version: ${manifest.version}`);
+const preview = /^(\d+)\.(\d+)\.(\d+)-preview\.(\d+)$/.exec(packageJson.version);
+if (!preview) {
+  throw new Error(`Unsupported preview extension version: ${packageJson.version}`);
 }
-parts[2] += 1;
-const version = parts.join(".");
+const [, major, minor, patch, build] = preview;
+const nextBuild = Number(build) + 1;
+const version = `${major}.${minor}.${patch}-preview.${nextBuild}`;
 
-manifest.version = version;
+manifest.version = `${major}.${minor}.${patch}.${nextBuild}`;
+manifest.version_name = version;
 packageJson.version = version;
 packageLock.version = version;
 packageLock.packages[""].version = version;

@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v59";
+  const runtimeRevision = "source-fidelity-v60";
   const LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000;
   const LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS = 50;
   const LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8;

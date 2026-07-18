@@ -7,8 +7,8 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const manifest = readJson("manifest.json");
 const packageJson = readJson("package.json");
 if (manifest.manifest_version !== 3) throw new Error("AkuBridge package must use Manifest V3");
-if (manifest.version !== packageJson.version) {
-  throw new Error(`manifest version ${manifest.version} differs from package ${packageJson.version}`);
+if (manifest.version_name !== packageJson.version) {
+  throw new Error(`manifest version name ${manifest.version_name} differs from package ${packageJson.version}`);
 }
 
 const referenced = new Set(["manifest.json"]);
@@ -32,7 +32,8 @@ const files = [...referenced].sort().map((file) => ({
 const fingerprint = createHash("sha256").update(JSON.stringify(files)).digest("hex");
 console.log(JSON.stringify({
   name: manifest.name,
-  version: manifest.version,
+  version: manifest.version_name,
+  chromeVersion: manifest.version,
   manifestVersion: manifest.manifest_version,
   files,
   fingerprint,

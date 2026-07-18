@@ -1,5 +1,8 @@
 # AkuBridge
 
+Current preview identity: **`0.7.0-preview.1`** / Chrome manifest
+**`0.7.0.1`** / runtime **`source-fidelity-v60`**.
+
 AkuBridge is the read-only Chrome extension used by AkuBrowser to collect a bounded set of visible observations from X or LinkedIn.
 
 ## Current source-adapter architecture
@@ -74,7 +77,7 @@ does not apply to the post.
 X media evidence has passive DOM and response-backed paths. Live v57 validation
 showed why both are needed: in a Quiet X surface, media roots were detected but
 hydrated media containers and recoverable URLs remained at zero, while the same
-source could hydrate after foreground visibility. In v59, the
+source could hydrate after foreground visibility. In v60, the
 `x-response-evidence-v2` adapter starts in the MAIN world at `document_start`
 and observes only successful JSON responses that X already requested for the
 exact `HomeTimeline`, `HomeLatestTimeline`, and `TweetDetail` GraphQL
@@ -98,7 +101,7 @@ account state, or provider authentication, and never crosses into Sidecar as
 post media. The DOM watcher and bounded MAIN-world React resolver remain
 complementary inputs. The sanitized post-media cache keeps at most 128 posts
 for 30 minutes with four media entries each. Both stores use the existing
-`storage` permission; v59 adds no permission and
+`storage` permission; v60 adds no permission and
 never opens, activates, focuses, scrolls, or navigates a tab. It cannot affect
 selection, ranking, semantic grouping, or Timeline capacity.
 
@@ -116,13 +119,19 @@ npm run package:verify
 ```
 
 Load this directory as an unpacked extension from `chrome://extensions` with
-Developer mode enabled. This manual step is required only for the initial
-bootstrap or recovery when the installed extension cannot handle cooperative
-self-reload.
+Developer mode enabled. Manual installation is the supported
+`0.7.0-preview.1` distribution path on Windows and macOS; the preview does not
+claim silent local-CRX installation. It assumes Chrome is already signed in to
+X and LinkedIn. This manual step is required only for the initial bootstrap or
+recovery when the installed extension cannot handle cooperative self-reload.
 
 The adapter foundation separates X and LinkedIn DOM knowledge into source adapters loaded behind a common registry. The content runtime owns bounded scrolling, restoration, evidence normalization, and messaging; each adapter owns source matching, candidate discovery, author discovery, media exclusions, and pending-content labels.
 
-`package:verify` validates Manifest V3 references, local module imports, package/manifest version alignment, and emits a SHA-256 file manifest plus aggregate fingerprint. It does not write a package artifact or modify the installed extension.
+`package:verify` validates Manifest V3 references, local module imports,
+product `version_name` alignment, and emits a SHA-256 file manifest plus
+aggregate fingerprint. Chrome's numeric `version` remains a separate packaging
+field. The command does not write a package artifact or modify the installed
+extension.
 
 Every runtime change must advance both identities: run `npm run version:patch`
 to synchronize `manifest.json`, `package.json`, and `package-lock.json`, then
