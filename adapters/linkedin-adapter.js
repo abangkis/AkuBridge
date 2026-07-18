@@ -11,6 +11,12 @@
     'main [data-id*="activity"]',
     "main article",
   ];
+  const actorAvatarSelector = [
+    'a[href*="/in/"] img',
+    'a[href*="/company/"] img',
+    'a[href*="/school/"] img',
+    'a[href*="/showcase/"] img',
+  ].join(", ");
 
   registry.register({
     source: "linkedin",
@@ -23,7 +29,8 @@
       avatar: '.update-components-actor__avatar-image, '
         + '.feed-shared-actor__avatar-image, '
         + '[data-view-name="feed-actor-image"] img, '
-        + '.update-components-actor img, .feed-shared-actor img',
+        + '.update-components-actor img, .feed-shared-actor img, '
+        + actorAvatarSelector,
       content: '[data-testid="expandable-text-box"]',
       media: '.update-components-image, .feed-shared-image, '
         + 'video, [data-test-document-container], '
@@ -179,14 +186,15 @@
       extractLinkedInAttachments(container, { compactText, normalizeHttpUrl, normalizeHttpsUrl }),
     findAvatar: (container, { compactText, normalizeHttpUrl }) => {
       const author = postAuthor(container, compactText);
-      const image = [...container.querySelectorAll('a[href*="/in/"] img')].find((candidate) => {
+      const candidates = [...container.querySelectorAll(actorAvatarSelector)];
+      const image = candidates.find((candidate) => {
         const alt = compactText(candidate.alt);
         const rect = candidate.getBoundingClientRect();
         return rect.width >= 40 && rect.height >= 40 && (
           /^View .+profile/i.test(alt) &&
           (!author || alt.includes(author.replace(/\s+[\p{Regional_Indicator}\s]+$/u, "")))
         );
-      }) ?? [...container.querySelectorAll('a[href*="/in/"] img')].find((candidate) => {
+      }) ?? candidates.find((candidate) => {
         const rect = candidate.getBoundingClientRect();
         return rect.width >= 40 && rect.width <= 80 && rect.height >= 40 && rect.height <= 80;
       });

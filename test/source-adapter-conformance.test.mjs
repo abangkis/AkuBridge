@@ -49,7 +49,7 @@ for (const source of ["x", "linkedin"]) {
       assert.deepEqual(JSON.parse(JSON.stringify(quotedPost)), fixture.quotedPost);
     }
     if (source === "linkedin") {
-      assert.equal(adapter.qualitySelectors.avatar.includes('a[href*="/in/"] img'), false);
+      assert.equal(adapter.qualitySelectors.avatar.includes('a[href*="/in/"] img'), true);
       assert.match(adapter.qualitySelectors.avatar, /feed-actor-image/);
       assert.equal(
         adapter.extractText(candidate, {
@@ -145,7 +145,7 @@ for (const source of ["x", "linkedin"]) {
         ...candidate,
         querySelectorAll(selector) {
           if (selector === 'button[aria-label]') return [];
-          if (selector === 'a[href*="/in/"] img') return [socialAvatarForTest(), collaborativeAvatar];
+          if (selector.includes('a[href*="/in/"] img')) return [socialAvatarForTest(), collaborativeAvatar];
           return [];
         },
       };
@@ -155,6 +155,25 @@ for (const source of ["x", "linkedin"]) {
           normalizeHttpUrl,
         }),
         "https://media.licdn.com/dms/image/linkedin-collaborative-avatar",
+      );
+      const companyAvatar = syntheticImage(
+        "https://media.licdn.com/dms/image/company-logo",
+        "Bank Mega",
+        48,
+      );
+      const companyCandidate = {
+        ...candidate,
+        querySelectorAll(selector) {
+          if (selector.includes('a[href*="/company/"] img')) return [companyAvatar];
+          if (selector === 'button[aria-label]') return [{
+            getAttribute: () => "Open control menu for post by Bank Mega",
+          }];
+          return [];
+        },
+      };
+      assert.equal(
+        adapter.findAvatar(companyCandidate, { compactText, normalizeHttpUrl }),
+        "https://media.licdn.com/dms/image/company-logo",
       );
     }
   });
@@ -253,7 +272,7 @@ function syntheticCandidate(source) {
       if (source === "linkedin" && selector === "button[aria-label]") return [menuButton, reactionButton, repostButton];
       if (source === "linkedin" && selector === 'button,[role="button"]') return [menuButton, reactionButton, repostButton];
       if (source === "linkedin" && selector === 'a[href] img') return [socialAvatar, mainAvatar];
-      if (source === "linkedin" && selector === 'a[href*="/in/"] img') return [socialAvatar, mainAvatar];
+      if (source === "linkedin" && selector.includes('a[href*="/in/"] img')) return [socialAvatar, mainAvatar];
       if (source === "linkedin" && selector === 'a[href]') return [linkedinAttachment];
       return [];
     },
