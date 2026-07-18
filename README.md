@@ -252,7 +252,7 @@ and handles either an automatically changed feed or one allowlisted visible
 scroll-restoration baseline, and `coverage.sourceFreshness` records the state,
 proof, wait, activation, and mutation without exposing raw fingerprints.
 
-Gate 0B.3 may perform one additional one-scroll capture from a round-one frontier supplied by AkuSidecar. The first follow-up snapshot must match a prior permalink or normalized-text anchor; fresh-content activation is disabled and the pre-follow-up position is restored.
+Gate 0B.3 may perform one additional bounded capture from a round-one frontier supplied by AkuSidecar. The first follow-up snapshot must match a prior permalink or normalized-text anchor; fresh-content activation is disabled and the pre-follow-up position is restored. For LinkedIn's virtualized feed, AkuSidecar resumes from the preceding observed overlap checkpoint before advancing beyond the prior frontier.
 
 LinkedIn capture still uses a bounded feed-readiness probe because a completed
 page shell may contain no rendered feed. Freshness is a separate generic stage:

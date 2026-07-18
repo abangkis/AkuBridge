@@ -11,6 +11,10 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
   const maxDepth = clamp(configuration.maxDepth, 3, 20, 12);
   const maxProperties = clamp(configuration.maxProperties, 8, 200, 100);
   const maxCandidatesPerResponse = clamp(configuration.maxCandidatesPerResponse, 1, 24, 24);
+  const maxCandidatesPerPayload = Math.max(
+    maxCandidatesPerResponse,
+    clamp(configuration.maxCandidatesPerPayload, 1, 128, 96),
+  );
   const maxCachedCandidates = clamp(configuration.maxCachedCandidates, 1, 128, 64);
   let pageLocation = null;
   let pageHref = "";
@@ -86,7 +90,7 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
   }
 
   function retainAndEmit(candidates, diagnostics) {
-    const safeCandidates = sanitizeCandidateBatch(candidates, maxCandidatesPerResponse);
+    const safeCandidates = sanitizeCandidateBatch(candidates, maxCandidatesPerPayload);
     for (const candidate of safeCandidates) {
       const cached = cache.get(candidate.candidateId);
       const prior = cached?.media ?? [];
@@ -100,7 +104,13 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
       }));
     }
     while (cache.size > maxCachedCandidates) cache.delete(cache.keys().next().value);
-    emit(safeCandidates, diagnostics);
+    if (safeCandidates.length === 0) {
+      emit([], diagnostics);
+      return;
+    }
+    for (let offset = 0; offset < safeCandidates.length; offset += maxCandidatesPerResponse) {
+      emit(safeCandidates.slice(offset, offset + maxCandidatesPerResponse), diagnostics);
+    }
   }
 
   function replay() {
@@ -266,7 +276,7 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
     let traversedNodeCount = 0;
     let bounded = false;
     while (queue.length > 0) {
-      if (traversedNodeCount >= maxTraversalNodes || candidates.length >= maxCandidatesPerResponse) {
+      if (traversedNodeCount >= maxTraversalNodes || candidates.length >= maxCandidatesPerPayload) {
         bounded = queue.length > 0;
         break;
       }
@@ -278,13 +288,15 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
       const tweetId = explicitTweetId(value);
       if (tweetId && !candidateIds.has(tweetId)) {
         const media = mediaForTweet(value, tweetId);
-        const avatarUrl = avatarForTweet(value);
+        const avatar = avatarForTweet(value);
+        const avatarUrl = avatar?.url ?? null;
         if (media.length > 0 || avatarUrl) {
           candidateIds.add(tweetId);
           candidates.push(Object.freeze({
             candidateId: `x:status:${tweetId}`,
             media,
             ...(avatarUrl ? { avatarUrl } : {}),
+            ...(avatar?.key ? { avatarKey: avatar.key } : {}),
           }));
         }
       }
@@ -339,8 +351,14 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
     }
     const avatar = dataProperty(user, "avatar");
     const legacy = dataProperty(user, "legacy");
-    return safeXAvatarURL(dataProperty(avatar, "image_url")) ??
+    const userCore = dataProperty(user, "core");
+    const url = safeXAvatarURL(dataProperty(avatar, "image_url")) ??
       safeXAvatarURL(dataProperty(legacy, "profile_image_url_https"));
+    if (!url) return null;
+    const key = normalizeAvatarKey(
+      dataProperty(userCore, "screen_name") ?? dataProperty(legacy, "screen_name"),
+    );
+    return Object.freeze({ url, ...(key ? { key } : {}) });
   }
 
   function mediaFromEntity(entity) {
@@ -383,9 +401,15 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
       const candidateId = normalizeCandidateId(dataProperty(value, "candidateId"));
       const media = sanitizeMedia(dataProperty(value, "media"));
       const avatarUrl = safeXAvatarURL(dataProperty(value, "avatarUrl"));
+      const avatarKey = avatarUrl ? normalizeAvatarKey(dataProperty(value, "avatarKey")) : null;
       if (!candidateId || (media.length === 0 && !avatarUrl) || seen.has(candidateId)) continue;
       seen.add(candidateId);
-      output.push(Object.freeze({ candidateId, media, ...(avatarUrl ? { avatarUrl } : {}) }));
+      output.push(Object.freeze({
+        candidateId,
+        media,
+        ...(avatarUrl ? { avatarUrl } : {}),
+        ...(avatarKey ? { avatarKey } : {}),
+      }));
       if (output.length >= maximum) break;
     }
     return Object.freeze(output);
@@ -513,6 +537,12 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
     if (typeof value !== "string") return null;
     const match = value.match(/^x:status:(\d{5,30})$/);
     return match ? `x:status:${match[1]}` : null;
+  }
+
+  function normalizeAvatarKey(value) {
+    if (typeof value !== "string") return null;
+    const match = value.trim().match(/^(?:x:user:|@)?([A-Za-z0-9_]{1,15})$/i);
+    return match ? `x:user:${match[1].toLowerCase()}` : null;
   }
 
   function successfulStatus(value) {

@@ -170,6 +170,7 @@ test("response evidence bridge keeps avatars ephemeral and publishes only post m
       candidates: [{
         candidateId: "x:status:12345",
         avatarUrl: "https://pbs.twimg.com/profile_images/12345/avatar_normal.jpg",
+        avatarKey: "x:user:owner_name",
         media: [{
           kind: "image",
           url: "https://pbs.twimg.com/media/from-response.jpg",
@@ -197,6 +198,23 @@ test("response evidence bridge keeps avatars ephemeral and publishes only post m
   assert.equal(runtime.lookup("x:status:12345")[0].provenance, "x_response_graphql");
   assert.equal(
     runtime.lookupAvatar("x:status:12345"),
+    "https://pbs.twimg.com/profile_images/12345/avatar_normal.jpg",
+  );
+  const authorAnchor = {
+    href: "https://x.com/Owner_Name",
+    closest: () => null,
+  };
+  const authorRoot = {
+    querySelectorAll: (selector) => selector === "a[href]" ? [authorAnchor] : [],
+  };
+  const avatarContainer = {
+    querySelector(selector) {
+      return selector === '[data-testid="User-Name"]' ? authorRoot : null;
+    },
+    querySelectorAll: () => [],
+  };
+  assert.equal(
+    runtime.lookupAvatarContainer(avatarContainer),
     "https://pbs.twimg.com/profile_images/12345/avatar_normal.jpg",
   );
   assert.equal(published.length, 1);

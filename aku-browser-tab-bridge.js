@@ -158,7 +158,8 @@
     } catch (error) {
       window.postMessage(
         {
-          type: "AKU_BROWSER_BRIDGE_ERROR",
+          type: "AKU_BROWSER_DISPATCH_FAILED",
+          runId: message.runId,
           message: String(error?.message ?? error),
         },
         allowedOrigin,

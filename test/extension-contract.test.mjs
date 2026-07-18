@@ -327,6 +327,7 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(worker, /chrome\.tabs\.reload\(pending\.tabId\)/);
   assert.doesNotMatch(tabBridge, /setTimeout[\s\S]*location\.reload/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_ERROR/);
+  assert.match(tabBridge, /AKU_BROWSER_DISPATCH_FAILED/);
   assert.equal(capabilities.authority, "read_only_bounded");
   assert.deepEqual(capabilities.captureLimits, { maxScrolls: 6, maxSnapshots: 7, maxBlocksPerSnapshot: 20 });
   assert.match(worker, /assertTabLease\(prepared\.lease, "before_capture"\)/);

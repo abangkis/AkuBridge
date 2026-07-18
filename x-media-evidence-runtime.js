@@ -7,6 +7,7 @@
   ) return;
   const defaults = Object.freeze({
     maxCandidates: 128,
+    maxAvatarCandidates: 256,
     maxMediaPerCandidate: 4,
     ttlMs: 30 * 60 * 1_000,
     maxDirtyContainersPerFlush: 24,
@@ -122,13 +123,18 @@
 
   function createAvatarCache(options = {}) {
     const now = typeof options.now === "function" ? options.now : () => Date.now();
-    const maxCandidates = clampInteger(options.maxCandidates, 1, 512, defaults.maxCandidates);
+    const maxCandidates = clampInteger(
+      options.maxAvatarCandidates ?? options.maxCandidates,
+      1,
+      512,
+      defaults.maxAvatarCandidates,
+    );
     const ttlMs = clampInteger(options.ttlMs, 100, 24 * 60 * 60 * 1_000, defaults.ttlMs);
     const entries = new Map();
     const counters = { accepted: 0, rejected: 0, expired: 0, evicted: 0 };
 
     function put(candidateId, value) {
-      const key = normalizeCandidateId(candidateId);
+      const key = normalizeAvatarKey(candidateId);
       const url = safeXAvatarUrl(value);
       if (!key || !url) {
         counters.rejected += 1;
@@ -146,7 +152,7 @@
     }
 
     function get(candidateId) {
-      const key = normalizeCandidateId(candidateId);
+      const key = normalizeAvatarKey(candidateId);
       if (!key) return null;
       purgeExpired();
       const entry = entries.get(key);
@@ -280,7 +286,8 @@
     }
 
     function lookupAvatarContainer(container) {
-      return avatarCache.get(candidateIdFromContainer(container));
+      return avatarCache.get(candidateIdFromContainer(container)) ??
+        avatarCache.get(avatarKeyFromContainer(container));
     }
 
     function lookupAvatar(candidateId) {
@@ -322,6 +329,7 @@
       for (const candidate of payload.candidates) {
         if (candidate.avatarUrl && avatarCache.put(candidate.candidateId, candidate.avatarUrl)) {
           acceptedAvatars += 1;
+          if (candidate.avatarKey) avatarCache.put(candidate.avatarKey, candidate.avatarUrl);
         }
       }
       responseEvidence.acceptedCandidateCount += accepted;
@@ -412,9 +420,12 @@
     if (!Array.isArray(candidates) || candidates.length > 24) return false;
     for (const candidate of candidates) {
       if (!candidate || typeof candidate !== "object") return false;
-      if (!hasOnlyKeys(candidate, ["candidateId", "media", "avatarUrl"])) return false;
+      if (!hasOnlyKeys(candidate, ["candidateId", "media", "avatarUrl", "avatarKey"])) return false;
       if (!normalizeCandidateId(candidate.candidateId)) return false;
       if (candidate.avatarUrl !== undefined && !safeXAvatarUrl(candidate.avatarUrl)) return false;
+      if (candidate.avatarKey !== undefined && (
+        !candidate.avatarUrl || !normalizeAvatarKey(candidate.avatarKey)
+      )) return false;
       if (!Array.isArray(candidate.media) || candidate.media.length > defaults.maxMediaPerCandidate) {
         return false;
       }
@@ -465,6 +476,22 @@
       values.push(anchor.href, anchor.getAttribute?.("href"));
     }
     return values.map(normalizeCandidateId).find(Boolean) ?? null;
+  }
+
+  function avatarKeyFromContainer(container) {
+    if (!container) return null;
+    const roots = [
+      container.querySelector?.('[data-testid="User-Name"]'),
+      container.querySelector?.('[data-testid="Tweet-User-Avatar"]'),
+    ].filter(Boolean);
+    for (const root of roots) {
+      for (const anchor of root.querySelectorAll?.("a[href]") ?? []) {
+        if (insideQuotedPost(anchor, container)) continue;
+        const key = normalizeAvatarKey(anchor.href ?? anchor.getAttribute?.("href"));
+        if (key) return key;
+      }
+    }
+    return null;
   }
 
   function insideQuotedPost(element, container) {
@@ -545,6 +572,24 @@
     if (typeof value !== "string") return null;
     const match = value.match(/(?:^x:status:|\/status\/)(\d{5,30})(?:\b|\/|\?|#|$)/i);
     return match ? `x:status:${match[1]}` : null;
+  }
+
+  function normalizeAvatarKey(value) {
+    const candidateId = normalizeCandidateId(value);
+    if (candidateId) return candidateId;
+    if (typeof value !== "string") return null;
+    const direct = value.trim().match(/^x:user:([A-Za-z0-9_]{1,15})$/i);
+    if (direct) return `x:user:${direct[1].toLowerCase()}`;
+    try {
+      const url = new URL(value, "https://x.com/");
+      if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "x.com" || url.username || url.password) {
+        return null;
+      }
+      const match = url.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/?$/);
+      return match ? `x:user:${match[1].toLowerCase()}` : null;
+    } catch {
+      return null;
+    }
   }
 
   function normalizeMedia(value, provenance, observedAtMs) {
@@ -675,7 +720,9 @@
     installResponseEvidenceBridge,
     validResponseEvidenceEnvelope,
     normalizeCandidateId,
+    normalizeAvatarKey,
     candidateIdFromContainer,
+    avatarKeyFromContainer,
     safeXMediaUrl,
     safeXAvatarUrl,
   });

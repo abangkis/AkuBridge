@@ -52,7 +52,13 @@ test("response evidence emits each Tweet owner's avatar separately from post med
   });
   const quotedUser = payload.data.home.instructions[0].entries[0].content.itemContent
     .tweet_results.result.quoted_status_result.result.core.user_results.result;
-  quotedUser.legacy = { profile_image_url_https: quotedUser.avatar.image_url };
+  const outerUser = payload.data.home.instructions[0].entries[0].content.itemContent
+    .tweet_results.result.core.user_results.result;
+  outerUser.core = { screen_name: "OuterOwner" };
+  quotedUser.legacy = {
+    profile_image_url_https: quotedUser.avatar.image_url,
+    screen_name: "Quoted_Owner",
+  };
   delete quotedUser.avatar;
   const harness = installHarness(() => Promise.resolve(jsonResponse(payload, HOME_URL)));
   try {
@@ -65,11 +71,13 @@ test("response evidence emits each Tweet owner's avatar separately from post med
         candidateId: "x:status:12456",
         media: [],
         avatarUrl: "https://pbs.twimg.com/profile_images/12456/outer_normal.jpg",
+        avatarKey: "x:user:outerowner",
       },
       {
         candidateId: "x:status:67901",
         media: [],
         avatarUrl: "https://pbs.twimg.com/profile_images/67901/quoted_normal.jpg",
+        avatarKey: "x:user:quoted_owner",
       },
     ]);
     assert.equal(detail.diagnostics.avatarCount, 2);
@@ -304,6 +312,41 @@ test("READY replay chunks the bounded cache into bridge-valid envelopes", () => 
     const replay = harness.messages.slice(beforeReplay);
     assert.deepEqual(replay.map((value) => value.candidates.length), [24, 6]);
     assert.equal(replay.every((value) => value.candidates.length <= 24), true);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("one timeline response preserves avatar evidence beyond the first wire batch", async () => {
+  const entries = Array.from({ length: 30 }, (_, index) => {
+    const id = String(91000 + index);
+    return {
+      content: {
+        itemContent: {
+          tweet_results: {
+            result: tweet(
+              id,
+              [],
+              `https://pbs.twimg.com/profile_images/${id}/avatar_normal.jpg`,
+            ),
+          },
+        },
+      },
+    };
+  });
+  const payload = { data: { home: { instructions: [{ entries }] } } };
+  const harness = installHarness(() => Promise.resolve(jsonResponse(payload, HOME_URL)));
+  try {
+    await globalThis.fetch(HOME_URL);
+    await settle();
+
+    assert.deepEqual(harness.messages.map((value) => value.candidates.length), [24, 6]);
+    assert.equal(harness.messages.every((value) => value.candidates.length <= 24), true);
+    assert.equal(
+      harness.messages.some((value) =>
+        value.candidates.some((candidate) => candidate.candidateId === "x:status:91029")),
+      true,
+    );
   } finally {
     harness.restore();
   }
