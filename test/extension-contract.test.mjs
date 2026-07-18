@@ -19,7 +19,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   assert.equal(manifest.version_name, "0.7.0-preview.1");
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
-    "http://127.0.0.1:47821/*",
+    "http://127.0.0.1:11122/*",
     "https://www.linkedin.com/*",
     "https://x.com/*",
   ]);

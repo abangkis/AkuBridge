@@ -231,7 +231,7 @@ function fakeChrome() {
   const storage = {};
   const windows = new Map([[1, {
     id: 1,
-    tabs: [{ id: 11, windowId: 1, active: true, url: "http://127.0.0.1:47821/" }],
+    tabs: [{ id: 11, windowId: 1, active: true, url: "http://127.0.0.1:11122/" }],
   }]]);
   const tabs = new Map([[11, windows.get(1).tabs[0]]]);
   const activeByWindow = new Map([[1, 11]]);

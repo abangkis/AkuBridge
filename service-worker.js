@@ -26,7 +26,7 @@ import { resolveXStructuredMediaInMainWorld } from "./x-main-world-media-resolve
 import { createXMediaEvidenceStore } from "./x-media-evidence-store.js";
 import { createXAvatarEvidenceStore } from "./x-avatar-evidence-store.js";
 
-const AKU_BROWSER_ORIGIN = "http://127.0.0.1:47821";
+const AKU_BROWSER_ORIGIN = "http://127.0.0.1:11122";
 const CAPTURE_DELAY_MAX_MS = 2_000;
 const PENDING_SELF_RELOAD_KEY = "akuBridgePendingSelfReload";
 const PENDING_SELF_RELOAD_MAX_AGE_MS = 30_000;
