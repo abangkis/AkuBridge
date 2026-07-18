@@ -1,26 +1,12 @@
-const FEED_URLS = {
-  x: "https://x.com/home",
-  linkedin: "https://www.linkedin.com/feed/",
-};
+import { expectedFeedUrlFor, isCanonicalFeed } from "./source-catalog.js";
 
 export function expectedFeedUrl(source) {
-  return FEED_URLS[source] ?? null;
+  return expectedFeedUrlFor(source);
 }
 
 export function isCanonicalFeedUrl(rawUrl, source) {
   if (!rawUrl) return false;
-  try {
-    const url = new URL(rawUrl);
-    if (source === "x") {
-      return url.hostname === "x.com" && url.pathname === "/home";
-    }
-    if (source === "linkedin") {
-      return url.hostname === "www.linkedin.com" && /^\/feed\/?$/.test(url.pathname);
-    }
-    return false;
-  } catch {
-    return false;
-  }
+  return isCanonicalFeed(rawUrl, source);
 }
 
 export function chooseSourceTab(tabs, { source, mode }) {

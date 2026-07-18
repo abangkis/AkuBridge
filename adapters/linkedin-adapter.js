@@ -21,6 +21,49 @@
   registry.register({
     source: "linkedin",
     version: "linkedin-dom-v15",
+    maxBlocksPerSnapshot: 8,
+    scrollContext: "nearest_scrollable",
+    scrollRootSelectors: Object.freeze(['[data-testid="mainFeed"]', "main", "#workspace"]),
+    contentExpansion: Object.freeze({
+      buttonSelector: '[data-testid="expandable-text-button"]',
+      restorable: true,
+      attempts: 10,
+      intervalMs: 40,
+    }),
+    avatarFallbackSelectors: Object.freeze([
+      ".update-components-actor__avatar-image",
+      ".feed-shared-actor__avatar-image",
+      '[data-view-name="feed-actor-image"] img',
+      ".update-components-actor img",
+      ".feed-shared-actor img",
+    ]),
+    permalinkPatterns: Object.freeze([/\/feed\/update\//, /activity-\d+/]),
+    findDomPermalink: (container) => [
+      container.getAttribute("data-urn"),
+      container.getAttribute("data-id"),
+      ...[...container.querySelectorAll("[data-urn], [data-id]")]
+        .slice(0, 20)
+        .flatMap((element) => [element.getAttribute("data-urn"), element.getAttribute("data-id")]),
+    ].filter(Boolean).map((value) => {
+      const canonical = globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEvidence(String(value));
+      if (canonical) return canonical;
+      const activityId = String(value).match(/activity(?::|-)(\d+)/i)?.[1];
+      return activityId ? `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/` : null;
+    }).find(Boolean) ?? null,
+    estimateRelativeTimestamp: (timestampText, capturedAt) =>
+      globalThis.AkuLinkedInTimestampPolicy?.estimateFromRelativeText(timestampText, capturedAt) ?? null,
+    recoverPermalinks: recoverLinkedInPermalinks,
+    mediaHosts: Object.freeze(["licdn.com"]),
+    platformIdFromCandidates: (values) => {
+      for (const value of Array.isArray(values) ? values : []) {
+        const candidate = String(value ?? "");
+        const urn = candidate.match(/urn:li:(activity|ugcPost|share):(\d+)/i);
+        if (urn) return `linkedin:${urn[1].toLowerCase()}:${urn[2]}`;
+        const activity = candidate.match(/activity[-/:](\d+)/i);
+        if (activity) return `linkedin:activity:${activity[1]}`;
+      }
+      return null;
+    },
     qualityProfile: "social-post-v1",
     qualitySelectors: Object.freeze({
       author: 'button[aria-label^="Open control menu for post by"], '
@@ -211,6 +254,60 @@
       .map((button) => compactText(button.getAttribute("aria-label")))
       .find((value) => /^Open control menu for post by\s+/i.test(value));
     return label?.replace(/^Open control menu for post by\s+/i, "").trim() ?? "";
+  }
+
+  async function recoverLinkedInPermalinks(containers, operationDeadlineAtMs, helpers) {
+    const recovered = new WeakMap();
+    const deadlineAtMs = Math.min(Date.now() + 2_000, operationDeadlineAtMs);
+    for (const container of containers) {
+      if (helpers.findPermalinkDetails(container, "linkedin", container.querySelector("time"))) continue;
+      const remainingMs = deadlineAtMs - Date.now();
+      if (remainingMs <= 0) {
+        recovered.set(container, {
+          url: null,
+          source: "unavailable",
+          reason: "LinkedIn permalink recovery budget was exhausted for this snapshot.",
+        });
+        continue;
+      }
+      const menuButton = container.querySelector('button[aria-label^="Open control menu for post by"]');
+      if (!menuButton) {
+        recovered.set(container, { url: null, source: "unavailable", reason: "Post control menu was not exposed." });
+        continue;
+      }
+      const visibleEvidence = () => [...document.querySelectorAll(
+        '[role="menu"] a[href], [role="menu"] [role="menuitem"][href]',
+      )]
+        .filter((link) => helpers.isVisibleInViewport(link))
+        .map((link) => ({
+          href: link.href,
+          url: globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEvidence(link.href) ?? null,
+          source: /\/preload\/embed-modal\//i.test(link.pathname) ? "embed_urn" : "menu_urn",
+        }))
+        .filter((entry) => entry.url);
+      const previouslyVisible = new Set(visibleEvidence().map((entry) => entry.href));
+      let opened = false;
+      try {
+        menuButton.click();
+        opened = true;
+        const evidence = await helpers.waitForValue(
+          () => visibleEvidence().find((entry) => !previouslyVisible.has(entry.href))
+            ?? visibleEvidence()[0]
+            ?? null,
+          Math.max(1, Math.ceil(remainingMs / 50)),
+          50,
+        );
+        recovered.set(container, evidence?.url
+          ? { url: evidence.url, source: evidence.source, reason: "" }
+          : { url: null, source: "unavailable", reason: "No stable post URN was exposed after opening the post menu." });
+      } finally {
+        if (opened) {
+          menuButton.click();
+          await helpers.waitForValue(() => visibleEvidence().length === 0 ? true : null, 4, 25);
+        }
+      }
+    }
+    return recovered;
   }
 
   function extractLinkedInRecoveryCandidates(container, {

@@ -12,12 +12,14 @@ test("source adapters register independently behind one contract", () => {
   runScript(context, "source-adapter-runtime.js");
   runScript(context, path.join("adapters", "x-adapter.js"));
   runScript(context, path.join("adapters", "linkedin-adapter.js"));
+  runScript(context, path.join("adapters", "facebook-adapter.js"));
 
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
       { source: "x", version: "x-dom-v19" },
       { source: "linkedin", version: "linkedin-dom-v15" },
+      { source: "facebook", version: "facebook-dom-v1" },
     ],
   );
   assert.equal(context.AkuSourceAdapters.get("x").matchesPage(), true);
@@ -36,6 +38,7 @@ test("adapter registry rejects duplicates and unknown sources", () => {
   context.AkuSourceAdapters.register({
     source: "fixture",
     version: "fixture-v1",
+    mediaHosts: ["example.test"],
     qualityProfile: "social-post-v1",
     qualitySelectors: {},
     freshness: {
@@ -65,7 +68,7 @@ test("a reinjected adapter runtime replaces the stale registry generation", () =
   context.AkuSourceAdapters = previous;
   runScript(context, "source-adapter-runtime.js");
   assert.notEqual(context.AkuSourceAdapters, previous);
-  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v8");
+  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v9");
   assert.deepEqual([...context.AkuSourceAdapters.capabilities()], []);
 });
 
@@ -74,11 +77,13 @@ test("the complete adapter bundle can replace its current registry generation", 
   runScript(context, "source-adapter-runtime.js");
   runScript(context, path.join("adapters", "x-adapter.js"));
   runScript(context, path.join("adapters", "linkedin-adapter.js"));
+  runScript(context, path.join("adapters", "facebook-adapter.js"));
   const previous = context.AkuSourceAdapters;
 
   runScript(context, "source-adapter-runtime.js");
   runScript(context, path.join("adapters", "x-adapter.js"));
   runScript(context, path.join("adapters", "linkedin-adapter.js"));
+  runScript(context, path.join("adapters", "facebook-adapter.js"));
 
   assert.notEqual(context.AkuSourceAdapters, previous);
   assert.deepEqual(
@@ -86,6 +91,7 @@ test("the complete adapter bundle can replace its current registry generation", 
     [
       { source: "x", version: "x-dom-v19" },
       { source: "linkedin", version: "linkedin-dom-v15" },
+      { source: "facebook", version: "facebook-dom-v1" },
     ],
   );
 });

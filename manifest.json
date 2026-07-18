@@ -12,7 +12,9 @@
   "host_permissions": [
     "http://127.0.0.1:11122/*",
     "https://x.com/*",
-    "https://www.linkedin.com/*"
+    "https://www.linkedin.com/*",
+    "https://www.facebook.com/*",
+    "https://facebook.com/*"
   ],
   "background": {
     "service_worker": "service-worker.js",
@@ -50,7 +52,9 @@
     {
       "matches": [
         "https://x.com/*",
-        "https://www.linkedin.com/*"
+        "https://www.linkedin.com/*",
+        "https://www.facebook.com/*",
+        "https://facebook.com/*"
       ],
       "js": [
         "bounded-capture-policy.js",
@@ -60,6 +64,7 @@
         "source-adapter-runtime.js",
         "adapters/x-adapter.js",
         "adapters/linkedin-adapter.js",
+        "adapters/facebook-adapter.js",
         "source-freshness-runtime.js",
         "media-acquisition-engine.js",
         "content-script.js"

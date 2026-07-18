@@ -215,7 +215,7 @@
         video.currentSrc,
         video.src,
         ...[...(video.querySelectorAll?.("source[src]") ?? [])].map((entry) => entry.src),
-      ].find((value) => /^https:\/\/video\.twimg\.com\//i.test(value ?? ""));
+      ].find((value) => /^https:\/\//i.test(value ?? ""));
       const posterUrl = video.poster || video.getAttribute?.("poster") || renderedBackgroundUrl(video);
       values.push({
         kind: "video",

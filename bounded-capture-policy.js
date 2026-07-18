@@ -111,18 +111,13 @@
   }
 
   function platformIdFromCandidates(source, values) {
+    const adapter = globalThis.AkuSourceAdapters?.get?.(source);
+    if (typeof adapter?.platformIdFromCandidates === "function") {
+      return adapter.platformIdFromCandidates(values) ?? null;
+    }
     for (const value of Array.isArray(values) ? values : []) {
       const candidate = typeof value === "string" ? value : "";
       if (!candidate) continue;
-      if (source === "x") {
-        const statusId = candidate.match(/\/status\/(\d+)/)?.[1];
-        if (statusId) return `x:status:${statusId}`;
-        continue;
-      }
-      const urn = candidate.match(/urn:li:(activity|ugcPost|share):(\d+)/i);
-      if (urn) return `linkedin:${urn[1].toLowerCase()}:${urn[2]}`;
-      const activity = candidate.match(/activity[-/:](\d+)/i);
-      if (activity) return `linkedin:activity:${activity[1]}`;
     }
     return null;
   }
@@ -165,7 +160,9 @@
       const width = clampInteger(Math.round(value.width), 0, 8_192, 0);
       const height = clampInteger(Math.round(value.height), 0, 8_192, 0);
       const unknownGeometry = width === 0 && height === 0;
-      const trustedUnknownGeometry = source === "x" && value.trustedMediaRoot === true && unknownGeometry;
+      const trustedUnknownGeometry = globalThis.AkuSourceAdapters?.get?.(source)
+        ?.mediaAcquisition?.allowTrustedUnknownGeometry === true &&
+        value.trustedMediaRoot === true && unknownGeometry;
       if ((width < 180 || height < 90) && !trustedUnknownGeometry) {
         diagnostics.rejectedGeometryCount += 1;
         continue;
@@ -205,8 +202,8 @@
       const url = new URL(value);
       if (url.protocol !== "https:") return null;
       const host = url.hostname.toLowerCase();
-      if (source === "x" && !["pbs.twimg.com", "video.twimg.com"].includes(host)) return null;
-      if (source === "linkedin" && host !== "licdn.com" && !host.endsWith(".licdn.com")) return null;
+      const hosts = globalThis.AkuSourceAdapters?.get?.(source)?.mediaHosts ?? [];
+      if (!hosts.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) return null;
       url.hash = "";
       return url.href;
     } catch {

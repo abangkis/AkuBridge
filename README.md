@@ -1,13 +1,13 @@
 # AkuBridge
 
 Current preview identity: **`0.7.0-preview.1`** / Chrome manifest
-**`0.7.0.1`** / runtime **`source-fidelity-v60`**.
+**`0.7.0.1`** / runtime **`source-adapters-v61`**.
 
-AkuBridge is the read-only Chrome extension used by AkuBrowser to collect a bounded set of visible observations from X or LinkedIn.
+AkuBridge is the read-only Chrome extension used by AkuBrowser to collect a bounded set of visible observations from X, LinkedIn, or Facebook.
 
 ## Current source-adapter architecture
 
-X and LinkedIn DOM knowledge is separated behind one revisioned adapter
+X, LinkedIn, and Facebook DOM knowledge is separated behind one revisioned adapter
 registry. The adapters are source-specific parsers, but they do not construct
 or validate the complete bridge observation by themselves.
 
@@ -16,8 +16,10 @@ flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
     DOM --> XA["X adapter<br/>x-dom-v19<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
     DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v15<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
+    DOM --> FA["Facebook adapter<br/>facebook-dom-v1<br/>Home Feed v1"]
     XA --> R["Source-adapter registry"]
     LA --> R
+    FA --> R
     R --> F["Generic freshness recovery<br/>wake -> reveal -> proof"]
     F --> C["Shared content runtime"]
     C --> Q["Generic quality evaluator<br/>social-post-v1"]
@@ -122,10 +124,10 @@ Load this directory as an unpacked extension from `chrome://extensions` with
 Developer mode enabled. Manual installation is the supported
 `0.7.0-preview.1` distribution path on Windows and macOS; the preview does not
 claim silent local-CRX installation. It assumes Chrome is already signed in to
-X and LinkedIn. This manual step is required only for the initial bootstrap or
+every enabled source. This manual step is required only for the initial bootstrap or
 recovery when the installed extension cannot handle cooperative self-reload.
 
-The adapter foundation separates X and LinkedIn DOM knowledge into source adapters loaded behind a common registry. The content runtime owns bounded scrolling, restoration, evidence normalization, and messaging; each adapter owns source matching, candidate discovery, author discovery, media exclusions, and pending-content labels.
+The adapter foundation separates X, LinkedIn, and Facebook DOM knowledge into source adapters loaded behind a common registry and catalog. The content runtime owns bounded scrolling, restoration, evidence normalization, and messaging; each adapter owns source matching, candidate discovery, author discovery, media exclusions, and pending-content labels.
 
 `package:verify` validates Manifest V3 references, local module imports,
 product `version_name` alignment, and emits a SHA-256 file manifest plus
@@ -158,7 +160,7 @@ development. Cooperative reload preserves Chrome, source tabs, profile state,
 and login sessions.
 
 AkuBridge does not like, reply, follow, message, or post. For Catch Up, the
-default `quiet` policy creates or reuses canonical X and LinkedIn tabs in one
+default `quiet` policy creates or reuses canonical tabs for every active source in one
 dedicated Chrome window created with `focused: false`. Activating a tab inside
 that window does not authorize replacing the active tab in the user's working
 window. The managed binding is stored locally and revalidated after service
@@ -176,7 +178,7 @@ explicit bounded profiles may raise the contract to at most six scrolls and
 seven snapshots. Computer Use is not part of this native path.
 
 Every managed surface is owned through a bounded capture lease. Standalone
-runs use the run ID; both X and LinkedIn children of a unified check share the
+runs use the run ID; all source children of a unified check share the
 session ID so the window remains available between sources and closes only
 after the whole session is terminal. Release is idempotent and survives UI or
 service-worker restart through the stored binding. AkuBridge closes the whole

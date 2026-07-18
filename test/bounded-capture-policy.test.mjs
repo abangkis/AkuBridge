@@ -8,12 +8,15 @@ import { fileURLToPath } from "node:url";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function loadPolicy() {
-  const context = { URL };
+  const context = { URL, window: { location: { hostname: "x.com", pathname: "/home" } }, document: {} };
   context.globalThis = context;
-  vm.runInNewContext(
-    fs.readFileSync(path.join(projectRoot, "bounded-capture-policy.js"), "utf8"),
-    context,
-  );
+  for (const file of [
+    "bounded-capture-policy.js",
+    "source-adapter-runtime.js",
+    "adapters/x-adapter.js",
+    "adapters/linkedin-adapter.js",
+    "adapters/facebook-adapter.js",
+  ]) vm.runInNewContext(fs.readFileSync(path.join(projectRoot, file), "utf8"), context);
   return context.AkuBoundedCapturePolicy;
 }
 
@@ -315,6 +318,7 @@ test("the policy is loaded before the source content script", () => {
     "source-adapter-runtime.js",
     "adapters/x-adapter.js",
     "adapters/linkedin-adapter.js",
+    "adapters/facebook-adapter.js",
     "source-freshness-runtime.js",
     "media-acquisition-engine.js",
     "content-script.js",
@@ -323,10 +327,7 @@ test("the policy is loaded before the source content script", () => {
   const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
   assert.match(worker, /const SOURCE_SCRIPT_FILES = \[/);
   assert.match(worker, /"capture-quality-policy\.js"/);
-  assert.match(worker, /"linkedin-permalink-policy\.js"/);
-  assert.match(worker, /"linkedin-timestamp-policy\.js"/);
-  assert.match(worker, /"adapters\/x-adapter\.js"/);
-  assert.match(worker, /"adapters\/linkedin-adapter\.js"/);
+  assert.match(worker, /sourceRuntimeScripts\(\)/);
   assert.match(worker, /"source-freshness-runtime\.js"/);
   assert.match(worker, /"media-acquisition-engine\.js"/);
 });

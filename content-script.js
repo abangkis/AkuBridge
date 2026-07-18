@@ -1,8 +1,5 @@
 (() => {
-  const runtimeRevision = "source-fidelity-v60";
-  const LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000;
-  const LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS = 50;
-  const LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8;
+  const runtimeRevision = "source-adapters-v61";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -134,11 +131,13 @@
     if (!sourceMatchesPage(source)) {
       throw new Error(`The active source page does not match ${source}.`);
     }
-    const xMediaEvidenceRuntime = source === "x"
-      ? globalThis.AkuXMediaEvidenceRuntime
+    const structuredMediaPolicy = sourceAdapters.get(source).structuredMediaEvidence;
+    const structuredMediaRuntime = structuredMediaPolicy?.runtime?.() ?? null;
+    const structuredMediaPayload = structuredMediaPolicy?.payloadField
+      ? payload[structuredMediaPolicy.payloadField]
       : null;
-    const structuredMediaAcceptedCandidateCount = xMediaEvidenceRuntime?.ingestStructured?.(
-      payload.xStructuredMediaEvidence,
+    const structuredMediaAcceptedCandidateCount = structuredMediaRuntime?.ingestStructured?.(
+      structuredMediaPayload,
     ) ?? 0;
 
     const plan = capturePolicy.normalizeCapturePlan(payload);
@@ -202,7 +201,7 @@
           scrollContext,
           operationDeadlineAtMs,
           captureVisibilityMode,
-          xMediaEvidenceRuntime,
+          structuredMediaRuntime,
         );
         snapshot.index = index;
         if (index === 0 && plan.continuation) {
@@ -305,11 +304,12 @@
         },
         captureQuality,
         mediaAcquisition,
-        xStructuredMediaEvidence: source === "x" ? {
-          resolver: payload.xStructuredMediaEvidence?.diagnostics ?? null,
-          cache: xMediaEvidenceRuntime?.diagnostics?.() ?? null,
-          avatarCache: xMediaEvidenceRuntime?.avatarDiagnostics?.() ?? null,
-          responseObserver: xMediaEvidenceRuntime?.responseDiagnostics?.() ?? null,
+        structuredMediaEvidence: structuredMediaPolicy ? {
+          source,
+          resolver: structuredMediaPayload?.diagnostics ?? null,
+          cache: structuredMediaRuntime?.diagnostics?.() ?? null,
+          avatarCache: structuredMediaRuntime?.avatarDiagnostics?.() ?? null,
+          responseObserver: structuredMediaRuntime?.responseDiagnostics?.() ?? null,
           acceptedCandidateCount: structuredMediaAcceptedCandidateCount,
         } : null,
         sourceFreshness,
@@ -385,10 +385,10 @@
           `Media acquisition: ${mediaAcquisition.outcomes.recovered} recovered, ` +
             `${mediaAcquisition.outcomes.unavailable} unavailable, ${mediaAcquisition.attempts} bounded attempt(s), ` +
             `${mediaAcquisition.foregroundRequiredCount} foreground-required.`,
-          source === "x"
-            ? `X media evidence: ${structuredMediaAcceptedCandidateCount} structured candidate(s) accepted; ` +
-              `${xMediaEvidenceRuntime?.responseDiagnostics?.()?.acceptedCandidateCount ?? 0} response-backed media candidate(s) and ` +
-              `${xMediaEvidenceRuntime?.responseDiagnostics?.()?.acceptedAvatarCandidateCount ?? 0} response-backed avatar candidate(s) accepted into separate bounded caches.`
+          structuredMediaPolicy
+            ? `${structuredMediaPolicy.label}: ${structuredMediaAcceptedCandidateCount} structured candidate(s) accepted; ` +
+              `${structuredMediaRuntime?.responseDiagnostics?.()?.acceptedCandidateCount ?? 0} response-backed media candidate(s) and ` +
+              `${structuredMediaRuntime?.responseDiagnostics?.()?.acceptedAvatarCandidateCount ?? 0} response-backed avatar candidate(s) accepted into separate bounded caches.`
             : null,
           payload.tabAcquisition?.opened
             ? "AkuBridge opened one inactive canonical source tab for this initial acquisition."
@@ -469,18 +469,20 @@
     };
   }
 
-  async function hydratePersistentXAvatarEvidence(
+  async function hydratePersistentAvatarEvidence(
     containers,
     operationDeadlineAtMs,
-    xMediaEvidenceRuntime,
+    structuredMediaRuntime,
+    structuredMediaPolicy,
   ) {
     if (
       typeof chrome?.runtime?.sendMessage !== "function" ||
-      !xMediaEvidenceRuntime?.avatarKeysForContainer ||
-      !xMediaEvidenceRuntime?.ingestPersistentAvatarEvidence
+      !structuredMediaRuntime?.avatarKeysForContainer ||
+      !structuredMediaRuntime?.ingestPersistentAvatarEvidence ||
+      !structuredMediaPolicy?.persistentAvatarLookupMessage
     ) return 0;
     const keys = [...new Set((Array.isArray(containers) ? containers : [])
-      .flatMap((container) => xMediaEvidenceRuntime.avatarKeysForContainer(container)))]
+      .flatMap((container) => structuredMediaRuntime.avatarKeysForContainer(container)))]
       .slice(0, 48);
     if (keys.length === 0) return 0;
     const lookupBudgetMs = Math.min(250, Math.max(0, operationDeadlineAtMs - Date.now()));
@@ -488,13 +490,13 @@
     try {
       const response = await Promise.race([
         chrome.runtime.sendMessage({
-          type: "AKU_X_AVATAR_EVIDENCE_LOOKUP",
+          type: structuredMediaPolicy.persistentAvatarLookupMessage,
           keys,
         }),
         new Promise((resolve) => setTimeout(() => resolve(null), lookupBudgetMs)),
       ]);
       if (!response?.ok) return 0;
-      return xMediaEvidenceRuntime.ingestPersistentAvatarEvidence(response.evidence);
+      return structuredMediaRuntime.ingestPersistentAvatarEvidence(response.evidence);
     } catch {
       // Persistent avatar reuse is a best-effort fallback and never blocks capture.
       return 0;
@@ -507,7 +509,7 @@
     scrollContext,
     operationDeadlineAtMs,
     captureVisibilityMode,
-    xMediaEvidenceRuntime,
+    structuredMediaRuntime,
   ) {
     const capturedAt = new Date().toISOString();
     const discovery = discoverSourceCandidates(source);
@@ -515,33 +517,32 @@
     const containers = selectorCandidates.filter((element) =>
       isVisibleInViewport(element, scrollContext),
     );
-    const boundedContainers = containers.slice(
-      0,
-      source === "linkedin"
-        ? Math.min(payload.maxBlocksPerSnapshot, LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT)
-        : payload.maxBlocksPerSnapshot,
-    );
+    const adapter = sourceAdapters.get(source);
+    const boundedContainers = containers.slice(0, Math.min(
+      payload.maxBlocksPerSnapshot,
+      adapter.maxBlocksPerSnapshot ?? payload.maxBlocksPerSnapshot,
+    ));
     updateCaptureProgress("snapshot_candidates_ready", {
       source,
       visibleContainerCount: containers.length,
       boundedContainerCount: boundedContainers.length,
     });
 
-    if (source === "x") {
-      await hydratePersistentXAvatarEvidence(
+    if (structuredMediaRuntime) {
+      await hydratePersistentAvatarEvidence(
         boundedContainers,
         operationDeadlineAtMs,
-        xMediaEvidenceRuntime,
+        structuredMediaRuntime,
+        sourceAdapters.get(source).structuredMediaEvidence,
       );
     }
 
     updateCaptureProgress("permalink_recovery_started", { source });
-    const recoveredPermalinks = source === "linkedin"
-      ? await recoverLinkedInPermalinks(
-          boundedContainers,
-          operationDeadlineAtMs,
-        )
-      : new WeakMap();
+    const recoveredPermalinks = await (adapter.recoverPermalinks?.(
+      boundedContainers,
+      operationDeadlineAtMs,
+      { findPermalinkDetails, waitForValue, isVisibleInViewport },
+    ) ?? new WeakMap());
     updateCaptureProgress("permalink_recovery_completed", { source });
 
     const blocks = [];
@@ -590,7 +591,7 @@
             (issue) => issue.field === "media" && issue.recoverable === true,
           );
           if (mediaIssue) {
-            const quotedRoot = source === "x" ? findXQuotedPostContainer(container) : null;
+            const quotedRoot = sourceAdapters.get(source).findQuotedRoot?.(container) ?? null;
             mediaRecovery = await mediaAcquisitionEngine.acquire({
               source,
               container,
@@ -648,7 +649,7 @@
           mediaRecovery = await mediaAcquisitionEngine.acquire({
             source,
             container,
-            excludeRoot: source === "x" ? findXQuotedPostContainer(container) : null,
+            excludeRoot: sourceAdapters.get(source).findQuotedRoot?.(container) ?? null,
             initialMedia: block.media,
             mediaRootDetected: captureQuality.issues.some((issue) => issue.field === "media"),
             attemptsAvailable: 0,
@@ -697,7 +698,7 @@
   ) {
     const adapter = sourceAdapters.get(source);
     const selectors = adapter.qualitySelectors ?? {};
-    const quotedRoot = source === "x" ? findXQuotedPostContainer(container) : null;
+    const quotedRoot = adapter.findQuotedRoot?.(container) ?? null;
     const facts = {
       contentRootDetected: selectorDetectedOutside(container, selectors.content, quotedRoot),
       authorRootDetected: selectorDetectedOutside(container, selectors.author, quotedRoot),
@@ -794,11 +795,8 @@
       normalizeHttpsUrl,
     }) ?? [];
     const nativePublishedAt = normalizeDate(time?.getAttribute("datetime"));
-    const relativeTimestamp = source === "linkedin" && !nativePublishedAt
-      ? globalThis.AkuLinkedInTimestampPolicy?.estimateFromRelativeText(
-          presentation.timestampText,
-          capturedAt,
-        ) ?? null
+    const relativeTimestamp = !nativePublishedAt
+      ? adapter.estimateRelativeTimestamp?.(presentation.timestampText, capturedAt) ?? null
       : null;
     presentation.timestampSource = nativePublishedAt
       ? "native_datetime"
@@ -810,7 +808,7 @@
     presentation.timestampEstimated = Boolean(relativeTimestamp);
     presentation.timestampPrecision = relativeTimestamp?.precision
       ?? (nativePublishedAt ? "exact" : "unknown");
-    const quotedRoot = source === "x" ? findXQuotedPostContainer(container) : null;
+    const quotedRoot = adapter.findQuotedRoot?.(container) ?? null;
     const quotedPost = normalizeQuotedPost(adapter.extractQuotedPost?.(container, {
       compactText,
       normalizeHttpUrl,
@@ -820,7 +818,7 @@
     presentation.permalinkSource = directPermalink?.source ?? recoveredPermalink?.source ?? "unavailable";
     presentation.permalinkReason = permalink
       ? ""
-      : recoveredPermalink?.reason ?? "No post permalink or recoverable LinkedIn target URN was exposed.";
+      : recoveredPermalink?.reason ?? "No stable native post permalink was exposed by this source.";
     presentation.contentExpansion = contentExpansion?.state ?? "not_applicable";
     const contentRoot = findContentRoot(container, source);
     const media = findMedia(container, source, { excludeRoot: quotedRoot });
@@ -876,77 +874,15 @@
     };
   }
 
-  async function recoverLinkedInPermalinks(containers, operationDeadlineAtMs) {
-    const recovered = new WeakMap();
-    const deadlineAtMs = Math.min(
-      Date.now() + LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS,
-      operationDeadlineAtMs,
-    );
-    for (const container of containers) {
-      if (findPermalinkDetails(container, "linkedin", container.querySelector("time"))) continue;
-      const remainingMs = deadlineAtMs - Date.now();
-      if (remainingMs <= 0) {
-        recovered.set(container, {
-          url: null,
-          source: "unavailable",
-          reason: "LinkedIn permalink recovery budget was exhausted for this snapshot.",
-        });
-        continue;
-      }
-      const menuButton = container.querySelector(
-        'button[aria-label^="Open control menu for post by"]',
-      );
-      if (!menuButton) {
-        recovered.set(container, { url: null, source: "unavailable", reason: "Post control menu was not exposed." });
-        continue;
-      }
-      const previouslyVisible = new Set(visibleLinkedInPermalinkEvidence().map((entry) => entry.href));
-      let opened = false;
-      try {
-        menuButton.click();
-        opened = true;
-        const evidence = await waitForValue(
-          () => visibleLinkedInPermalinkEvidence().find((entry) => !previouslyVisible.has(entry.href))
-            ?? visibleLinkedInPermalinkEvidence()[0]
-            ?? null,
-          Math.max(1, Math.ceil(remainingMs / LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS)),
-          LINKEDIN_PERMALINK_RECOVERY_INTERVAL_MS,
-        );
-        const canonical = evidence?.url ?? null;
-        recovered.set(container, canonical
-          ? { url: canonical, source: evidence.source, reason: "" }
-          : { url: null, source: "unavailable", reason: "No stable post URN was exposed after opening the post menu." });
-      } finally {
-        if (opened) {
-          menuButton.click();
-          await waitForValue(
-            () => visibleLinkedInPermalinkEvidence().length === 0 ? true : null,
-            4,
-            25,
-          );
-        }
-      }
-    }
-    return recovered;
-  }
-
-  function visibleLinkedInPermalinkEvidence() {
-    return [...document.querySelectorAll('[role="menu"] a[href], [role="menu"] [role="menuitem"][href]')]
-      .filter((link) => isVisibleInViewport(link))
-      .map((link) => ({
-        href: link.href,
-        url: globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEvidence(link.href) ?? null,
-        source: /\/preload\/embed-modal\//i.test(link.pathname) ? "embed_urn" : "menu_urn",
-      }))
-      .filter((entry) => entry.url);
-  }
-
   async function expandSourceContent(container, source) {
-    if (source === "x") return expandXSourceContent(container);
-    if (source !== "linkedin") return { state: "not_applicable" };
+    const policy = sourceAdapters.get(source).contentExpansion;
+    if (!policy) return { state: "not_applicable" };
     const contentRoot = findContentRoot(container, source);
-    const button = contentRoot.querySelector('[data-testid="expandable-text-button"]')
-      ?? container.querySelector('[data-testid="expandable-text-button"]');
+    const button = [...container.querySelectorAll(policy.buttonSelector)]
+      .find((candidate) => isExpansionControlLabel(
+        compactText(candidate?.innerText || candidate?.textContent),
+        "more",
+      ));
     const label = compactText(button?.innerText || button?.textContent);
     if (!button || !isExpansionControlLabel(label, "more")) {
       return { state: "already_complete" };
@@ -956,33 +892,13 @@
     const expanded = await waitForValue(() => {
       const current = cleanExpandedText(contentRoot.innerText);
       const currentLabel = compactText(button.innerText || button.textContent);
-      return current.length > before.length || isExpansionControlLabel(currentLabel, "less")
+      return current.length > before.length || policy.restorable && isExpansionControlLabel(currentLabel, "less")
         ? current
         : null;
-    }, 10, 40);
+    }, policy.attempts, policy.intervalMs);
     return {
-      state: expanded ? "expanded" : "expand_failed",
-      button,
-      contentRoot,
-      before,
-      expanded: Boolean(expanded),
-    };
-  }
-
-  async function expandXSourceContent(container) {
-    const contentRoot = findContentRoot(container, "x");
-    const button = container.querySelector('[data-testid="tweet-text-show-more-link"]');
-    if (!button) return { state: "already_complete" };
-    const before = cleanExpandedText(contentRoot.innerText);
-    button.click();
-    const expanded = await waitForValue(() => {
-      const current = cleanExpandedText(contentRoot.innerText);
-      return current.length > before.length && !container.querySelector(
-        '[data-testid="tweet-text-show-more-link"]',
-      ) ? current : null;
-    }, 12, 40);
-    return {
-      state: expanded ? "expanded_no_restore_control" : "expand_failed",
+      state: expanded ? policy.restorable ? "expanded" : "expanded_no_restore_control" : "expand_failed",
+      button: policy.restorable ? button : null,
       contentRoot,
       before,
       expanded: Boolean(expanded),
@@ -1025,29 +941,19 @@
 
 
   function findAvatar(container, source) {
-    const adapterAvatar = sourceAdapters.get(source).findAvatar?.(container, {
+    const adapter = sourceAdapters.get(source);
+    const adapterAvatar = adapter.findAvatar?.(container, {
       compactText,
       normalizeHttpUrl,
     });
     if (normalizeHttpUrl(adapterAvatar)) return normalizeHttpUrl(adapterAvatar);
-    const selectors = source === "x"
-      ? ['[data-testid="Tweet-User-Avatar"] img', '[data-testid^="UserAvatar-Container-"] img']
-      : [
-          ".update-components-actor__avatar-image",
-          ".feed-shared-actor__avatar-image",
-          '[data-view-name="feed-actor-image"] img',
-          '.update-components-actor img',
-          '.feed-shared-actor img',
-        ];
-    for (const selector of selectors) {
+    for (const selector of adapter.avatarFallbackSelectors ?? []) {
       const image = container.querySelector(selector);
       const url = normalizeHttpUrl(readImageUrl(image));
       if (url) return url;
     }
-    if (source === "x") {
-      const avatarRoots = container.querySelectorAll(
-        '[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"]',
-      );
+    if (adapter.avatarBackgroundSelectors?.length) {
+      const avatarRoots = container.querySelectorAll(adapter.avatarBackgroundSelectors.join(", "));
       for (const avatarRoot of avatarRoots) {
         const url = renderedBackgroundUrl(avatarRoot);
         if (url) return url;
@@ -1057,7 +963,9 @@
   }
 
   function summarizeVisualHydration(source, candidates) {
-    if (source !== "x") {
+    const adapter = sourceAdapters.get(source);
+    const visualHydration = adapter.visualHydration;
+    if (!visualHydration) {
       return {
         visualHydrationRequired: false,
         visualHydrationReady: true,
@@ -1072,9 +980,7 @@
     let mediaContainerCount = 0;
     let hydratedMediaContainerCount = 0;
     for (const container of candidates.slice(0, 20)) {
-      const avatarRoot = container.querySelector(
-        '[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"]',
-      );
+      const avatarRoot = container.querySelector(visualHydration.avatarRootSelector);
       if (avatarRoot) {
         primaryAvatarContainerCount += 1;
         const imageUrl = readImageUrl(avatarRoot.querySelector("img"));
@@ -1105,29 +1011,27 @@
   function findMedia(container, source, { excludeRoot = null } = {}) {
     const candidates = [];
     const adapter = sourceAdapters.get(source);
+    const rendering = adapter.mediaRendering ?? {};
     for (const image of container.querySelectorAll(adapter.imageSelector ?? "img")) {
       if (excludeRoot?.contains?.(image)) continue;
       if (adapter.shouldSkipImage?.(image)) continue;
       const rect = image.getBoundingClientRect();
-      const trustedRoot = source === "x" && adapter.qualitySelectors?.media
-        ? image.closest(adapter.qualitySelectors.media)
+      const trustedRoot = rendering.trustedRootSelector
+        ? image.closest(rendering.trustedRootSelector)
         : null;
       const trustedRect = trustedRoot?.getBoundingClientRect?.() ?? {};
-      const videoRoot = source === "x" ? image.closest(
-        '[data-testid="previewInterstitial"], [data-testid="videoPlayer"], '
-          + '[data-testid="videoComponent"], [aria-label*="Video" i]',
-      ) : null;
+      const videoRoot = rendering.videoRootSelector ? image.closest(rendering.videoRootSelector) : null;
       const imageCandidate = readImageCandidate(image);
       const imageUrl = imageCandidate?.url ?? null;
       candidates.push({
         kind: videoRoot
           ? "video"
-          : source === "x" && /embedded video/i.test(image.alt || "")
+          : rendering.embeddedVideoPattern?.test(image.alt || "")
             ? "video"
           : "image",
         url: imageUrl,
         posterUrl: imageUrl,
-        playbackMode: source === "x" && (videoRoot || /embedded video/i.test(image.alt || ""))
+        playbackMode: videoRoot || rendering.embeddedVideoPattern?.test(image.alt || "")
           ? "native"
           : undefined,
         alt: image.alt || "",
@@ -1144,7 +1048,7 @@
         video.currentSrc,
         video.src,
         ...[...video.querySelectorAll("source[src]")].map((sourceElement) => sourceElement.src),
-      ].find((value) => /^https:\/\/video\.twimg\.com\//i.test(value ?? ""));
+      ].find((value) => /^https:\/\//i.test(value ?? ""));
       const posterUrl = [
         video.poster,
         video.getAttribute("poster"),
@@ -1159,64 +1063,23 @@
         alt: video.getAttribute("aria-label") || "Video preview",
         width: rect.width || video.videoWidth,
         height: rect.height || video.videoHeight,
-        trustedMediaRoot: source === "x",
+        trustedMediaRoot: rendering.trustedVideo === true,
         urlSource: video.poster || video.getAttribute("poster") ? "poster" : "css_background",
       });
     }
-    if (source === "x") {
-      const photoBackgrounds = container.querySelectorAll(
-        '[data-testid="tweetPhoto"] [style*="background-image"]',
-      );
-      for (const element of photoBackgrounds) {
+    for (const group of rendering.backgroundGroups ?? []) {
+      for (const element of container.querySelectorAll(group.selector)) {
         if (excludeRoot?.contains?.(element)) continue;
         const rect = element.getBoundingClientRect();
         const url = capturePolicy.mediaUrlFromCssBackground(
           element.style.backgroundImage || getComputedStyle(element).backgroundImage,
         );
         candidates.push({
-          kind: "image",
+          kind: group.kind,
           url,
-          alt: element.closest('[data-testid="tweetPhoto"]')?.getAttribute("aria-label") || "Image",
-          width: rect.width,
-          height: rect.height,
-          trustedMediaRoot: true,
-          urlSource: "css_background",
-        });
-      }
-      const linkCardBackgrounds = container.querySelectorAll(
-        'a[aria-label][href] [style*="/card_img/"]',
-      );
-      for (const element of linkCardBackgrounds) {
-        if (excludeRoot?.contains?.(element)) continue;
-        const rect = element.getBoundingClientRect();
-        const url = capturePolicy.mediaUrlFromCssBackground(
-          element.style.backgroundImage || getComputedStyle(element).backgroundImage,
-        );
-        candidates.push({
-          kind: "image",
-          url,
-          alt: element.closest('a[aria-label][href]')?.getAttribute("aria-label") || "Link preview",
-          width: rect.width,
-          height: rect.height,
-          trustedMediaRoot: true,
-          urlSource: "css_background",
-        });
-      }
-      const videoRoots = container.querySelectorAll([
-        '[data-testid="videoPlayer"]',
-        '[data-testid="videoComponent"]',
-        '[aria-label*="Video" i]',
-      ].join(","));
-      for (const videoRoot of videoRoots) {
-        if (excludeRoot?.contains?.(videoRoot)) continue;
-        const rect = videoRoot.getBoundingClientRect();
-        const posterUrl = renderedBackgroundUrl(videoRoot);
-        candidates.push({
-          kind: "video",
-          url: posterUrl,
-          posterUrl,
-          playbackMode: "native",
-          alt: videoRoot.getAttribute("aria-label") || "Video preview",
+          posterUrl: group.kind === "video" ? url : undefined,
+          playbackMode: group.kind === "video" ? "native" : undefined,
+          alt: (group.closestSelector ? element.closest(group.closestSelector) : element)?.getAttribute("aria-label") || group.fallbackAlt,
           width: rect.width,
           height: rect.height,
           trustedMediaRoot: true,
@@ -1232,32 +1095,18 @@
   }
 
   function findPermalinkDetails(container, source, time) {
+    const adapter = sourceAdapters.get(source);
     const timedLink = time?.closest("a[href]")?.href;
     if (normalizeHttpUrl(timedLink)) return { url: normalizeHttpUrl(timedLink), source: "time_anchor" };
+    const specialized = adapter.findPermalinkDetails?.(container, { normalizeHttpUrl, time });
+    if (specialized?.url) return specialized;
     const anchors = [...container.querySelectorAll("a[href]")];
-    const match = anchors.find((anchor) =>
-      source === "x"
-        ? /\/status\/\d+/.test(anchor.pathname)
-        : /\/feed\/update\//.test(anchor.pathname) || /activity-\d+/.test(anchor.href),
-    );
+    const match = anchors.find((anchor) => (adapter.permalinkPatterns ?? []).some(
+      (pattern) => pattern.test(anchor.pathname) || pattern.test(anchor.href),
+    ));
     const linkedUrl = normalizeHttpUrl(match?.href);
-    if (linkedUrl || source !== "linkedin") {
-      return linkedUrl ? { url: linkedUrl, source: "direct_anchor" } : null;
-    }
-    const domEvidence = [
-      container.getAttribute("data-urn"),
-      container.getAttribute("data-id"),
-      ...[...container.querySelectorAll("[data-urn], [data-id]")]
-        .slice(0, 20)
-        .flatMap((element) => [element.getAttribute("data-urn"), element.getAttribute("data-id")]),
-    ].filter(Boolean).map((value) => {
-      const canonical = globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEvidence(String(value));
-      if (canonical) return canonical;
-      const activityId = String(value).match(/activity(?::|-)(\d+)/i)?.[1];
-      return activityId
-        ? `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/`
-        : null;
-    }).find(Boolean);
+    if (linkedUrl) return { url: linkedUrl, source: "direct_anchor" };
+    const domEvidence = adapter.findDomPermalink?.(container) ?? null;
     return domEvidence
       ? { url: domEvidence, source: "dom_urn" }
       : null;
@@ -1297,7 +1146,8 @@
   }
 
   function getScrollContext(source, knownCandidates = null) {
-    if (source !== "linkedin") return window;
+    const adapter = sourceAdapters.get(source);
+    if (adapter.scrollContext !== "nearest_scrollable") return window;
 
     const candidates = knownCandidates ?? discoverSourceCandidates(source).candidates;
     for (const candidate of candidates.slice(0, 5)) {
@@ -1305,13 +1155,13 @@
       if (ancestor) return ancestor;
     }
 
-    let element = document.querySelector('[data-testid="mainFeed"]') || document.querySelector("main");
-    while (element) {
-      if (isScrollableElement(element)) return element;
-      element = element.parentElement;
+    for (const selector of adapter.scrollRootSelectors ?? []) {
+      let element = document.querySelector(selector);
+      while (element) {
+        if (isScrollableElement(element)) return element;
+        element = element.parentElement;
+      }
     }
-    const workspace = document.querySelector("#workspace");
-    if (isScrollableElement(workspace)) return workspace;
     return window;
   }
 
@@ -1565,17 +1415,6 @@
       const backgroundImage = element.style?.backgroundImage || getComputedStyle(element).backgroundImage;
       const url = normalizeHttpUrl(capturePolicy.mediaUrlFromCssBackground(backgroundImage));
       if (url) return url;
-    }
-    return null;
-  }
-
-  function findXQuotedPostContainer(container) {
-    const explicit = container.querySelector('[data-testid="quoteTweet"]');
-    if (explicit) return explicit;
-    const textRoots = [...container.querySelectorAll('[data-testid="tweetText"]')];
-    for (const textRoot of textRoots.slice(1)) {
-      const quoted = textRoot.closest?.('[role="link"]');
-      if (quoted && quoted !== container) return quoted;
     }
     return null;
   }

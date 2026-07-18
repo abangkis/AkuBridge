@@ -25,6 +25,14 @@ import {
 import { resolveXStructuredMediaInMainWorld } from "./x-main-world-media-resolver.js";
 import { createXMediaEvidenceStore } from "./x-media-evidence-store.js";
 import { createXAvatarEvidenceStore } from "./x-avatar-evidence-store.js";
+import {
+  isNativePostUrl,
+  matchPatternsFor,
+  sourceRuntimeScripts,
+  sourceDefinition,
+  sourceForUrl,
+  sourceRequiresVisualHydration,
+} from "./source-catalog.js";
 
 const AKU_BROWSER_ORIGIN = "http://127.0.0.1:11122";
 const CAPTURE_DELAY_MAX_MS = 2_000;
@@ -34,15 +42,14 @@ const commandGuard = createCommandGuard();
 const managedCaptureWindow = createManagedCaptureWindowRuntime(chrome);
 const xMediaEvidenceStore = createXMediaEvidenceStore(chrome.storage.local);
 const xAvatarEvidenceStore = createXAvatarEvidenceStore(chrome.storage.local);
+const structuredMediaCollectors = new Map([
+  ["x_response", collectXStructuredMediaEvidence],
+]);
 const SOURCE_SCRIPT_FILES = [
-  "x-media-evidence-runtime.js",
   "bounded-capture-policy.js",
   "capture-quality-policy.js",
-  "linkedin-permalink-policy.js",
-  "linkedin-timestamp-policy.js",
   "source-adapter-runtime.js",
-  "adapters/x-adapter.js",
-  "adapters/linkedin-adapter.js",
+  ...sourceRuntimeScripts(),
   "source-freshness-runtime.js",
   "media-acquisition-engine.js",
   "content-script.js",
@@ -165,24 +172,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 function isTrustedSourceContentSender(sender) {
   if (!Number.isInteger(sender.tab?.id) || typeof sender.url !== "string") return false;
-  try {
-    const url = new URL(sender.url);
-    return url.protocol === "https:" && (
-      url.hostname === "x.com" ||
-      url.hostname === "www.linkedin.com"
-    );
-  } catch {
-    return false;
-  }
+  return sourceForUrl(sender.url) !== null;
 }
 
 function isTrustedXSourceContentSender(sender) {
   if (!isTrustedSourceContentSender(sender)) return false;
-  try {
-    return new URL(sender.url).hostname === "x.com";
-  } catch {
-    return false;
-  }
+  return sourceDefinition(sourceForUrl(sender.url))?.structuredMediaCollector === "x_response";
 }
 
 async function acceptReloadSelf(message, akuBrowserTabId) {
@@ -383,13 +378,17 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
     probe: () => probeSourceFreshness(prepared.tab.id, command.payload.source),
     reveal: () => revealPendingSourceContent(prepared.tab.id, command.payload),
   });
-  const xStructuredMediaEvidence = command.payload.source === "x"
-    ? await collectXStructuredMediaEvidence(prepared.tab.id)
+  const sourcePolicy = sourceDefinition(command.payload.source);
+  const structuredCollector = structuredMediaCollectors.get(sourcePolicy?.structuredMediaCollector);
+  const structuredMediaEvidence = structuredCollector
+    ? await structuredCollector(prepared.tab.id)
     : null;
   const payload = {
     ...command.payload,
     sourceFreshness,
-    xStructuredMediaEvidence,
+    ...(sourcePolicy?.structuredMediaPayloadField
+      ? { [sourcePolicy.structuredMediaPayloadField]: structuredMediaEvidence }
+      : {}),
     sourceReadiness: prepared.readiness,
     tabAcquisition: {
       opened: prepared.opened,
@@ -552,7 +551,7 @@ async function findOrOpenSourceTab(
     }
   }
 
-  const patterns = source === "x" ? ["https://x.com/*"] : ["https://www.linkedin.com/*"];
+  const patterns = matchPatternsFor(source);
   const tabs = await chrome.tabs.query({ url: patterns });
   const selected = chooseSourceTab(tabs, { source, mode });
   let tab = selected;
@@ -585,10 +584,7 @@ async function findOrOpenSourceTab(
 
 function assertRecaptureTarget(source, rawUrl) {
   const url = new URL(rawUrl);
-  const xPost = source === "x" && url.protocol === "https:" && url.hostname === "x.com" && url.pathname.includes("/status/");
-  const linkedInPost = source === "linkedin" && url.protocol === "https:" && url.hostname === "www.linkedin.com" &&
-    (url.pathname.includes("/posts/") || url.pathname.includes("/feed/update/"));
-  if (!xPost && !linkedInPost) throw new Error("Media recapture target is not a supported native post URL.");
+  if (!isNativePostUrl(url.href, source)) throw new Error("Media recapture target is not a supported native post URL.");
   url.hash = "";
   return url.href;
 }
@@ -598,7 +594,7 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
   const startedAt = Date.now();
   const backgroundAtDispatch = tab.active !== true;
   let activatedForReadiness = false;
-  const requireVisualHydration = options.requireVisualHydration ?? source === "x";
+  const requireVisualHydration = options.requireVisualHydration ?? sourceRequiresVisualHydration(source);
   let previousActiveTabId = null;
   const activate = async () => {
     if (previousActiveTabId === null) {
@@ -613,28 +609,28 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
     return false;
   };
   let readiness;
-  if (source === "x" && backgroundAtDispatch) {
-    // X defers image and video hydration while a feed tab remains in the
-    // background. An initial post without media can otherwise make the
-    // readiness probe look complete while later scrolled posts lose media.
+  const readinessPolicy = sourceDefinition(source)?.readiness ?? {};
+  if (readinessPolicy.activateWhenBackground === true && backgroundAtDispatch) {
+    // Some sources defer visual hydration while the feed remains in a
+    // background tab. The source catalog owns that capability declaration.
     await activate();
     readiness = await waitForSourceReady(
       tab.id,
       source,
-      12_000,
+      readinessPolicy.initialTimeoutMs ?? 12_000,
       { requireVisualHydration },
     );
   } else {
     readiness = await waitForSourceReady(
       tab.id,
       source,
-      source === "linkedin" ? 3_000 : 12_000,
+      readinessPolicy.initialTimeoutMs ?? 12_000,
       { requireVisualHydration },
     );
   }
-  if (source === "linkedin" && readiness.state !== "feed_ready") {
+  if (readinessPolicy.retryAfterActivationMs && readiness.state !== "feed_ready") {
     await activate();
-    readiness = await waitForSourceReady(tab.id, source, 15_000);
+    readiness = await waitForSourceReady(tab.id, source, readinessPolicy.retryAfterActivationMs);
   }
   readiness.waitMs = Date.now() - startedAt;
   const captureReady = isSourceCaptureReady(readiness);
@@ -819,7 +815,7 @@ async function restoreTabFocus(previousActiveTabId, sourceTabId) {
 }
 
 function sourceLabel(source) {
-  return source === "linkedin" ? "LinkedIn" : "X";
+  return sourceDefinition(source)?.displayName ?? source;
 }
 
 function delay(milliseconds) {

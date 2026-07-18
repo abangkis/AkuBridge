@@ -20,6 +20,8 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:11122/*",
+    "https://facebook.com/*",
+    "https://www.facebook.com/*",
     "https://www.linkedin.com/*",
     "https://x.com/*",
   ]);
@@ -32,6 +34,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     "source-adapter-runtime.js",
     "adapters/x-adapter.js",
     "adapters/linkedin-adapter.js",
+    "adapters/facebook-adapter.js",
     "aku-browser-tab-bridge.js",
     "x-media-evidence-runtime.js",
     "x-media-evidence-store.js",
@@ -77,16 +80,16 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-fidelity-v60/);
+  assert.match(contentScript, /source-adapters-v61/);
   assert.match(contentScript, /relative_text_estimate/);
   assert.match(contentScript, /not_exposed_promoted/);
-  assert.match(contentScript, /LINKEDIN_PERMALINK_RECOVERY_BUDGET_MS = 2_000/);
+  assert.match(linkedInAdapter, /recoverLinkedInPermalinks/);
   assert.match(contentScript, /CAPTURE_DEADLINE_RESERVE_MS = 2_000/);
-  assert.match(contentScript, /LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT = 8/);
-  assert.match(contentScript, /Math\.min\(payload\.maxBlocksPerSnapshot, LINKEDIN_MAX_BLOCKS_PER_SNAPSHOT\)/);
+  assert.match(linkedInAdapter, /maxBlocksPerSnapshot: 8/);
+  assert.match(contentScript, /adapter\.maxBlocksPerSnapshot \?\? payload\.maxBlocksPerSnapshot/);
   assert.match(contentScript, /plan\.captureTimeoutMs - CAPTURE_DEADLINE_RESERVE_MS/);
-  assert.match(contentScript, /const deadlineAtMs = Math\.min\(/);
-  assert.match(contentScript, /LinkedIn permalink recovery budget was exhausted for this snapshot/);
+  assert.match(linkedInAdapter, /const deadlineAtMs = Math\.min\(/);
+  assert.match(linkedInAdapter, /LinkedIn permalink recovery budget was exhausted for this snapshot/);
   assert.match(contentScript, /adapterRuntimeRevision/);
   assert.match(contentScript, /adapterVersion: sourceAdapters\.get\(source\)\.version/);
   assert.match(contentScript, /AKU_BROWSER_CAPTURE_DIAGNOSTICS/);
@@ -97,25 +100,25 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /await delay\(Math\.min\(intervalMs, remainingMs\)\)/);
   assert.match(contentScript, /return read\(\) \|\| null/);
   assert.match(xAdapter, /img\[src\*="\/card_img\/"\]/);
-  assert.match(contentScript, /style\*="\/card_img\/"/);
-  assert.match(contentScript, /tweetPhoto.*background-image/);
-  assert.match(contentScript, /UserAvatar-Container-/);
+  assert.match(xAdapter, /style\*="\/card_img\/"/);
+  assert.match(xAdapter, /tweetPhoto.*background-image/);
+  assert.match(xAdapter, /UserAvatar-Container-/);
   assert.match(contentScript, /renderedBackgroundUrl\(avatarRoot\)/);
-  assert.match(contentScript, /tweet-text-show-more-link/);
+  assert.match(xAdapter, /tweet-text-show-more-link/);
   assert.match(contentScript, /expanded_no_restore_control/);
-  assert.match(contentScript, /expandable-text-button/);
+  assert.match(linkedInAdapter, /expandable-text-button/);
   assert.match(contentScript, /contentExpansion/);
   assert.match(linkedInAdapter, /contentRootSelector/);
   assert.match(contentScript, /removeListener/);
   assert.match(contentScript, /querySelectorAll\("video"\)/);
   assert.match(contentScript, /renderedBackgroundUrl/);
-  assert.match(contentScript, /videoPlayer/);
+  assert.match(xAdapter, /videoPlayer/);
   assert.match(contentScript, /structuredText/);
   assert.match(contentScript, /summarizeVisualHydration/);
   assert.match(contentScript, /hydratedPrimaryAvatarCount/);
   assert.match(xAdapter, /\[aria-label\*="Video" i\]/);
   assert.match(contentScript, /excludeRoot/);
-  assert.match(contentScript, /findXQuotedPostContainer/);
+  assert.match(xAdapter, /findQuotedRoot: findQuotedPostContainer/);
   assert.doesNotMatch(contentScript, /container\.querySelectorAll\("img"\).*profile_images/s);
   assert.match(contentScript, /media\.some\(\(entry\) => entry\.kind === "video"\)/);
   assert.match(xAdapter, /videoComponent.*img/);
@@ -153,7 +156,7 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
     "utf8",
   );
 
-  assert.match(contentScript, /document\.querySelector\("#workspace"\)/);
+  assert.match(linkedInAdapter, /"#workspace"/);
   assert.match(contentScript, /isScrollableElement/);
   assert.match(contentScript, /nearestScrollableAncestor/);
   assert.match(contentScript, /scrollContext\.scrollTop \+= top/);
@@ -185,13 +188,13 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
   assert.match(contentScript, /const captureVisibilityMode =\s*payload\.tabAcquisition\?\.captureVisibilityMode \?\? "same_window"/);
   assert.match(
     contentScript,
-    /operationDeadlineAtMs,\s*captureVisibilityMode,\s*xMediaEvidenceRuntime,\s*\);/,
+    /operationDeadlineAtMs,\s*captureVisibilityMode,\s*structuredMediaRuntime,\s*\);/,
   );
   assert.doesNotMatch(contentScript, /captureVisibilityMode: payload\.tabAcquisition/);
   assert.match(contentScript, /fallbackUsed: mediaAcquisition\.outcomes\.recovered > 0/);
   assert.match(contentScript, /restorationScope: feedMutation \? "post_reveal_start"/);
   assert.equal(freshnessRuntime.match(/signal\.element\.click\(\)/g)?.length, 1);
-  assert.equal(contentScript.match(/menuButton\.click\(\)/g)?.length, 2);
+  assert.equal(linkedInAdapter.match(/menuButton\.click\(\)/g)?.length, 2);
   assert.doesNotMatch(contentScript, /(?:like|comment|repost|send)Button\.click\(\)/i);
 });
 
@@ -223,12 +226,12 @@ test("background X capture activates for the full bounded capture so scrolled me
     path.join(projectRoot, "capture-surface-telemetry.js"),
     "utf8",
   );
-  assert.match(worker, /source === "x" && backgroundAtDispatch/);
+  assert.match(worker, /readinessPolicy\.activateWhenBackground === true && backgroundAtDispatch/);
   assert.match(
     worker,
-    /if \(source === "x" && backgroundAtDispatch\) \{[\s\S]*?await activate\(\);[\s\S]*?waitForSourceReady\([\s\S]*?\{ requireVisualHydration \}/,
+    /if \(readinessPolicy\.activateWhenBackground === true && backgroundAtDispatch\) \{[\s\S]*?await activate\(\);[\s\S]*?waitForSourceReady\([\s\S]*?\{ requireVisualHydration \}/,
   );
-  assert.match(worker, /const requireVisualHydration = options\.requireVisualHydration \?\? source === "x"/);
+  assert.match(worker, /const requireVisualHydration = options\.requireVisualHydration \?\? sourceRequiresVisualHydration\(source\)/);
   assert.match(worker, /requireVisualHydration: !targetUrl \|\| visibilityPlan\.foregroundAuthorized/);
   assert.match(worker, /function isSourceCaptureReady\(readiness\) \{\s*return readiness\.state === "feed_ready";/);
   assert.match(worker, /restoreTabFocus/);
@@ -261,10 +264,10 @@ test("X media enrichment stays passive, bounded, and media-only", () => {
   assert.match(worker, /AKU_X_MEDIA_EVIDENCE_OBSERVED/);
   assert.match(worker, /AKU_X_AVATAR_EVIDENCE_OBSERVED/);
   assert.match(worker, /AKU_X_AVATAR_EVIDENCE_LOOKUP/);
-  assert.match(contentScript, /hydratePersistentXAvatarEvidence/);
+  assert.match(contentScript, /hydratePersistentAvatarEvidence/);
   assert.match(
     contentScript,
-    /hydratePersistentXAvatarEvidence\(\s*boundedContainers,\s*operationDeadlineAtMs,\s*xMediaEvidenceRuntime,\s*\)/,
+    /hydratePersistentAvatarEvidence\(\s*boundedContainers,\s*operationDeadlineAtMs,\s*structuredMediaRuntime,/,
   );
   assert.match(tabBridge, /AKU_BROWSER_X_MEDIA_EVIDENCE_LOOKUP/);
   assert.match(evidenceRuntime, /maxCandidates: 128/);
@@ -306,10 +309,10 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /capabilities: response\.capabilities/);
   const capabilities = createBridgeCapabilities({ version: "0.7.0.1", version_name: "0.7.0-preview.1", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.7.0-preview.1");
-  assert.equal(capabilities.runtimeRevision, "source-fidelity-v60");
-  assert.equal(capabilities.buildId, "aku-bridge-0.7.0-preview.1-source-fidelity-v60");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v61");
+  assert.equal(capabilities.buildId, "aku-bridge-0.7.0-preview.1-source-adapters-v61");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v19", linkedin: "linkedin-dom-v15" });
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v19", linkedin: "linkedin-dom-v15", facebook: "facebook-dom-v1" });
   assert.deepEqual(capabilities.mediaEvidenceAdapterVersions, { x: "x-response-evidence-v2" });
   assert.ok(capabilities.actions.includes("reload_self"));
   assert.ok(capabilities.actions.includes("report_capture_quality"));

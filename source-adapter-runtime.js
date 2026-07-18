@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v8";
+  const runtimeRevision = "source-adapters-v9";
 
   const adapters = new Map();
 
@@ -39,6 +39,10 @@
     }
     if (!adapter.mediaAcquisition || typeof adapter.mediaAcquisition !== "object") {
       throw new Error(`AkuBridge ${adapter.source} adapter requires a media-acquisition strategy.`);
+    }
+    if (!Array.isArray(adapter.mediaHosts) || adapter.mediaHosts.length === 0 ||
+        adapter.mediaHosts.some((host) => typeof host !== "string" || !host)) {
+      throw new Error(`AkuBridge ${adapter.source} adapter requires bounded media hosts.`);
     }
     if (typeof adapter.mediaAcquisition.version !== "string" || !adapter.mediaAcquisition.version) {
       throw new Error(`AkuBridge ${adapter.source} adapter requires a media-acquisition version.`);

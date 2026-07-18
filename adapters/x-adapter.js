@@ -5,6 +5,21 @@
   registry.register({
     source: "x",
     version: "x-dom-v19",
+    mediaHosts: Object.freeze(["pbs.twimg.com", "video.twimg.com"]),
+    structuredMediaEvidence: Object.freeze({
+      payloadField: "xStructuredMediaEvidence",
+      runtime: () => globalThis.AkuXMediaEvidenceRuntime,
+      persistentAvatarLookupMessage: "AKU_X_AVATAR_EVIDENCE_LOOKUP",
+      coverageKey: "xStructuredMediaEvidence",
+      label: "X media evidence",
+    }),
+    platformIdFromCandidates: (values) => {
+      for (const value of Array.isArray(values) ? values : []) {
+        const statusId = String(value ?? "").match(/\/status\/(\d+)/)?.[1];
+        if (statusId) return `x:status:${statusId}`;
+      }
+      return null;
+    },
     qualityProfile: "social-post-v1",
     qualitySelectors: Object.freeze({
       author: '[data-testid="User-Name"]',
@@ -34,6 +49,7 @@
       settleMs: 700,
       quietRecovery: "bounded_dom",
       foregroundAfterQuietExhaustion: true,
+      allowTrustedUnknownGeometry: true,
       detectExpectedKinds: detectXExpectedMediaKinds,
       extractStructuredCandidates: (container) => (
         globalThis.AkuXMediaEvidenceRuntime?.lookupContainer?.(container) ?? []
@@ -75,6 +91,36 @@
         globalThis.AkuXMediaEvidenceRuntime?.lookupAvatarContainer?.(container),
       );
     },
+    findQuotedRoot: findQuotedPostContainer,
+    contentExpansion: Object.freeze({
+      buttonSelector: '[data-testid="tweet-text-show-more-link"]',
+      restorable: false,
+      attempts: 12,
+      intervalMs: 40,
+    }),
+    avatarFallbackSelectors: Object.freeze([
+      '[data-testid="Tweet-User-Avatar"] img',
+      '[data-testid^="UserAvatar-Container-"] img',
+    ]),
+    avatarBackgroundSelectors: Object.freeze([
+      '[data-testid="Tweet-User-Avatar"]',
+      '[data-testid^="UserAvatar-Container-"]',
+    ]),
+    visualHydration: Object.freeze({
+      avatarRootSelector: '[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"]',
+    }),
+    mediaRendering: Object.freeze({
+      trustedRootSelector: '[data-testid="tweetPhoto"], [data-testid="previewInterstitial"], [data-testid="videoPlayer"], [data-testid="videoComponent"], a[href*="/status/"][href*="/photo/"], [aria-label*="Video" i], a[aria-label][href] img[src*="/card_img/"]',
+      videoRootSelector: '[data-testid="previewInterstitial"], [data-testid="videoPlayer"], [data-testid="videoComponent"], [aria-label*="Video" i]',
+      embeddedVideoPattern: /embedded video/i,
+      trustedVideo: true,
+      backgroundGroups: Object.freeze([
+        Object.freeze({ selector: '[data-testid="tweetPhoto"] [style*="background-image"]', kind: "image", closestSelector: '[data-testid="tweetPhoto"]', fallbackAlt: "Image" }),
+        Object.freeze({ selector: 'a[aria-label][href] [style*="/card_img/"]', kind: "image", closestSelector: 'a[aria-label][href]', fallbackAlt: "Link preview" }),
+        Object.freeze({ selector: '[data-testid="videoPlayer"], [data-testid="videoComponent"], [aria-label*="Video" i]', kind: "video", fallbackAlt: "Video preview" }),
+      ]),
+    }),
+    permalinkPatterns: Object.freeze([/\/status\/\d+/]),
     contentRootSelector: '[data-testid="tweetText"]',
     extractText: (container, { compactText, structuredText }) => {
       const read = typeof structuredText === "function" ? structuredText : compactText;

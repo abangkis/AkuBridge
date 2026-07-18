@@ -1,4 +1,5 @@
 import { expectedFeedUrl, isCanonicalFeedUrl } from "./source-tab-policy.js";
+import { sourceIds } from "./source-catalog.js";
 
 export const CAPTURE_WINDOW_STORAGE_KEY = "akuBridgeManagedCaptureWindowV1";
 
@@ -62,7 +63,7 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
       };
     },
     async trackOpenedTab(source, tabId, leaseId) {
-      if (!Number.isInteger(tabId) || !["x", "linkedin"].includes(source)) {
+      if (!Number.isInteger(tabId) || !sourceIds().includes(source)) {
         throw visibilityError("Bridge-created source tab tracking received an invalid binding.", {
           source,
           reason: "transient_tab_invalid",
@@ -195,12 +196,12 @@ async function openManagedTargetTab(chromeApi, url, focusSnapshot, managedWindow
 export function normalizeManagedCaptureState(value) {
   const windowId = Number.isInteger(value?.windowId) ? value.windowId : null;
   const tabs = Object.fromEntries(
-    ["x", "linkedin"].flatMap((source) =>
+    sourceIds().flatMap((source) =>
       Number.isInteger(value?.tabs?.[source]) ? [[source, value.tabs[source]]] : [],
     ),
   );
   const transientTabs = Object.fromEntries(
-    ["x", "linkedin"].flatMap((source) =>
+    sourceIds().flatMap((source) =>
       Number.isInteger(value?.transientTabs?.[source])
         ? [[source, value.transientTabs[source]]]
         : [],
@@ -284,7 +285,7 @@ async function createBinding(chromeApi, state, source) {
 }
 
 function ownedTabsInWindow(tabs, bindings) {
-  return ["x", "linkedin"].flatMap((source) => {
+  return sourceIds().flatMap((source) => {
     const id = bindings[source];
     const tab = tabs.find((candidate) =>
       candidate.id === id && isCanonicalFeedUrl(candidate.url, source)
