@@ -1,7 +1,7 @@
 # AkuBridge
 
 Current preview identity: **`0.7.0-preview.1`** / Chrome manifest
-**`0.7.0.1`** / runtime **`source-adapters-v68`**.
+**`0.7.0.1`** / runtime **`source-adapters-v69`**.
 
 Source readiness is registry-driven. Sidecar commands may tune each source's
 hydration wait in whole seconds inside that source's fixed default +/- 5 second
@@ -20,7 +20,7 @@ flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
     DOM --> XA["X adapter<br/>x-dom-v19<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
     DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v15<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
-    DOM --> FA["Facebook adapter<br/>facebook-dom-v6<br/>Home Feed v6"]
+    DOM --> FA["Facebook adapter<br/>facebook-dom-v7<br/>feed posts only"]
     XA --> R["Source-adapter registry"]
     LA --> R
     FA --> R

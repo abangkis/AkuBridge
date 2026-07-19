@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v10";
+  const runtimeRevision = "source-adapters-v11";
 
   const adapters = new Map();
 
@@ -53,6 +53,13 @@
     if (typeof adapter.mediaAcquisition.extractCandidates !== "function") {
       throw new Error(`AkuBridge ${adapter.source} adapter requires media acquisition extraction.`);
     }
+    const scrollStepMultiplier = adapter.captureTuning?.scrollStepMultiplier;
+    if (scrollStepMultiplier !== undefined &&
+        (!Number.isFinite(scrollStepMultiplier) || scrollStepMultiplier < 1 || scrollStepMultiplier > 2)) {
+      throw new Error(
+        `AkuBridge ${adapter.source} adapter scroll-step multiplier must be between 1 and 2.`,
+      );
+    }
     adapters.set(adapter.source, Object.freeze({ ...adapter }));
   }
 
@@ -69,6 +76,7 @@
       qualityProfile: adapter.qualityProfile,
       freshnessVersion: adapter.freshness.version,
       mediaAcquisitionVersion: adapter.mediaAcquisition.version,
+      scrollStepMultiplier: adapter.captureTuning?.scrollStepMultiplier ?? 1,
       actions: [
         "probe_readiness",
         ...(typeof adapter.availability === "function" ? ["report_source_availability"] : []),

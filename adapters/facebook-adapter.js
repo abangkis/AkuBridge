@@ -8,31 +8,31 @@
     'main [role="feed"] [role="article"]',
     'main [role="article"]',
   ]);
+  const postActionSelector = '[aria-label^="Actions for this post by "]';
   const postMediaSelector = [
     'a[href*="/photo"] img[src]',
     'a[href*="/videos/"] img[src]',
-    'a[href*="/reel/"] img[src]',
     '[data-ad-preview="message"] ~ * img[src]',
     'video',
   ].join(", ");
 
   registry.register({
     source: "facebook",
-    version: "facebook-dom-v6",
+    version: "facebook-dom-v7",
     mediaHosts: Object.freeze(["fbcdn.net", "fbsbx.com"]),
     platformIdFromCandidates: (values) => {
       for (const value of Array.isArray(values) ? values : []) {
         const candidate = String(value ?? "");
         const id = candidate.match(/[?&](?:story_fbid|fbid|photo_id|v)=(\d+)/i)?.[1]
           ?? candidate.match(/[?&]set=pcb\.(\d+)/i)?.[1]
-          ?? candidate.match(/\/(?:posts|videos|reel)\/(pfbid[A-Za-z0-9]+|\d+)/i)?.[1];
+          ?? candidate.match(/\/(?:posts|videos)\/(pfbid[A-Za-z0-9]+|\d+)/i)?.[1];
         if (id) return `facebook:post:${id}`;
       }
       return null;
     },
     qualityProfile: "social-post-v1",
     qualitySelectors: Object.freeze({
-      author: 'h2 a[role="link"], h3 a[role="link"], strong a[role="link"], '
+      author: 'h2 a[role="link"], h3 a[role="link"], h4 a[role="link"], strong a[role="link"], '
         + 'a[role="link"][aria-label], a[role="link"][href*="facebook.com/"]',
       avatar: 'a[role="link"] img[src]',
       content: '[data-ad-preview="message"], [data-ad-comet-preview="message"], div[dir="auto"]',
@@ -60,6 +60,12 @@
           kind,
           alt: root.getAttribute?.("aria-label") || root.getAttribute?.("alt") || "",
         })),
+    }),
+    captureTuning: Object.freeze({
+      // Facebook virtualizes its Home Feed aggressively. One ordinary 0.75-viewport
+      // step can remain inside a single tall gallery post, so advance farther without
+      // changing the bounded scroll count or the behavior of any other adapter.
+      scrollStepMultiplier: 2,
     }),
     matchesPage: () => ["facebook.com", "www.facebook.com"].includes(window.location.hostname),
     availability: () => {
@@ -90,19 +96,27 @@
         selector,
         document.querySelectorAll(selector).length,
       ]));
-      const candidates = uniqueElements(candidateSelectors.flatMap((selector) =>
-        [...document.querySelectorAll(selector)],
-      )).filter(isTopLevelFeedPost);
+      const actionAnchoredCandidates = [...document.querySelectorAll(postActionSelector)]
+        .map((action) => action.closest?.('div[aria-posinset], [role="article"]'))
+        .filter(Boolean);
+      const candidates = uniqueElements([
+        ...actionAnchoredCandidates,
+        ...candidateSelectors.flatMap((selector) => [...document.querySelectorAll(selector)]),
+      ]).filter(isTopLevelFeedPost);
       return {
         candidates,
         semanticCandidateCount: candidates.length,
-        actionAnchoredCandidateCount: 0,
-        strategy: candidateSelectors.find((selector) => selectorCounts[selector] > 0) ?? "none",
-        selectorCounts,
+        actionAnchoredCandidateCount: actionAnchoredCandidates.length,
+        strategy: actionAnchoredCandidates.length > 0
+          ? "post_action_anchor"
+          : candidateSelectors.find((selector) => selectorCounts[selector] > 0) ?? "none",
+        selectorCounts: { ...selectorCounts, [postActionSelector]: actionAnchoredCandidates.length },
       };
     },
     findAuthor: (container, { compactText }) => {
-      for (const selector of ['h2 a[role="link"]', 'h3 a[role="link"]', 'strong a[role="link"]']) {
+      const actionAuthor = facebookActionAuthor(container, compactText);
+      if (actionAuthor) return actionAuthor;
+      for (const selector of ['h2 a[role="link"]', 'h3 a[role="link"]', 'h4 a[role="link"]', 'strong a[role="link"]']) {
         const author = compactText(container.querySelector(selector)?.innerText);
         if (author && !/^(?:Facebook|Sponsored)$/i.test(author)) return author.slice(0, 300);
       }
@@ -130,7 +144,6 @@
       /\/story\.php/,
       /\/photo/,
       /\/videos\//,
-      /\/reel\//,
       /\/watch\/\?v=/,
       /\/video\.php\?v=/,
     ]),
@@ -189,12 +202,20 @@
   });
 
   function isTopLevelFeedPost(candidate) {
+    if (candidate.closest?.('[aria-label="Stories"], [aria-label="Reels"]')) return false;
+    if (candidate.querySelector?.('[aria-label^="Actions for this reel by "]')) return false;
     const actions = [...candidate.querySelectorAll('[role="button"], button')]
       .map((button) => String(button.getAttribute?.("aria-label") || button.innerText || "").trim())
       .map(facebookActionKind)
       .filter(Boolean);
     if (new Set(actions).size < 2) return false;
     return !candidate.parentElement?.closest?.('[role="article"]');
+  }
+
+  function facebookActionAuthor(container, compactText) {
+    const label = compactText(container.querySelector?.(postActionSelector)?.getAttribute?.("aria-label"));
+    const author = label.match(/^Actions for this post by (.+)$/i)?.[1]?.trim() ?? "";
+    return isFacebookAuthorLabel(author) ? author.slice(0, 300) : "";
   }
 
   function facebookHeaderAuthor(container, compactText) {
@@ -214,7 +235,8 @@
   }
 
   function isFacebookAuthorLabel(value) {
-    return value.length >= 2 && value.length <= 120 && !/^(?:Facebook|Sponsored|See more|See less|Hide post\b)/i.test(value);
+    return value.length >= 2 && value.length <= 120 &&
+      !/^(?:Facebook|Sponsored|See more|See less|Hide post\b|Online status indicator\b|Active$)/i.test(value);
   }
 
   function isFacebookProfileLink(value) {
@@ -333,7 +355,7 @@
       if (url.hostname !== "facebook.com" && url.hostname !== "www.facebook.com") return null;
       const postPath = url.pathname.match(/^(\/(?:groups\/[^/]+|[^/]+)\/posts\/(?:pfbid[A-Za-z0-9]+|\d+))\/?$/i);
       if (postPath) return { url: `https://www.facebook.com${postPath[1]}/`, source: "post_anchor" };
-      const videoPath = url.pathname.match(/^(\/(?:[^/]+\/)?(?:videos|reel)\/(\d+))\/?$/i);
+      const videoPath = url.pathname.match(/^(\/(?:[^/]+\/)?videos\/(\d+))\/?$/i);
       if (videoPath) return { url: `https://www.facebook.com${videoPath[1]}/`, source: "video_anchor" };
       if (/^\/(?:watch\/|video\.php)$/i.test(url.pathname) && /^\d+$/.test(url.searchParams.get("v") ?? "")) {
         return { url: `https://www.facebook.com/watch/?v=${url.searchParams.get("v")}`, source: "video_anchor" };

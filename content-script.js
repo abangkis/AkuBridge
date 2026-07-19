@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v68";
+  const runtimeRevision = "source-adapters-v69";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -238,10 +238,14 @@
         }
 
         const beforeScrollY = readScrollPosition(scrollContext).y;
+        const scrollStepMultiplier = sourceAdapters.get(source).captureTuning?.scrollStepMultiplier ?? 1;
         updateCaptureProgress("scrolling", { source, afterSnapshotIndex: index });
         scrollByContext(
           scrollContext,
-          Math.max(320, viewportHeight(scrollContext) * plan.scrollFraction),
+          Math.max(
+            320,
+            viewportHeight(scrollContext) * plan.scrollFraction * scrollStepMultiplier,
+          ),
         );
         updateCaptureProgress("scroll_settling", {
           source,
