@@ -18,24 +18,27 @@
 
   registry.register({
     source: "facebook",
-    version: "facebook-dom-v2",
+    version: "facebook-dom-v4",
     mediaHosts: Object.freeze(["fbcdn.net", "fbsbx.com"]),
     platformIdFromCandidates: (values) => {
       for (const value of Array.isArray(values) ? values : []) {
         const candidate = String(value ?? "");
-        const id = candidate.match(/[?&](?:story_fbid|fbid|photo_id)=(\d+)/i)?.[1]
-          ?? candidate.match(/\/(?:posts|videos|reel)\/(\d+)/i)?.[1];
+        const id = candidate.match(/[?&](?:story_fbid|fbid|photo_id|v)=(\d+)/i)?.[1]
+          ?? candidate.match(/[?&]set=pcb\.(\d+)/i)?.[1]
+          ?? candidate.match(/\/(?:posts|videos|reel)\/(pfbid[A-Za-z0-9]+|\d+)/i)?.[1];
         if (id) return `facebook:post:${id}`;
       }
       return null;
     },
     qualityProfile: "social-post-v1",
     qualitySelectors: Object.freeze({
-      author: 'h2 a[role="link"], h3 a[role="link"], strong a[role="link"]',
+      author: 'h2 a[role="link"], h3 a[role="link"], strong a[role="link"], '
+        + 'a[role="link"][aria-label], a[role="link"][href*="facebook.com/"]',
       avatar: 'a[role="link"] img[src]',
       content: '[data-ad-preview="message"], [data-ad-comet-preview="message"], div[dir="auto"]',
       media: postMediaSelector,
-      timestamp: 'a[href*="/posts/"], a[href*="story_fbid="], a[href*="/permalink/"]',
+      timestamp: 'a[target="_blank"], a[href*="/posts/"], '
+        + 'a[href*="story_fbid="], a[href*="/permalink/"]',
     }),
     freshness: Object.freeze({
       version: "facebook-freshness-v1",
@@ -84,7 +87,7 @@
         const author = compactText(container.querySelector(selector)?.innerText);
         if (author && !/^(?:Facebook|Sponsored)$/i.test(author)) return author.slice(0, 300);
       }
-      return "";
+      return facebookHeaderAuthor(container, compactText);
     },
     findAvatar: (container, { normalizeHttpUrl }) => {
       const images = [...container.querySelectorAll('a[role="link"] img[src]')];
@@ -109,6 +112,8 @@
       /\/photo/,
       /\/videos\//,
       /\/reel\//,
+      /\/watch\/\?v=/,
+      /\/video\.php\?v=/,
     ]),
     extractText: (container, { compactText, structuredText }) => {
       const read = typeof structuredText === "function" ? structuredText : compactText;
@@ -125,7 +130,7 @@
       const text = compactText(container.innerText);
       const relationshipType = /\bshared a (?:post|memory)\b/i.test(text) ? "repost" : "original";
       const parentPermalink = relationshipType === "repost"
-        ? nativePostAnchors(container, normalizeHttpUrl)[1] ?? null
+        ? facebookCanonicalPostURLs(container, normalizeHttpUrl)[1] ?? null
         : null;
       return {
         contentKind: container.querySelector("video") ? "video" : "post",
@@ -137,17 +142,25 @@
     extractPresentation: (container, { compactText }) => {
       const lines = String(container.innerText ?? "").split(/\n+/).map(compactText).filter(Boolean);
       const sponsored = lines.some((line) => /^Sponsored$/i.test(line));
+      const timestampText = facebookRenderedRelativeTime(container)
+        || lines.find((line) => /^\d+\s*(?:m|h|d|w|mo|y)\b/i.test(line))
+        || "";
       return {
         socialContext: lines.find((line) => /\bshared (?:this|a post)|commented on this$/i.test(line)) ?? "",
         attributionText: sponsored ? "Sponsored" : "",
-        timestampText: lines.find((line) => /^\d+\s*(?:m|h|d|w|mo|y)\b/i.test(line)) ?? "",
-        timestampAvailability: "unavailable",
+        timestampText,
+        timestampAvailability: timestampText
+          ? "relative_text"
+          : sponsored
+            ? "not_exposed_promoted"
+            : "unavailable",
         promoted: sponsored,
       };
     },
+    estimateRelativeTimestamp: estimateFacebookRelativeTimestamp,
     findPermalinkDetails: (container, { normalizeHttpUrl }) => {
-      const url = nativePostAnchors(container, normalizeHttpUrl)[0] ?? null;
-      return url ? { url, source: "direct_anchor" } : null;
+      const evidence = facebookPostPermalink(container, normalizeHttpUrl);
+      return evidence?.url ? evidence : null;
     },
     imageSelector: "img[src]",
     shouldSkipImage: (image) => {
@@ -165,6 +178,96 @@
     return !candidate.parentElement?.closest?.('[role="article"]');
   }
 
+  function facebookHeaderAuthor(container, compactText) {
+    const contentRoot = container.querySelector(
+      '[data-ad-preview="message"], [data-ad-comet-preview="message"]',
+    );
+    for (const anchor of container.querySelectorAll('a[role="link"][href]')) {
+      if (contentRoot && typeof anchor.compareDocumentPosition === "function") {
+        const followsContent = anchor.compareDocumentPosition(contentRoot) & 2;
+        if (followsContent) continue;
+      }
+      const label = compactText(anchor.innerText || anchor.getAttribute?.("aria-label"));
+      if (!isFacebookAuthorLabel(label) || !isFacebookProfileLink(anchor.href)) continue;
+      return label.slice(0, 300);
+    }
+    return "";
+  }
+
+  function isFacebookAuthorLabel(value) {
+    return value.length >= 2 && value.length <= 120 && !/^(?:Facebook|Sponsored|See more|See less|Hide post\b)/i.test(value);
+  }
+
+  function isFacebookProfileLink(value) {
+    try {
+      const url = new URL(String(value ?? ""), "https://www.facebook.com/");
+      if (url.hostname !== "facebook.com" && url.hostname !== "www.facebook.com") return false;
+      if (/^\/profile\.php$/i.test(url.pathname)) return Boolean(url.searchParams.get("id"));
+      return !isFacebookNavigationPath(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+
+  function facebookRenderedRelativeTime(container) {
+    const readStyle = typeof globalThis.getComputedStyle === "function"
+      ? (element) => globalThis.getComputedStyle(element)
+      : typeof globalThis.window?.getComputedStyle === "function"
+        ? (element) => globalThis.window.getComputedStyle(element)
+        : null;
+    if (typeof readStyle !== "function") return "";
+    for (const anchor of container.querySelectorAll('a[target="_blank"]')) {
+      const glyphs = [...anchor.querySelectorAll("span")].map((span) => {
+        const value = String(span.textContent ?? "").trim();
+        if (!/^[0-9smhdwy]$/i.test(value)) return null;
+        const style = readStyle(span);
+        const rect = span.getBoundingClientRect?.();
+        if (style?.position === "absolute" || style?.display === "none" ||
+            style?.visibility === "hidden" || Number(style?.opacity) === 0 ||
+            !rect || rect.width <= 0 || rect.height <= 0) return null;
+        return { value, x: rect.left, y: rect.top };
+      }).filter(Boolean).sort((left, right) => Math.abs(left.y - right.y) > 2
+        ? left.y - right.y
+        : left.x - right.x);
+      const value = glyphs.map((glyph) => glyph.value).join("").toLowerCase();
+      if (/^\d{1,3}(?:m|h|d|w|y)$/.test(value)) return value;
+    }
+    return "";
+  }
+
+  function estimateFacebookRelativeTimestamp(value, capturedAt) {
+    const match = String(value ?? "").trim().match(/^(\d{1,3})\s*(m|h|d|w|y)\b/i);
+    const capturedMs = Date.parse(capturedAt);
+    if (!match || !Number.isFinite(capturedMs)) return null;
+    const amount = Number.parseInt(match[1], 10);
+    const unit = match[2].toLowerCase();
+    if (!Number.isInteger(amount) || amount < 1) return null;
+    const estimate = new Date(capturedMs);
+    const precision = { m: "minute", h: "hour", d: "day", w: "week", y: "year" }[unit];
+    if (unit === "m") {
+      estimate.setUTCSeconds(0, 0);
+      estimate.setUTCMinutes(estimate.getUTCMinutes() - amount);
+    } else if (unit === "h") {
+      estimate.setUTCMinutes(0, 0, 0);
+      estimate.setUTCHours(estimate.getUTCHours() - amount);
+    } else if (unit === "d") {
+      estimate.setUTCHours(0, 0, 0, 0);
+      estimate.setUTCDate(estimate.getUTCDate() - amount);
+    } else if (unit === "w") {
+      estimate.setUTCHours(0, 0, 0, 0);
+      estimate.setUTCDate(estimate.getUTCDate() - amount * 7);
+    } else {
+      estimate.setTime(Date.UTC(estimate.getUTCFullYear() - amount, 0, 1));
+    }
+    return {
+      publishedAt: estimate.toISOString(),
+      amount,
+      unit,
+      precision,
+      estimated: true,
+    };
+  }
+
   function facebookActionKind(label) {
     if (/^(?:Like|React)(?:\b|$)/i.test(label)) return "like";
     if (/^(?:Comment|Leave a comment)(?:\b|$)/i.test(label)) return "comment";
@@ -172,10 +275,86 @@
     return "";
   }
 
-  function nativePostAnchors(container, normalizeHttpUrl) {
-    return [...container.querySelectorAll('a[href]')]
-      .map((anchor) => normalizeHttpUrl(anchor.href))
-      .filter((href) => href && /\/(?:posts\/|permalink\/|story\.php|photo|videos\/|reel\/)/i.test(href));
+  function facebookPostPermalink(container, normalizeHttpUrl) {
+    const values = facebookCanonicalPostURLs(container, normalizeHttpUrl, true);
+    return values[0] ?? null;
+  }
+
+  function facebookCanonicalPostURLs(container, normalizeHttpUrl, withSource = false) {
+    const anchors = [...container.querySelectorAll('a[href]')];
+    const direct = anchors.map((anchor) => canonicalFacebookPostURL(anchor.href, normalizeHttpUrl))
+      .filter(Boolean);
+    const uniqueDirect = [...new Map(direct.map((entry) => [entry.url, entry])).values()];
+    if (uniqueDirect.length) return withSource ? uniqueDirect : uniqueDirect.map((entry) => entry.url);
+
+    const author = facebookProfileIdentity(container);
+    const parentPostIds = anchors.map((anchor) => {
+      try {
+        return new URL(anchor.href).searchParams.get("set")?.match(/^pcb\.(\d+)$/i)?.[1] ?? null;
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    const fallback = [...new Set(parentPostIds)].map((postId) => {
+      const url = author?.path
+        ? `https://www.facebook.com${author.path}/posts/${postId}/`
+        : author?.id
+          ? `https://www.facebook.com/story.php?story_fbid=${postId}&id=${author.id}`
+          : null;
+      return url ? { url, source: "media_parent_id" } : null;
+    }).filter(Boolean);
+    return withSource ? fallback : fallback.map((entry) => entry.url);
+  }
+
+  function canonicalFacebookPostURL(value, normalizeHttpUrl) {
+    const normalized = normalizeHttpUrl(value);
+    if (!normalized) return null;
+    try {
+      const url = new URL(normalized);
+      if (url.hostname !== "facebook.com" && url.hostname !== "www.facebook.com") return null;
+      const postPath = url.pathname.match(/^(\/(?:groups\/[^/]+|[^/]+)\/posts\/(?:pfbid[A-Za-z0-9]+|\d+))\/?$/i);
+      if (postPath) return { url: `https://www.facebook.com${postPath[1]}/`, source: "post_anchor" };
+      const videoPath = url.pathname.match(/^(\/(?:[^/]+\/)?(?:videos|reel)\/(\d+))\/?$/i);
+      if (videoPath) return { url: `https://www.facebook.com${videoPath[1]}/`, source: "video_anchor" };
+      if (/^\/(?:watch\/|video\.php)$/i.test(url.pathname) && /^\d+$/.test(url.searchParams.get("v") ?? "")) {
+        return { url: `https://www.facebook.com/watch/?v=${url.searchParams.get("v")}`, source: "video_anchor" };
+      }
+      if (/^\/(?:story|permalink)\.php$/i.test(url.pathname)) {
+        const story = url.searchParams.get("story_fbid");
+        const owner = url.searchParams.get("id");
+        if (/^\d+$/.test(story ?? "") && /^\d+$/.test(owner ?? "")) {
+          return {
+            url: `https://www.facebook.com/story.php?story_fbid=${story}&id=${owner}`,
+            source: "story_anchor",
+          };
+        }
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  function facebookProfileIdentity(container) {
+    for (const anchor of container.querySelectorAll('a[role="link"][href]')) {
+      try {
+        const url = new URL(anchor.href);
+        if (url.hostname !== "facebook.com" && url.hostname !== "www.facebook.com") continue;
+        if (/^\/profile\.php$/i.test(url.pathname) && /^\d+$/.test(url.searchParams.get("id") ?? "")) {
+          return { id: url.searchParams.get("id"), path: "" };
+        }
+        if (/^\/[^/?#]+\/?$/.test(url.pathname) && !isFacebookNavigationPath(url.pathname)) {
+          return { id: "", path: url.pathname.replace(/\/$/, "") };
+        }
+      } catch {
+        // Ignore non-URL evidence.
+      }
+    }
+    return null;
+  }
+
+  function isFacebookNavigationPath(value) {
+    return /^\/(?:$|watch|marketplace|groups|events|gaming|reel|photo|photos|videos|posts|permalink|story\.php)(?:\/|$)/i.test(value);
   }
 
   function facebookMediaRoots(container, { excludeRoot, uniqueElements }) {

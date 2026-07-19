@@ -1,6 +1,10 @@
 import { chooseSourceTab, expectedFeedUrl } from "./source-tab-policy.js";
 import { shouldRetrySourceTab } from "./tab-recovery-policy.js";
 import {
+  emptyCaptureDiagnostics,
+  observationEvidenceBlockCount,
+} from "./capture-observation-policy.js";
+import {
   normalizeSourceTabLifecycle,
   shouldCloseOpenedSourceTab,
 } from "./source-tab-lifecycle-policy.js";
@@ -32,6 +36,7 @@ import {
   sourceDefinition,
   sourceForUrl,
   sourceRequiresVisualHydration,
+  sourceHydrationTimeout,
 } from "./source-catalog.js";
 
 const AKU_BROWSER_ORIGIN = "http://127.0.0.1:11122";
@@ -321,8 +326,17 @@ async function captureWithSourceTabRecovery(command) {
         command.payload.captureLeaseId,
         command.payload.targetUrl,
         command.payload.foregroundAuthorized === true,
+        command.payload.sourceHydrationTimeoutMs,
       );
       const observation = await capturePreparedSource(command, prepared, attempt);
+      if (observationEvidenceBlockCount(observation) === 0) {
+        throw new AkuBridgeError(
+          "capture_empty",
+          "capture",
+          `AkuBridge found no usable ${command.payload.source} evidence after the bounded capture.`,
+          emptyCaptureDiagnostics(observation),
+        );
+      }
       if (shouldCloseOpenedSourceTab({
         opened: prepared.opened,
         lifecycle: command.payload.tabLifecycle,
@@ -343,12 +357,20 @@ async function captureWithSourceTabRecovery(command) {
       observation.coverage.workingFocusRestored = focusOutcome.restored === true;
       return observation;
     } catch (error) {
-      if (!shouldRetrySourceTab({
+      const sourcePolicy = sourceDefinition(command.payload.source);
+      const retry = shouldRetrySourceTab({
         error,
         acquisitionRound: command.payload.acquisitionRound ?? 1,
         attempt,
-      })) {
+        ownership: prepared?.ownership ?? null,
+        emptyObservationRecovery: sourcePolicy?.captureRecovery?.emptyObservation ?? null,
+      });
+      if (!retry) {
         throw error;
+      }
+      if (error?.code === "capture_empty" && prepared?.ownership === "managed") {
+        await chrome.tabs.reload(prepared.tab.id);
+        await waitForTabComplete(prepared.tab.id, 20_000);
       }
     } finally {
       if (prepared) {
@@ -490,6 +512,7 @@ async function findOrOpenSourceTab(
   captureLeaseId,
   targetUrl = null,
   foregroundAuthorized = false,
+  requestedHydrationTimeoutMs = null,
 ) {
   const visibilityPlan = planCaptureVisibility({
     policy: requestedVisibilityPolicy,
@@ -532,6 +555,7 @@ async function findOrOpenSourceTab(
         openedTabDisposition: targetUrl ? "close_after_capture" : "close_after_session",
         requireVisualHydration: !targetUrl || visibilityPlan.foregroundAuthorized,
         restoreFocus: managed.verifyFocus,
+        hydrationTimeoutMs: requestedHydrationTimeoutMs,
       });
       prepared.closeOnExit = Boolean(targetUrl);
       return prepared;
@@ -579,6 +603,7 @@ async function findOrOpenSourceTab(
     captureVisibilityPolicy: visibilityPlan.policy,
     captureVisibilityMode: "same_window",
     openedTabDisposition: bridgeOwned ? "close_after_session" : "preserve",
+    hydrationTimeoutMs: requestedHydrationTimeoutMs,
   });
 }
 
@@ -610,6 +635,13 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
   };
   let readiness;
   const readinessPolicy = sourceDefinition(source)?.readiness ?? {};
+  const hydrationTimeoutMs = sourceHydrationTimeout(source, options.hydrationTimeoutMs);
+  const initialTimeoutMs = readinessPolicy.retryAfterActivationMs
+    ? Math.min(readinessPolicy.initialTimeoutMs ?? hydrationTimeoutMs, hydrationTimeoutMs)
+    : hydrationTimeoutMs;
+  const retryAfterActivationMs = readinessPolicy.retryAfterActivationMs
+    ? Math.max(1_000, hydrationTimeoutMs - initialTimeoutMs)
+    : 0;
   if (readinessPolicy.activateWhenBackground === true && backgroundAtDispatch) {
     // Some sources defer visual hydration while the feed remains in a
     // background tab. The source catalog owns that capability declaration.
@@ -617,20 +649,20 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
     readiness = await waitForSourceReady(
       tab.id,
       source,
-      readinessPolicy.initialTimeoutMs ?? 12_000,
+      initialTimeoutMs,
       { requireVisualHydration },
     );
   } else {
     readiness = await waitForSourceReady(
       tab.id,
       source,
-      readinessPolicy.initialTimeoutMs ?? 12_000,
+      initialTimeoutMs,
       { requireVisualHydration },
     );
   }
-  if (readinessPolicy.retryAfterActivationMs && readiness.state !== "feed_ready") {
+  if (retryAfterActivationMs && readiness.state !== "feed_ready") {
     await activate();
-    readiness = await waitForSourceReady(tab.id, source, readinessPolicy.retryAfterActivationMs);
+    readiness = await waitForSourceReady(tab.id, source, retryAfterActivationMs);
   }
   readiness.waitMs = Date.now() - startedAt;
   const captureReady = isSourceCaptureReady(readiness);

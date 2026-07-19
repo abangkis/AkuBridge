@@ -14,6 +14,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
     mediaEvidenceAdapterVersion: "x-response-evidence-v2",
     structuredMediaCollector: "x_response",
     structuredMediaPayloadField: "xStructuredMediaEvidence",
+    hydration: Object.freeze({ defaultTimeoutMs: 12_000, minTimeoutMs: 7_000, maxTimeoutMs: 17_000 }),
     readiness: Object.freeze({ initialTimeoutMs: 12_000, activateWhenBackground: true }),
   }),
   Object.freeze({
@@ -27,12 +28,13 @@ const SOURCE_DEFINITIONS = Object.freeze([
     hostnames: Object.freeze(["www.linkedin.com"]),
     canonicalFeedPath: /^\/feed\/?$/,
     nativePostPath: /\/(?:posts\/|feed\/update\/)/,
+    hydration: Object.freeze({ defaultTimeoutMs: 18_000, minTimeoutMs: 13_000, maxTimeoutMs: 23_000 }),
     readiness: Object.freeze({ initialTimeoutMs: 3_000, retryAfterActivationMs: 15_000 }),
   }),
   Object.freeze({
     id: "facebook",
     displayName: "Facebook",
-    adapterVersion: "facebook-dom-v2",
+    adapterVersion: "facebook-dom-v4",
     adapterScript: "adapters/facebook-adapter.js",
     supportScripts: Object.freeze([]),
     feedUrl: "https://www.facebook.com/",
@@ -40,7 +42,9 @@ const SOURCE_DEFINITIONS = Object.freeze([
     hostnames: Object.freeze(["www.facebook.com", "facebook.com"]),
     canonicalFeedPath: /^\/$/,
     nativePostPath: /\/(?:posts\/|permalink\/|story\.php|photo|videos\/|reel\/)/,
+    hydration: Object.freeze({ defaultTimeoutMs: 25_000, minTimeoutMs: 20_000, maxTimeoutMs: 30_000 }),
     readiness: Object.freeze({ initialTimeoutMs: 25_000 }),
+    captureRecovery: Object.freeze({ emptyObservation: "reload_managed_once" }),
   }),
 ]);
 
@@ -81,6 +85,15 @@ export function sourceRuntimeScripts() {
 
 export function sourceRequiresVisualHydration(source) {
   return sourceDefinition(source)?.requiresVisualHydration === true;
+}
+
+export function sourceHydrationTimeout(source, requestedTimeoutMs) {
+  const policy = sourceDefinition(source)?.hydration;
+  if (!policy) return 12_000;
+  const requested = Number(requestedTimeoutMs);
+  if (!Number.isFinite(requested)) return policy.defaultTimeoutMs;
+  const rounded = Math.round(requested / 1_000) * 1_000;
+  return Math.min(policy.maxTimeoutMs, Math.max(policy.minTimeoutMs, rounded));
 }
 
 export function sourceMatchPatterns() {

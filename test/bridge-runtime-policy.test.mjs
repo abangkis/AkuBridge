@@ -24,6 +24,25 @@ test("tab leases retain source identity and tolerate same-source navigation", ()
   );
 });
 
+test("tab leases use the generic source catalog for Facebook", () => {
+  const lease = createTabLease(
+    { id: 21, windowId: 5, url: "https://www.facebook.com/" },
+    "facebook",
+  );
+  assert.equal(
+    validateTabLease(lease, { id: 21, windowId: 5, url: "https://www.facebook.com/example/posts/1" }).valid,
+    true,
+  );
+  assert.equal(
+    validateTabLease(lease, { id: 21, windowId: 5, url: "https://facebook.com/" }).valid,
+    true,
+  );
+  assert.equal(
+    validateTabLease(lease, { id: 21, windowId: 5, url: "https://facebook.com.example.org/" }).code,
+    "wrong_page",
+  );
+});
+
 test("tab leases fail closed when tab identity changes", () => {
   const lease = createTabLease(
     { id: 12, windowId: 4, url: "https://www.linkedin.com/feed/" },

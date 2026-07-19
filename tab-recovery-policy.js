@@ -9,6 +9,20 @@ export function isStaleTabError(error) {
   return STALE_TAB_PATTERNS.some((pattern) => pattern.test(message));
 }
 
-export function shouldRetrySourceTab({ error, acquisitionRound, attempt }) {
-  return acquisitionRound === 1 && attempt === 0 && isStaleTabError(error);
+export function isEmptyCaptureError(error) {
+  return error?.code === "capture_empty";
+}
+
+export function shouldRetrySourceTab({
+  error,
+  acquisitionRound,
+  attempt,
+  ownership = null,
+  emptyObservationRecovery = null,
+}) {
+  if (acquisitionRound !== 1 || attempt !== 0) return false;
+  if (isStaleTabError(error)) return true;
+  return isEmptyCaptureError(error) &&
+    ownership === "managed" &&
+    emptyObservationRecovery === "reload_managed_once";
 }

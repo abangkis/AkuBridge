@@ -1,7 +1,11 @@
 # AkuBridge
 
 Current preview identity: **`0.7.0-preview.1`** / Chrome manifest
-**`0.7.0.1`** / runtime **`source-adapters-v62`**.
+**`0.7.0.1`** / runtime **`source-adapters-v66`**.
+
+Source readiness is registry-driven. Sidecar commands may tune each source's
+hydration wait in whole seconds inside that source's fixed default +/- 5 second
+window; AkuBridge clamps the value again before using it.
 
 AkuBridge is the read-only Chrome extension used by AkuBrowser to collect a bounded set of visible observations from X, LinkedIn, or Facebook.
 
@@ -16,7 +20,7 @@ flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
     DOM --> XA["X adapter<br/>x-dom-v19<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
     DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v15<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
-    DOM --> FA["Facebook adapter<br/>facebook-dom-v2<br/>Home Feed v2"]
+    DOM --> FA["Facebook adapter<br/>facebook-dom-v4<br/>Home Feed v4"]
     XA --> R["Source-adapter registry"]
     LA --> R
     FA --> R

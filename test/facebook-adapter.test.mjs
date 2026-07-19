@@ -19,7 +19,7 @@ test("source catalog exposes Facebook without changing the X media capability", 
   assert.deepEqual(sourceAdapterVersions(), {
     x: "x-dom-v19",
     linkedin: "linkedin-dom-v15",
-    facebook: "facebook-dom-v2",
+    facebook: "facebook-dom-v4",
   });
   assert.equal(sourceForUrl("https://www.facebook.com/"), "facebook");
   assert.equal(isCanonicalFeed("https://www.facebook.com/", "facebook"), true);
@@ -55,7 +55,7 @@ test("Facebook adapter passes synthetic Home Feed conformance", () => {
   const discovery = adapter.discoverCandidates({ uniqueElements: (items) => [...new Set(items)] });
   const helpers = { compactText, normalizeHttpUrl, structuredText: (element) => element?.innerText ?? "" };
 
-  assert.equal(adapter.version, "facebook-dom-v2");
+  assert.equal(adapter.version, "facebook-dom-v4");
   assert.equal(discovery.candidates.length, 1);
   assert.equal(adapter.findAuthor(candidate, helpers), "Aku Example");
   assert.equal(adapter.findAvatar(candidate, helpers), "https://scontent.fcgk1-2.fna.fbcdn.net/avatar.jpg");
@@ -69,7 +69,7 @@ test("Facebook adapter passes synthetic Home Feed conformance", () => {
   });
   assert.deepEqual(JSON.parse(JSON.stringify(adapter.findPermalinkDetails(candidate, helpers))), {
     url: "https://www.facebook.com/aku.example/posts/1234567890/",
-    source: "direct_anchor",
+    source: "post_anchor",
   });
 });
 
@@ -103,6 +103,91 @@ test("Facebook adapter discovers the live Home Feed aria-posinset structure", ()
   assert.equal(discovery.candidates.length, 1);
 });
 
+test("Facebook adapter reads the current profile-link header and rendered relative time", () => {
+  const contentRoot = {};
+  const profileAnchor = {
+    href: "https://www.facebook.com/aku.example",
+    innerText: "",
+    getAttribute: (name) => name === "aria-label" ? "Aku Example" : null,
+    compareDocumentPosition: () => 4,
+  };
+  const fakeGlyph = glyph("q", 0, "absolute");
+  const renderedGlyphs = [glyph("1", 10), glyph("2", 16), glyph("h", 24)];
+  const timestampAnchor = { querySelectorAll: (selector) => selector === "span" ? [fakeGlyph, ...renderedGlyphs] : [] };
+  const candidate = {
+    innerText: "Aku Example\nA bounded Facebook post",
+    querySelector(selector) {
+      if (selector.includes('data-ad-preview="message"')) return contentRoot;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === 'a[role="link"][href]') return [profileAnchor];
+      if (selector === 'a[target="_blank"]') return [timestampAnchor];
+      return [];
+    },
+  };
+  const document = { querySelector: () => ({}), querySelectorAll: () => [] };
+  const window = {
+    document,
+    location: { hostname: "www.facebook.com", pathname: "/" },
+    getComputedStyle: (element) => ({ position: element.position, display: "inline", visibility: "visible", opacity: "1" }),
+  };
+  const context = vm.createContext({ document, window, URL, getComputedStyle: window.getComputedStyle });
+  context.globalThis = context;
+  run(context, "source-adapter-runtime.js");
+  run(context, "adapters/facebook-adapter.js");
+  const adapter = context.AkuSourceAdapters.get("facebook");
+  const helpers = { compactText, normalizeHttpUrl };
+
+  assert.equal(adapter.findAuthor(candidate, helpers), "Aku Example");
+  assert.equal(adapter.extractPresentation(candidate, helpers).timestampText, "12h");
+  assert.deepEqual(JSON.parse(JSON.stringify(
+    adapter.estimateRelativeTimestamp("12h", "2026-07-18T23:39:32.000Z"),
+  )), {
+    publishedAt: "2026-07-18T11:00:00.000Z",
+    amount: 12,
+    unit: "h",
+    precision: "hour",
+    estimated: true,
+  });
+});
+
+test("Facebook adapter canonicalizes post, video, and media-parent identity", () => {
+  const adapter = loadFacebookAdapter();
+  const direct = facebookIdentityCandidate([
+    "https://www.facebook.com/aku.example/posts/pfbid02ABC123?comment_id=99&__cft__[0]=tracking",
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(adapter.findPermalinkDetails(direct, { normalizeHttpUrl }))), {
+    url: "https://www.facebook.com/aku.example/posts/pfbid02ABC123/",
+    source: "post_anchor",
+  });
+  assert.equal(
+    adapter.platformIdFromCandidates(["https://www.facebook.com/aku.example/posts/pfbid02ABC123/"]),
+    "facebook:post:pfbid02ABC123",
+  );
+  const group = facebookIdentityCandidate([
+    "https://www.facebook.com/groups/12345/posts/99887766/?comment_id=1",
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(adapter.findPermalinkDetails(group, { normalizeHttpUrl }))), {
+    url: "https://www.facebook.com/groups/12345/posts/99887766/",
+    source: "post_anchor",
+  });
+
+  const video = facebookIdentityCandidate(["https://www.facebook.com/watch/?v=123456789&tracking=1"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(adapter.findPermalinkDetails(video, { normalizeHttpUrl }))), {
+    url: "https://www.facebook.com/watch/?v=123456789",
+    source: "video_anchor",
+  });
+
+  const carousel = facebookIdentityCandidate([
+    "https://www.facebook.com/photo/?fbid=10&set=pcb.99887766&tracking=1",
+  ], "https://www.facebook.com/aku.example?tracking=1");
+  assert.deepEqual(JSON.parse(JSON.stringify(adapter.findPermalinkDetails(carousel, { normalizeHttpUrl }))), {
+    url: "https://www.facebook.com/aku.example/posts/99887766/",
+    source: "media_parent_id",
+  });
+});
+
 function facebookCandidate() {
   const controls = ["Like", "Comment", "Share"].map((label) => ({
     innerText: label,
@@ -132,6 +217,35 @@ function facebookCandidate() {
       return [];
     },
   };
+}
+
+function glyph(value, left, position = "relative") {
+  return {
+    textContent: value,
+    position,
+    getBoundingClientRect: () => ({ left, top: position === "absolute" ? 30 : 10, width: 5, height: 10 }),
+  };
+}
+
+function facebookIdentityCandidate(hrefs, profileHref = null) {
+  const anchors = hrefs.map((href) => ({ href }));
+  const profile = profileHref ? [{ href: profileHref }] : [];
+  return {
+    querySelectorAll(selector) {
+      if (selector === 'a[href]') return anchors;
+      if (selector === 'a[role="link"][href]') return profile;
+      return [];
+    },
+  };
+}
+
+function loadFacebookAdapter() {
+  const document = { querySelector: () => ({}), querySelectorAll: () => [] };
+  const context = vm.createContext({ document, window: { document, location: { hostname: "www.facebook.com", pathname: "/" } }, URL });
+  context.globalThis = context;
+  run(context, "source-adapter-runtime.js");
+  run(context, "adapters/facebook-adapter.js");
+  return context.AkuSourceAdapters.get("facebook");
 }
 
 function compactText(value) { return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : ""; }

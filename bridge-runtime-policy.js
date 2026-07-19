@@ -1,3 +1,5 @@
+import { sourceForUrl } from "./source-catalog.js";
+
 export class AkuBridgeError extends Error {
   constructor(code, stage, message, details = {}) {
     super(message);
@@ -78,11 +80,5 @@ export function classifyBridgeError(error) {
 }
 
 function sourceMatchesUrl(source, value) {
-  try {
-    const url = new URL(value);
-    if (source === "x") return url.protocol === "https:" && url.hostname === "x.com";
-    return source === "linkedin" && url.protocol === "https:" && url.hostname === "www.linkedin.com";
-  } catch {
-    return false;
-  }
+  return sourceForUrl(value) === source;
 }

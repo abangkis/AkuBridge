@@ -4,7 +4,7 @@ import {
   sourceIds,
 } from "./source-catalog.js";
 
-export const BRIDGE_RUNTIME_REVISION = "source-adapters-v62";
+export const BRIDGE_RUNTIME_REVISION = "source-adapters-v66";
 export const BRIDGE_ID = "aku-bridge-chrome-mv3-v0";
 export const BRIDGE_CONTRACT_VERSION = "aku-browser.bridge.v2";
 
