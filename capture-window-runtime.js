@@ -95,6 +95,51 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
       return state.leaseId === normalizeLeaseId(leaseId) &&
         state.transientTabs[source] === tabId;
     },
+    async releaseSource(source, leaseId) {
+      if (!sourceIds().includes(source)) {
+        return { released: false, reason: "unknown_source" };
+      }
+      const state = await loadState(chromeApi);
+      const requestedLeaseId = normalizeLeaseId(leaseId);
+      if (state.leaseId && state.leaseId !== requestedLeaseId) {
+        return { released: false, reason: "lease_mismatch" };
+      }
+      const tabId = state.tabs[source];
+      if (!Number.isInteger(tabId) || !state.ownedByBridge) {
+        return { released: false, reason: "no_owned_source_surface" };
+      }
+
+      let window;
+      try {
+        window = await chromeApi.windows.get(state.windowId, { populate: true });
+      } catch {
+        delete state.tabs[source];
+        await persistRemainingState(chromeApi, state);
+        return { released: false, reason: "surface_already_closed" };
+      }
+      const ownedTabs = ownedTabsInWindow(window.tabs ?? [], state.tabs);
+      const ownedIds = new Set(ownedTabs.map((tab) => tab.id));
+      const userTabs = (window.tabs ?? []).filter((tab) => !ownedIds.has(tab.id));
+      const targetOwned = ownedIds.has(tabId);
+      const remainingManagedTabs = ownedTabs.filter((tab) => tab.id !== tabId).length;
+
+      delete state.tabs[source];
+      if (targetOwned && remainingManagedTabs === 0 && userTabs.length === 0) {
+        await chromeApi.windows.remove(state.windowId);
+        state.windowId = null;
+        state.tabs = {};
+      } else if (targetOwned) {
+        await chromeApi.tabs.remove(tabId);
+      }
+      await persistRemainingState(chromeApi, state);
+      return {
+        released: targetOwned,
+        mode: targetOwned ? "owned_source_surface_closed" : "source_surface_already_closed",
+        closedTabs: targetOwned ? 1 : 0,
+        remainingManagedTabs,
+        preservedUserTabs: userTabs.length,
+      };
+    },
     async release(leaseId) {
       const state = await loadState(chromeApi);
       const requestedLeaseId = normalizeLeaseId(leaseId);
@@ -230,6 +275,16 @@ async function saveState(chromeApi, state) {
 
 async function clearState(chromeApi) {
   await chromeApi.storage.local.remove(CAPTURE_WINDOW_STORAGE_KEY);
+}
+
+async function persistRemainingState(chromeApi, state) {
+  const hasManagedTabs = Object.keys(state.tabs).length > 0;
+  const hasTransientTabs = Object.keys(state.transientTabs).length > 0;
+  if (!hasManagedTabs && !hasTransientTabs) {
+    await clearState(chromeApi);
+    return;
+  }
+  await saveState(chromeApi, state);
 }
 
 async function validateBinding(chromeApi, state, source) {

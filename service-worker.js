@@ -565,7 +565,12 @@ async function findOrOpenSourceTab(
         targetCaptureTabId = null;
       }
       if (managed) await managed.verifyFocus().catch(() => undefined);
-      if (error?.code === "visible_recovery_required") throw error;
+      if (!targetUrl) {
+        await managedCaptureWindow.releaseSource(source, captureLeaseId).catch(() => undefined);
+      }
+      if (["visible_recovery_required", "source_unavailable", "login_required"].includes(error?.code)) {
+        throw error;
+      }
       throw new AkuBridgeError(
         "visible_recovery_required",
         "capture_visibility",
@@ -668,6 +673,22 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
   const captureReady = isSourceCaptureReady(readiness);
   if (!captureReady) {
     await restoreTabFocus(previousActiveTabId, tab.id);
+    if (readiness.state === "source_unavailable") {
+      throw new AkuBridgeError(
+        "source_unavailable",
+        "readiness",
+        readiness.availability?.message ?? `${sourceLabel(source)} is temporarily unavailable.`,
+        { source, availability: readiness.availability ?? null },
+      );
+    }
+    if (readiness.state === "login_required") {
+      throw new AkuBridgeError(
+        "login_required",
+        "readiness",
+        `${sourceLabel(source)} requires a signed-in source session.`,
+        { source },
+      );
+    }
     throw new Error(
       `${sourceLabel(source)} source readiness failed: ${readiness.state} ` +
       `(${readiness.selectorCandidateCount} selector candidates, ` +
@@ -748,7 +769,7 @@ async function waitForSourceReady(
     if (latest.state === "feed_ready" && (
       !requireVisualHydration || latest.visualHydrationReady === true
     )) break;
-    if (["login_required", "wrong_page"].includes(latest.state)) break;
+    if (["login_required", "source_unavailable", "wrong_page"].includes(latest.state)) break;
     await delay(250);
   }
   return { ...latest, waitMs: Date.now() - startedAt };

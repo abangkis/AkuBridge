@@ -80,7 +80,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v66/);
+  assert.match(contentScript, /source-adapters-v68/);
   assert.match(contentScript, /relative_text_estimate/);
   assert.match(contentScript, /not_exposed_promoted/);
   assert.match(linkedInAdapter, /recoverLinkedInPermalinks/);
@@ -206,6 +206,8 @@ test("LinkedIn capture composes readiness with generic freshness recovery", () =
   assert.match(contentScript, /AKU_BROWSER_PROBE_SOURCE_READY/);
   assert.match(contentScript, /selector_mismatch/);
   assert.match(contentScript, /login_required/);
+  assert.match(contentScript, /adapter\.availability/);
+  assert.match(contentScript, /availability\?\.state/);
   assert.match(worker, /waitForSourceReady/);
   assert.match(worker, /collectFromTabWithDeadline/);
   assert.match(worker, /bounded response deadline/);
@@ -215,6 +217,10 @@ test("LinkedIn capture composes readiness with generic freshness recovery", () =
   assert.doesNotMatch(worker, /sourceReadinessRetryCount: 1/);
   assert.doesNotMatch(worker, /pendingContentPolicy: "detect_only"/);
   assert.match(worker, /restoreTabFocus/);
+  assert.match(worker, /managedCaptureWindow\.releaseSource\(source, captureLeaseId\)/);
+  assert.match(worker, /readiness\.state === "source_unavailable"/);
+  assert.match(worker, /new AkuBridgeError\(\s*"source_unavailable"/);
+  assert.match(worker, /\["visible_recovery_required", "source_unavailable", "login_required"\]\.includes\(error\?\.code\)/);
   assert.match(worker, /workingTabPreserved = prepared\.workingTabPreserved === true/);
   assert.doesNotMatch(worker, /workingTabPreserved = focusOutcome\.preserved/);
 });
@@ -309,10 +315,10 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /capabilities: response\.capabilities/);
   const capabilities = createBridgeCapabilities({ version: "0.7.0.1", version_name: "0.7.0-preview.1", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.7.0-preview.1");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v66");
-  assert.equal(capabilities.buildId, "aku-bridge-0.7.0-preview.1-source-adapters-v66");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v68");
+  assert.equal(capabilities.buildId, "aku-bridge-0.7.0-preview.1-source-adapters-v68");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v19", linkedin: "linkedin-dom-v15", facebook: "facebook-dom-v4" });
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v19", linkedin: "linkedin-dom-v15", facebook: "facebook-dom-v6" });
   assert.deepEqual(capabilities.mediaEvidenceAdapterVersions, { x: "x-response-evidence-v2" });
   assert.ok(capabilities.actions.includes("reload_self"));
   assert.ok(capabilities.actions.includes("report_capture_quality"));

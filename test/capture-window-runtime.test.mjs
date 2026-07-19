@@ -214,6 +214,46 @@ test("release preserves user tabs added to a Bridge-owned window", async () => {
   assert.equal(chrome.windowsById.get(2).tabs[0].id, 31);
 });
 
+test("source failure closes only its Bridge-owned managed tab", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  await runtime.prepare("x", { leaseId: "session-1" });
+  const facebook = await runtime.prepare("facebook", { leaseId: "session-1" });
+
+  assert.deepEqual(await runtime.releaseSource("facebook", "session-1"), {
+    released: true,
+    mode: "owned_source_surface_closed",
+    closedTabs: 1,
+    remainingManagedTabs: 1,
+    preservedUserTabs: 0,
+  });
+  assert.deepEqual(chrome.removedTabIds, [facebook.tab.id]);
+  assert.equal(chrome.windowsById.has(2), true);
+  assert.equal(chrome.windowsById.get(2).tabs.length, 1);
+
+  assert.deepEqual(await runtime.release("session-1"), {
+    released: true,
+    mode: "owned_window_closed",
+    closedTabs: 1,
+    closedManagedTabs: 1,
+    closedTransientTabs: 0,
+    preservedUserTabs: 0,
+  });
+});
+
+test("source cleanup cannot close a newer leased managed tab", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  await runtime.prepare("facebook", { leaseId: "session-2" });
+
+  assert.deepEqual(await runtime.releaseSource("facebook", "session-1"), {
+    released: false,
+    reason: "lease_mismatch",
+  });
+  assert.equal(chrome.windowsById.has(2), true);
+  assert.deepEqual(chrome.removedTabIds, []);
+});
+
 test("release does not close a newer leased surface", async () => {
   const chrome = fakeChrome();
   const runtime = createManagedCaptureWindowRuntime(chrome);

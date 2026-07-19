@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v66";
+  const runtimeRevision = "source-adapters-v68";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -52,6 +52,7 @@
       return readiness("wrong_page", source, 0, 0, false, false);
     }
     const adapter = sourceAdapters.get(source);
+    const availability = adapter.availability?.() ?? null;
     const loginRequired = adapter.loginRequired?.() === true;
     const discovery = discoverSourceCandidates(source);
     const candidates = discovery.candidates;
@@ -67,7 +68,8 @@
     const windowVisibleCandidates = candidates.filter((element) =>
       isVisibleInViewport(element, window),
     );
-    const state = loginRequired
+    const state = availability?.state
+      ?? (loginRequired
       ? "login_required"
       : visibleCandidates.length > 0
         ? "feed_ready"
@@ -77,7 +79,7 @@
             ? "feed_not_visible"
           : feedRoot
             ? "selector_mismatch"
-            : "page_shell";
+            : "page_shell");
     return readiness(
       state,
       source,
@@ -90,6 +92,7 @@
       discovery.semanticCandidateCount,
       discovery.actionAnchoredCandidateCount,
       visualHydration,
+      availability,
     );
   }
 
@@ -105,6 +108,7 @@
     semanticSelectorCandidateCount = 0,
     actionAnchoredCandidateCount = 0,
     visualHydration = {},
+    availability = null,
   ) {
     return {
       runtimeRevision,
@@ -121,6 +125,7 @@
       semanticSelectorCandidateCount,
       actionAnchoredCandidateCount,
       ...visualHydration,
+      availability,
       documentReadyState: document.readyState,
       checkedAt: new Date().toISOString(),
     };

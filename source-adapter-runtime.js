@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v9";
+  const runtimeRevision = "source-adapters-v10";
 
   const adapters = new Map();
 
@@ -71,6 +71,7 @@
       mediaAcquisitionVersion: adapter.mediaAcquisition.version,
       actions: [
         "probe_readiness",
+        ...(typeof adapter.availability === "function" ? ["report_source_availability"] : []),
         "probe_freshness",
         ...(adapter.freshness.revealSupported ? ["reveal_pending_content"] : []),
         "collect_visible",

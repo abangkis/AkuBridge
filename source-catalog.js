@@ -34,7 +34,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "facebook",
     displayName: "Facebook",
-    adapterVersion: "facebook-dom-v4",
+    adapterVersion: "facebook-dom-v6",
     adapterScript: "adapters/facebook-adapter.js",
     supportScripts: Object.freeze([]),
     feedUrl: "https://www.facebook.com/",

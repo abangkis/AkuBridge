@@ -18,7 +18,7 @@
 
   registry.register({
     source: "facebook",
-    version: "facebook-dom-v4",
+    version: "facebook-dom-v6",
     mediaHosts: Object.freeze(["fbcdn.net", "fbsbx.com"]),
     platformIdFromCandidates: (values) => {
       for (const value of Array.isArray(values) ? values : []) {
@@ -62,6 +62,25 @@
         })),
     }),
     matchesPage: () => ["facebook.com", "www.facebook.com"].includes(window.location.hostname),
+    availability: () => {
+      const heading = [...document.querySelectorAll("h1, h2, h3")]
+        .map((node) => String(node.textContent ?? "").trim())
+        .find(Boolean) ?? "";
+      const pageText = `${heading}\n${String(document.body?.innerText ?? "").slice(0, 2_000)}`;
+      const pathOutage = window.location.pathname === "/sorry.php"
+        && new URLSearchParams(window.location.search).get("msg") === "account";
+      const textOutage = /account temporarily unavailable/i.test(pageText)
+        && /unavailable due to a site issue/i.test(pageText)
+        && !document.querySelector('div[aria-posinset], [role="feed"]');
+      const unavailable = pathOutage || textOutage;
+      if (!unavailable) return null;
+      return Object.freeze({
+        state: "source_unavailable",
+        code: "site_outage",
+        message: "Facebook reports that the account is temporarily unavailable due to a site issue.",
+        retryable: true,
+      });
+    },
     loginRequired: () => /\/login|\/checkpoint/i.test(window.location.pathname) || Boolean(
       document.querySelector('input[name="email"], input[name="pass"], form[action*="login"]'),
     ),

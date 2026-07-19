@@ -19,7 +19,7 @@ test("source adapters register independently behind one contract", () => {
     [
       { source: "x", version: "x-dom-v19" },
       { source: "linkedin", version: "linkedin-dom-v15" },
-      { source: "facebook", version: "facebook-dom-v4" },
+      { source: "facebook", version: "facebook-dom-v6" },
     ],
   );
   assert.equal(context.AkuSourceAdapters.get("x").matchesPage(), true);
@@ -68,7 +68,7 @@ test("a reinjected adapter runtime replaces the stale registry generation", () =
   context.AkuSourceAdapters = previous;
   runScript(context, "source-adapter-runtime.js");
   assert.notEqual(context.AkuSourceAdapters, previous);
-  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v9");
+  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v10");
   assert.deepEqual([...context.AkuSourceAdapters.capabilities()], []);
 });
 
@@ -91,7 +91,7 @@ test("the complete adapter bundle can replace its current registry generation", 
     [
       { source: "x", version: "x-dom-v19" },
       { source: "linkedin", version: "linkedin-dom-v15" },
-      { source: "facebook", version: "facebook-dom-v4" },
+      { source: "facebook", version: "facebook-dom-v6" },
     ],
   );
 });

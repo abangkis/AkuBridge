@@ -19,7 +19,7 @@ test("source catalog exposes Facebook without changing the X media capability", 
   assert.deepEqual(sourceAdapterVersions(), {
     x: "x-dom-v19",
     linkedin: "linkedin-dom-v15",
-    facebook: "facebook-dom-v4",
+    facebook: "facebook-dom-v6",
   });
   assert.equal(sourceForUrl("https://www.facebook.com/"), "facebook");
   assert.equal(isCanonicalFeed("https://www.facebook.com/", "facebook"), true);
@@ -55,7 +55,7 @@ test("Facebook adapter passes synthetic Home Feed conformance", () => {
   const discovery = adapter.discoverCandidates({ uniqueElements: (items) => [...new Set(items)] });
   const helpers = { compactText, normalizeHttpUrl, structuredText: (element) => element?.innerText ?? "" };
 
-  assert.equal(adapter.version, "facebook-dom-v4");
+  assert.equal(adapter.version, "facebook-dom-v6");
   assert.equal(discovery.candidates.length, 1);
   assert.equal(adapter.findAuthor(candidate, helpers), "Aku Example");
   assert.equal(adapter.findAvatar(candidate, helpers), "https://scontent.fcgk1-2.fna.fbcdn.net/avatar.jpg");
@@ -71,6 +71,51 @@ test("Facebook adapter passes synthetic Home Feed conformance", () => {
     url: "https://www.facebook.com/aku.example/posts/1234567890/",
     source: "post_anchor",
   });
+});
+
+test("Facebook adapter classifies the live account outage without parsing it as a feed", () => {
+  const heading = { textContent: "Account Temporarily Unavailable." };
+  const document = {
+    querySelector: () => null,
+    querySelectorAll: (selector) => selector === "main h1, main h2, main h3" ? [heading] : [],
+  };
+  const context = vm.createContext({
+    document,
+    window: { document, location: { hostname: "www.facebook.com", pathname: "/sorry.php", search: "?msg=account" } },
+    URL,
+    URLSearchParams,
+  });
+  context.globalThis = context;
+  run(context, "source-adapter-runtime.js");
+  run(context, "adapters/facebook-adapter.js");
+
+  assert.deepEqual(JSON.parse(JSON.stringify(context.AkuSourceAdapters.get("facebook").availability())), {
+    state: "source_unavailable",
+    code: "site_outage",
+    message: "Facebook reports that the account is temporarily unavailable due to a site issue.",
+    retryable: true,
+  });
+});
+
+test("Facebook adapter recognizes the account outage shell without a semantic heading", () => {
+  const document = {
+    body: {
+      innerText: "Account Temporarily Unavailable. Your account is currently unavailable due to a site issue. Please try again in a few minutes.",
+    },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  const context = vm.createContext({
+    document,
+    window: { document, location: { hostname: "www.facebook.com", pathname: "/", search: "" } },
+    URL,
+    URLSearchParams,
+  });
+  context.globalThis = context;
+  run(context, "source-adapter-runtime.js");
+  run(context, "adapters/facebook-adapter.js");
+
+  assert.equal(context.AkuSourceAdapters.get("facebook").availability()?.state, "source_unavailable");
 });
 
 test("Facebook adapter discovers the live Home Feed aria-posinset structure", () => {
@@ -241,7 +286,7 @@ function facebookIdentityCandidate(hrefs, profileHref = null) {
 
 function loadFacebookAdapter() {
   const document = { querySelector: () => ({}), querySelectorAll: () => [] };
-  const context = vm.createContext({ document, window: { document, location: { hostname: "www.facebook.com", pathname: "/" } }, URL });
+  const context = vm.createContext({ document, window: { document, location: { hostname: "www.facebook.com", pathname: "/", search: "" } }, URL, URLSearchParams });
   context.globalThis = context;
   run(context, "source-adapter-runtime.js");
   run(context, "adapters/facebook-adapter.js");
