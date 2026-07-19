@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v69";
+  const runtimeRevision = "source-adapters-v70";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -676,7 +676,8 @@
         if (block?.presentation) block.presentation.contentExpansion = expansion?.state ?? "not_applicable";
       }
       qualityReports.push(captureQuality);
-      if (block.text.length < 40) continue;
+      const minimumBlockCharacters = adapter.captureTuning?.minimumBlockCharacters ?? 40;
+      if (block.text.length < minimumBlockCharacters) continue;
       if (blocks.some((existing) => existing.text === block.text)) continue;
       block.feedPosition = selectorCandidates.indexOf(container) + 1;
       blocks.push(block);

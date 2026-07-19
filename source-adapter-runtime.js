@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v11";
+  const runtimeRevision = "source-adapters-v12";
 
   const adapters = new Map();
 
@@ -60,6 +60,13 @@
         `AkuBridge ${adapter.source} adapter scroll-step multiplier must be between 1 and 2.`,
       );
     }
+    const minimumBlockCharacters = adapter.captureTuning?.minimumBlockCharacters;
+    if (minimumBlockCharacters !== undefined &&
+        (!Number.isInteger(minimumBlockCharacters) || minimumBlockCharacters < 1 || minimumBlockCharacters > 40)) {
+      throw new Error(
+        `AkuBridge ${adapter.source} adapter minimum block length must be between 1 and 40 characters.`,
+      );
+    }
     adapters.set(adapter.source, Object.freeze({ ...adapter }));
   }
 
@@ -77,6 +84,7 @@
       freshnessVersion: adapter.freshness.version,
       mediaAcquisitionVersion: adapter.mediaAcquisition.version,
       scrollStepMultiplier: adapter.captureTuning?.scrollStepMultiplier ?? 1,
+      minimumBlockCharacters: adapter.captureTuning?.minimumBlockCharacters ?? 40,
       actions: [
         "probe_readiness",
         ...(typeof adapter.availability === "function" ? ["report_source_availability"] : []),
