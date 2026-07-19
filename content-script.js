@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v70";
+  const runtimeRevision = "source-adapters-v71";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -676,9 +676,9 @@
         if (block?.presentation) block.presentation.contentExpansion = expansion?.state ?? "not_applicable";
       }
       qualityReports.push(captureQuality);
-      const minimumBlockCharacters = adapter.captureTuning?.minimumBlockCharacters ?? 40;
-      if (block.text.length < minimumBlockCharacters) continue;
-      if (blocks.some((existing) => existing.text === block.text)) continue;
+      if (captureQuality.verdict === "invalid") continue;
+      const dedupKey = admittedBlockKey(block);
+      if (blocks.some((existing) => admittedBlockKey(existing) === dedupKey)) continue;
       block.feedPosition = selectorCandidates.indexOf(container) + 1;
       blocks.push(block);
       if (blocks.length >= payload.maxBlocksPerSnapshot) break;
@@ -726,10 +726,18 @@
       candidate: block,
       facts,
       profileId: adapter.qualityProfile,
+      evidenceProfile: adapter.evidenceProfile,
       candidateKey,
       attempt,
       retriesRemaining,
     });
+  }
+
+  function admittedBlockKey(block) {
+    if (block?.platformId) return `platform:${block.platformId}`;
+    if (block?.permalink) return `permalink:${block.permalink}`;
+    const text = compactText(block?.text).toLowerCase();
+    return text ? `text:${stableTextHash(text)}` : `candidate:${provisionalCandidateKey("unknown", block, 0, "")}`;
   }
 
   function provisionalCandidateKey(source, block, containerIndex, capturedAt) {

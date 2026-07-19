@@ -17,23 +17,26 @@ test("source adapters register independently behind one contract", () => {
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v19" },
-      { source: "linkedin", version: "linkedin-dom-v15" },
-      { source: "facebook", version: "facebook-dom-v8" },
+      { source: "x", version: "x-dom-v20" },
+      { source: "linkedin", version: "linkedin-dom-v16" },
+      { source: "facebook", version: "facebook-dom-v9" },
     ],
   );
   assert.equal(context.AkuSourceAdapters.get("x").matchesPage(), true);
   assert.equal(context.AkuSourceAdapters.get("linkedin").matchesPage(), false);
-  assert.equal(context.AkuSourceAdapters.get("x").qualityProfile, "social-post-v1");
-  assert.equal(context.AkuSourceAdapters.capabilities()[0].qualityProfile, "social-post-v1");
+  assert.equal(context.AkuSourceAdapters.get("x").qualityProfile, "social-post-v2");
+  assert.equal(context.AkuSourceAdapters.capabilities()[0].qualityProfile, "social-post-v2");
   assert.equal(
     context.AkuSourceAdapters.capabilities()[0].mediaAcquisitionVersion,
     "x-media-acquisition-v2",
   );
   assert.equal(context.AkuSourceAdapters.capabilities()[0].scrollStepMultiplier, 1);
   assert.equal(context.AkuSourceAdapters.capabilities()[2].scrollStepMultiplier, 2);
-  assert.equal(context.AkuSourceAdapters.capabilities()[0].minimumBlockCharacters, 40);
-  assert.equal(context.AkuSourceAdapters.capabilities()[2].minimumBlockCharacters, 8);
+  assert.equal(context.AkuSourceAdapters.capabilities()[0].contentFamily, "feed_post");
+  assert.deepEqual(
+    [...context.AkuSourceAdapters.capabilities()[2].evidenceModalities],
+    ["text", "image", "video", "attachment", "quoted_post"],
+  );
 });
 
 test("adapter registry rejects duplicates and unknown sources", () => {
@@ -43,7 +46,11 @@ test("adapter registry rejects duplicates and unknown sources", () => {
     source: "fixture",
     version: "fixture-v1",
     mediaHosts: ["example.test"],
-    qualityProfile: "social-post-v1",
+    qualityProfile: "social-post-v2",
+    evidenceProfile: {
+      contentFamily: "feed_post",
+      modalities: ["text"],
+    },
     qualitySelectors: {},
     freshness: {
       version: "fixture-freshness-v1",
@@ -72,7 +79,7 @@ test("a reinjected adapter runtime replaces the stale registry generation", () =
   context.AkuSourceAdapters = previous;
   runScript(context, "source-adapter-runtime.js");
   assert.notEqual(context.AkuSourceAdapters, previous);
-  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v12");
+  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v13");
   assert.deepEqual([...context.AkuSourceAdapters.capabilities()], []);
 });
 
@@ -93,9 +100,9 @@ test("the complete adapter bundle can replace its current registry generation", 
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v19" },
-      { source: "linkedin", version: "linkedin-dom-v15" },
-      { source: "facebook", version: "facebook-dom-v8" },
+      { source: "x", version: "x-dom-v20" },
+      { source: "linkedin", version: "linkedin-dom-v16" },
+      { source: "facebook", version: "facebook-dom-v9" },
     ],
   );
 });

@@ -2,7 +2,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "x",
     displayName: "X",
-    adapterVersion: "x-dom-v19",
+    adapterVersion: "x-dom-v20",
     adapterScript: "adapters/x-adapter.js",
     supportScripts: Object.freeze(["x-media-evidence-runtime.js"]),
     feedUrl: "https://x.com/home",
@@ -20,7 +20,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "linkedin",
     displayName: "LinkedIn",
-    adapterVersion: "linkedin-dom-v15",
+    adapterVersion: "linkedin-dom-v16",
     adapterScript: "adapters/linkedin-adapter.js",
     supportScripts: Object.freeze(["linkedin-permalink-policy.js", "linkedin-timestamp-policy.js"]),
     feedUrl: "https://www.linkedin.com/feed/",
@@ -34,7 +34,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "facebook",
     displayName: "Facebook",
-    adapterVersion: "facebook-dom-v8",
+    adapterVersion: "facebook-dom-v9",
     adapterScript: "adapters/facebook-adapter.js",
     supportScripts: Object.freeze([]),
     feedUrl: "https://www.facebook.com/",

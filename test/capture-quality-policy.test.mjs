@@ -12,7 +12,8 @@ test("complete social candidates pass the generic quality profile", () => {
   const report = policy.evaluateCandidate({
     candidate: completeCandidate(),
     facts: completeFacts(),
-    profileId: "social-post-v1",
+    profileId: "social-post-v2",
+    evidenceProfile: feedPostEvidenceProfile(),
     retriesRemaining: 1,
   });
   assert.equal(report.verdict, "complete");
@@ -26,7 +27,8 @@ test("detected empty media is retryable and then degrades after the bounded retr
   const first = policy.evaluateCandidate({
     candidate,
     facts: completeFacts(),
-    profileId: "social-post-v1",
+    profileId: "social-post-v2",
+    evidenceProfile: feedPostEvidenceProfile(),
     retriesRemaining: 1,
   });
   assert.equal(first.verdict, "retryable");
@@ -36,7 +38,8 @@ test("detected empty media is retryable and then degrades after the bounded retr
   const final = policy.evaluateCandidate({
     candidate,
     facts: completeFacts(),
-    profileId: "social-post-v1",
+    profileId: "social-post-v2",
+    evidenceProfile: feedPostEvidenceProfile(),
     attempt: 1,
     retriesRemaining: 0,
   });
@@ -49,7 +52,8 @@ test("missing avatars are presentation warnings and never consume the retry budg
   const report = policy.evaluateCandidate({
     candidate: { ...completeCandidate(), avatarUrl: null },
     facts: completeFacts(),
-    profileId: "social-post-v1",
+    profileId: "social-post-v2",
+    evidenceProfile: feedPostEvidenceProfile(),
     candidateKey: "x:status:1",
     retriesRemaining: 1,
   });
@@ -66,7 +70,8 @@ test("a detected empty required author becomes invalid after recovery is exhaust
   const first = policy.evaluateCandidate({
     candidate,
     facts: completeFacts(),
-    profileId: "social-post-v1",
+    profileId: "social-post-v2",
+    evidenceProfile: feedPostEvidenceProfile(),
     retriesRemaining: 1,
   });
   assert.equal(first.verdict, "retryable");
@@ -74,7 +79,8 @@ test("a detected empty required author becomes invalid after recovery is exhaust
   const final = policy.evaluateCandidate({
     candidate,
     facts: completeFacts(),
-    profileId: "social-post-v1",
+    profileId: "social-post-v2",
+    evidenceProfile: feedPostEvidenceProfile(),
     attempt: 1,
     retriesRemaining: 0,
   });
@@ -87,7 +93,8 @@ test("explicitly not-exposed timestamps do not reduce quality", () => {
   const report = policy.evaluateCandidate({
     candidate: { ...completeCandidate(), publishedAt: null },
     facts: { ...completeFacts(), publishedAtNotExposed: true },
-    profileId: "social-post-v1",
+    profileId: "social-post-v2",
+    evidenceProfile: feedPostEvidenceProfile(),
     retriesRemaining: 0,
   });
   assert.equal(report.verdict, "complete");
@@ -98,12 +105,14 @@ test("quality summaries preserve warnings without degrading the aggregate", () =
   const complete = policy.evaluateCandidate({
     candidate: completeCandidate(),
     facts: completeFacts(),
-    profileId: "social-post-v1",
+    profileId: "social-post-v2",
+    evidenceProfile: feedPostEvidenceProfile(),
   });
   const degraded = policy.evaluateCandidate({
     candidate: { ...completeCandidate(), avatarUrl: null },
     facts: completeFacts(),
-    profileId: "social-post-v1",
+    profileId: "social-post-v2",
+    evidenceProfile: feedPostEvidenceProfile(),
     attempt: 1,
   });
   const summary = policy.summarize([complete, degraded], { retryBudget: 1 });
@@ -113,6 +122,42 @@ test("quality summaries preserve warnings without degrading the aggregate", () =
   assert.equal(summary.verdictCounts.usable_degraded, 0);
   assert.equal(summary.retryAttempts, 1);
 });
+
+test("native media evidence admits a post without a text caption", () => {
+  const policy = loadPolicy();
+  const report = policy.evaluateCandidate({
+    candidate: {
+      ...completeCandidate(),
+      text: "",
+      media: [{ kind: "image", url: "https://pbs.twimg.com/media/example.jpg" }],
+    },
+    facts: { ...completeFacts(), contentRootDetected: false, stableTextIdentity: false },
+    profileId: "social-post-v2",
+    evidenceProfile: feedPostEvidenceProfile(),
+  });
+  assert.equal(report.verdict, "complete");
+  assert.deepEqual([...report.evidenceModalities], ["image"]);
+  assert.equal(report.identitySource, "platform_id");
+});
+
+test("a block without any declared evidence modality is invalid", () => {
+  const policy = loadPolicy();
+  const report = policy.evaluateCandidate({
+    candidate: { ...completeCandidate(), text: "", media: [], attachments: [], quotedPost: null },
+    facts: { ...completeFacts(), contentRootDetected: false, mediaRootDetected: false },
+    profileId: "social-post-v2",
+    evidenceProfile: feedPostEvidenceProfile(),
+  });
+  assert.equal(report.verdict, "invalid");
+  assert.equal(report.issues[0].field, "evidence");
+});
+
+function feedPostEvidenceProfile() {
+  return {
+    contentFamily: "feed_post",
+    modalities: ["text", "image", "video", "attachment", "quoted_post"],
+  };
+}
 
 function completeCandidate() {
   return {

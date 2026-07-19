@@ -20,7 +20,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v15",
+    version: "linkedin-dom-v16",
     maxBlocksPerSnapshot: 8,
     scrollContext: "nearest_scrollable",
     scrollRootSelectors: Object.freeze(['[data-testid="mainFeed"]', "main", "#workspace"]),
@@ -64,7 +64,11 @@
       }
       return null;
     },
-    qualityProfile: "social-post-v1",
+    qualityProfile: "social-post-v2",
+    evidenceProfile: Object.freeze({
+      contentFamily: "feed_post",
+      modalities: Object.freeze(["text", "image", "video", "attachment", "quoted_post"]),
+    }),
     qualitySelectors: Object.freeze({
       author: 'button[aria-label^="Open control menu for post by"], '
         + '.update-components-actor__name, .feed-shared-actor__name, '

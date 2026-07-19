@@ -4,7 +4,7 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v19",
+    version: "x-dom-v20",
     mediaHosts: Object.freeze(["pbs.twimg.com", "video.twimg.com"]),
     structuredMediaEvidence: Object.freeze({
       payloadField: "xStructuredMediaEvidence",
@@ -20,7 +20,11 @@
       }
       return null;
     },
-    qualityProfile: "social-post-v1",
+    qualityProfile: "social-post-v2",
+    evidenceProfile: Object.freeze({
+      contentFamily: "feed_post",
+      modalities: Object.freeze(["text", "image", "video", "attachment", "quoted_post"]),
+    }),
     qualitySelectors: Object.freeze({
       author: '[data-testid="User-Name"]',
       avatar: '[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"]',

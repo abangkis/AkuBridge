@@ -1,7 +1,7 @@
 # AkuBridge
 
 Current preview identity: **`0.7.0-preview.1`** / Chrome manifest
-**`0.7.0.1`** / runtime **`source-adapters-v70`**.
+**`0.7.0.1`** / runtime **`source-adapters-v71`**.
 
 Source readiness is registry-driven. Sidecar commands may tune each source's
 hydration wait in whole seconds inside that source's fixed default +/- 5 second
@@ -18,15 +18,15 @@ or validate the complete bridge observation by themselves.
 ```mermaid
 flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
-    DOM --> XA["X adapter<br/>x-dom-v19<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
-    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v15<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
-    DOM --> FA["Facebook adapter<br/>facebook-dom-v8<br/>feed posts only"]
+    DOM --> XA["X adapter<br/>x-dom-v20<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
+    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v16<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
+    DOM --> FA["Facebook adapter<br/>facebook-dom-v9<br/>feed posts only"]
     XA --> R["Source-adapter registry"]
     LA --> R
     FA --> R
     R --> F["Generic freshness recovery<br/>wake -> reveal -> proof"]
     F --> C["Shared content runtime"]
-    C --> Q["Generic quality evaluator<br/>social-post-v1"]
+    C --> Q["Generic evidence admission<br/>social-post-v2"]
     Q --> M["Generic media acquisition<br/>primary -> structured -> hydrate -> alternate DOM"]
     DOM --> XE["X DOM media evidence<br/>document-start watcher + MAIN-world resolver"]
     XG["Already-requested X GraphQL responses<br/>3 exact operations"] --> XR["X response evidence adapter<br/>document_start / MAIN world"]
@@ -52,11 +52,17 @@ under the session lease and closed at terminal cleanup. The source adapters own 
 source-native text/author/presentation/relationship extraction, typed
 attachments, media
 selectors and exclusions, a versioned freshness strategy, and a versioned
-media-acquisition capability. The shared content
+media-acquisition capability. Each adapter also declares a `feed_post` content
+family and the evidence modalities it can produce; it never decides relevance,
+materiality, or Timeline selection. The shared content
 runtime owns canonical block assembly, URL/date/media normalization, bounded
 snapshot collection, scrolling and restoration, field-presence diagnostics,
-and extension messaging. Trusted `social-post-v1` policy requires text,
-author, and one stable identity path; it conditionally expects media or a
+and extension messaging. Trusted `social-post-v2` policy requires author,
+one stable identity path, and at least one admitted modality: text, image,
+video, typed attachment, or quoted-post evidence. There is no source-specific
+minimum caption length. Forty characters remains only the bounded stable-text
+identity fallback when no native platform id or permalink is available; it is
+not a content-admission threshold. The policy conditionally expects media or a
 primary avatar when the adapter detects that source root. The service worker
 owns tab selection, readiness, leases, retries already authorized by the
 capture contract, and transport.
@@ -72,8 +78,12 @@ evaluator emits explicit `complete`, `usable_degraded`, `retryable`, or
 `invalid` reports with field-level reason codes. AkuSidecar pre-authorizes at
 most one same-candidate, same-viewport retry; the retry cannot add scrolling,
 navigation, source changes, or deadline. A final `retryable` report is not
-allowed across the Bridge boundary. Sidecar validates report consistency,
-removes invalid candidates, and sends only admitted evidence to reasoning.
+allowed across the Bridge boundary. Invalid blocks stay in bounded quality
+diagnostics but are not observation candidates. Sidecar independently rejects
+identity-only blocks, non-native permalinks, and resource-limit violations. For
+media-heavy evidence, the reasoning projection keeps only bounded kind,
+alt-text, dimension, and provenance metadata; media URLs and any claim of
+unseen visual content stay outside the prompt.
 
 The X adapter treats an in-post `/status/.../photo/...` permalink as semantic
 media evidence. This keeps a temporarily unhydrated photo inside the generic

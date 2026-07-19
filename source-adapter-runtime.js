@@ -1,5 +1,13 @@
 (() => {
-  const runtimeRevision = "source-adapters-v12";
+  const runtimeRevision = "source-adapters-v13";
+  const supportedContentFamilies = new Set(["feed_post"]);
+  const supportedEvidenceModalities = new Set([
+    "text",
+    "image",
+    "video",
+    "attachment",
+    "quoted_post",
+  ]);
 
   const adapters = new Map();
 
@@ -17,6 +25,17 @@
     }
     if (typeof adapter.qualityProfile !== "string" || !adapter.qualityProfile) {
       throw new Error(`AkuBridge ${adapter.source} adapter requires a quality profile.`);
+    }
+    if (!adapter.evidenceProfile || typeof adapter.evidenceProfile !== "object") {
+      throw new Error(`AkuBridge ${adapter.source} adapter requires an evidence profile.`);
+    }
+    if (!supportedContentFamilies.has(adapter.evidenceProfile.contentFamily)) {
+      throw new Error(`AkuBridge ${adapter.source} adapter has an unsupported content family.`);
+    }
+    if (!Array.isArray(adapter.evidenceProfile.modalities) ||
+        adapter.evidenceProfile.modalities.length === 0 ||
+        adapter.evidenceProfile.modalities.some((value) => !supportedEvidenceModalities.has(value))) {
+      throw new Error(`AkuBridge ${adapter.source} adapter has invalid evidence modalities.`);
     }
     if (!adapter.qualitySelectors || typeof adapter.qualitySelectors !== "object") {
       throw new Error(`AkuBridge ${adapter.source} adapter requires quality selectors.`);
@@ -60,13 +79,6 @@
         `AkuBridge ${adapter.source} adapter scroll-step multiplier must be between 1 and 2.`,
       );
     }
-    const minimumBlockCharacters = adapter.captureTuning?.minimumBlockCharacters;
-    if (minimumBlockCharacters !== undefined &&
-        (!Number.isInteger(minimumBlockCharacters) || minimumBlockCharacters < 1 || minimumBlockCharacters > 40)) {
-      throw new Error(
-        `AkuBridge ${adapter.source} adapter minimum block length must be between 1 and 40 characters.`,
-      );
-    }
     adapters.set(adapter.source, Object.freeze({ ...adapter }));
   }
 
@@ -81,10 +93,11 @@
       source: adapter.source,
       version: adapter.version,
       qualityProfile: adapter.qualityProfile,
+      contentFamily: adapter.evidenceProfile.contentFamily,
+      evidenceModalities: [...adapter.evidenceProfile.modalities],
       freshnessVersion: adapter.freshness.version,
       mediaAcquisitionVersion: adapter.mediaAcquisition.version,
       scrollStepMultiplier: adapter.captureTuning?.scrollStepMultiplier ?? 1,
-      minimumBlockCharacters: adapter.captureTuning?.minimumBlockCharacters ?? 40,
       actions: [
         "probe_readiness",
         ...(typeof adapter.availability === "function" ? ["report_source_availability"] : []),

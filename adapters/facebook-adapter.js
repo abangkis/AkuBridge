@@ -18,7 +18,7 @@
 
   registry.register({
     source: "facebook",
-    version: "facebook-dom-v8",
+    version: "facebook-dom-v9",
     mediaHosts: Object.freeze(["fbcdn.net", "fbsbx.com"]),
     platformIdFromCandidates: (values) => {
       for (const value of Array.isArray(values) ? values : []) {
@@ -30,7 +30,11 @@
       }
       return null;
     },
-    qualityProfile: "social-post-v1",
+    qualityProfile: "social-post-v2",
+    evidenceProfile: Object.freeze({
+      contentFamily: "feed_post",
+      modalities: Object.freeze(["text", "image", "video", "attachment", "quoted_post"]),
+    }),
     qualitySelectors: Object.freeze({
       author: `${postActionSelector}, h2 a[role="link"], h3 a[role="link"], h4 a[role="link"], strong a[role="link"], `
         + 'a[role="link"][aria-label], a[role="link"][href*="facebook.com/"]',
@@ -66,9 +70,6 @@
       // step can remain inside a single tall gallery post, so advance farther without
       // changing the bounded scroll count or the behavior of any other adapter.
       scrollStepMultiplier: 2,
-      // A short caption can still be a complete Facebook post when the bounded
-      // author, native identity, and media evidence are present.
-      minimumBlockCharacters: 8,
     }),
     matchesPage: () => ["facebook.com", "www.facebook.com"].includes(window.location.hostname),
     availability: () => {

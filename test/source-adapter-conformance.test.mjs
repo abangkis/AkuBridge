@@ -27,7 +27,8 @@ for (const source of ["x", "linkedin"]) {
     const semantics = adapter.extractSemantics(candidate, { compactText, normalizeHttpUrl });
     const avatarUrl = adapter.findAvatar(candidate, { compactText, normalizeHttpUrl });
     assert.equal(adapter.version, fixture.version);
-    assert.equal(adapter.qualityProfile, "social-post-v1");
+    assert.equal(adapter.qualityProfile, "social-post-v2");
+    assert.equal(adapter.evidenceProfile.contentFamily, "feed_post");
     assert.equal(discovery.candidates.length, 1);
     assert.equal(discovery.strategy, fixture.strategy);
     assert.equal(semantics.contentKind, fixture.contentKind);

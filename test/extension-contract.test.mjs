@@ -75,14 +75,14 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
     linkedInAdapter,
     /\[data-testid="mainFeed"\] \[role="listitem"\]/,
   );
-  assert.match(linkedInAdapter, /linkedin-dom-v15/);
+  assert.match(linkedInAdapter, /linkedin-dom-v16/);
   assert.match(contentScript, /platformId/);
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v70/);
+  assert.match(contentScript, /source-adapters-v71/);
   assert.match(contentScript, /plan\.scrollFraction \* scrollStepMultiplier/);
-  assert.match(contentScript, /adapter\.captureTuning\?\.minimumBlockCharacters \?\? 40/);
+  assert.match(contentScript, /captureQuality\.verdict === "invalid"/);
   assert.match(contentScript, /relative_text_estimate/);
   assert.match(contentScript, /not_exposed_promoted/);
   assert.match(linkedInAdapter, /recoverLinkedInPermalinks/);
@@ -317,10 +317,10 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /capabilities: response\.capabilities/);
   const capabilities = createBridgeCapabilities({ version: "0.7.0.1", version_name: "0.7.0-preview.1", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.7.0-preview.1");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v70");
-  assert.equal(capabilities.buildId, "aku-bridge-0.7.0-preview.1-source-adapters-v70");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v71");
+  assert.equal(capabilities.buildId, "aku-bridge-0.7.0-preview.1-source-adapters-v71");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v19", linkedin: "linkedin-dom-v15", facebook: "facebook-dom-v8" });
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v20", linkedin: "linkedin-dom-v16", facebook: "facebook-dom-v9" });
   assert.deepEqual(capabilities.mediaEvidenceAdapterVersions, { x: "x-response-evidence-v2" });
   assert.ok(capabilities.actions.includes("reload_self"));
   assert.ok(capabilities.actions.includes("report_capture_quality"));
