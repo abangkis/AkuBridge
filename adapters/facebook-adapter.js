@@ -12,20 +12,21 @@
   const postMediaSelector = [
     'a[href*="/photo"] img[src]',
     'a[href*="/videos/"] img[src]',
+    'a[href*="/reel/"] img[src]',
     '[data-ad-preview="message"] ~ * img[src]',
     'video',
   ].join(", ");
 
   registry.register({
     source: "facebook",
-    version: "facebook-dom-v9",
+    version: "facebook-dom-v10",
     mediaHosts: Object.freeze(["fbcdn.net", "fbsbx.com"]),
     platformIdFromCandidates: (values) => {
       for (const value of Array.isArray(values) ? values : []) {
         const candidate = String(value ?? "");
         const id = candidate.match(/[?&](?:story_fbid|fbid|photo_id|v)=(\d+)/i)?.[1]
           ?? candidate.match(/[?&]set=pcb\.(\d+)/i)?.[1]
-          ?? candidate.match(/\/(?:posts|videos)\/(pfbid[A-Za-z0-9]+|\d+)/i)?.[1];
+          ?? candidate.match(/\/(?:posts|videos|reel)\/(pfbid[A-Za-z0-9]+|\d+)/i)?.[1];
         if (id) return `facebook:post:${id}`;
       }
       return null;
@@ -142,12 +143,17 @@
       intervalMs: 40,
     }),
     avatarFallbackSelectors: Object.freeze(['a[role="link"] img[src]']),
+    mediaRendering: Object.freeze({
+      trustedRootSelector: 'a[href*="/photo"], a[href*="/videos/"], a[href*="/reel/"]',
+      videoRootSelector: 'a[href*="/videos/"], a[href*="/reel/"], [aria-label="Video player"]',
+    }),
     permalinkPatterns: Object.freeze([
       /\/posts\//,
       /\/permalink\//,
       /\/story\.php/,
       /\/photo/,
       /\/videos\//,
+      /\/reel\//,
       /\/watch\/\?v=/,
       /\/video\.php\?v=/,
     ]),
@@ -361,6 +367,8 @@
       if (postPath) return { url: `https://www.facebook.com${postPath[1]}/`, source: "post_anchor" };
       const videoPath = url.pathname.match(/^(\/(?:[^/]+\/)?videos\/(\d+))\/?$/i);
       if (videoPath) return { url: `https://www.facebook.com${videoPath[1]}/`, source: "video_anchor" };
+      const reelPath = url.pathname.match(/^\/reel\/(\d+)\/?$/i);
+      if (reelPath) return { url: `https://www.facebook.com/reel/${reelPath[1]}/`, source: "embedded_video_anchor" };
       if (/^\/(?:watch\/|video\.php)$/i.test(url.pathname) && /^\d+$/.test(url.searchParams.get("v") ?? "")) {
         return { url: `https://www.facebook.com/watch/?v=${url.searchParams.get("v")}`, source: "video_anchor" };
       }
@@ -405,7 +413,12 @@
   function facebookMediaRoots(container, { excludeRoot, uniqueElements }) {
     return uniqueElements([...container.querySelectorAll(postMediaSelector)])
       .filter((root) => !excludeRoot?.contains?.(root))
-      .map((root) => ({ root, kind: root.matches?.("video") ? "video" : "image" }));
+      .map((root) => ({
+        root,
+        kind: root.matches?.("video") || root.closest?.('a[href*="/videos/"], a[href*="/reel/"], [aria-label="Video player"]')
+          ? "video"
+          : "image",
+      }));
   }
 
   function engagementCounts(container, compactText) {

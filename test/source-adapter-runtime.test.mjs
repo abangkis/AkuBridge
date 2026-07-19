@@ -19,7 +19,7 @@ test("source adapters register independently behind one contract", () => {
     [
       { source: "x", version: "x-dom-v20" },
       { source: "linkedin", version: "linkedin-dom-v16" },
-      { source: "facebook", version: "facebook-dom-v9" },
+      { source: "facebook", version: "facebook-dom-v10" },
     ],
   );
   assert.equal(context.AkuSourceAdapters.get("x").matchesPage(), true);
@@ -102,7 +102,7 @@ test("the complete adapter bundle can replace its current registry generation", 
     [
       { source: "x", version: "x-dom-v20" },
       { source: "linkedin", version: "linkedin-dom-v16" },
-      { source: "facebook", version: "facebook-dom-v9" },
+      { source: "facebook", version: "facebook-dom-v10" },
     ],
   );
 });

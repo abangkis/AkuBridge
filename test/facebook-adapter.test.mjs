@@ -19,7 +19,7 @@ test("source catalog exposes Facebook without changing the X media capability", 
   assert.deepEqual(sourceAdapterVersions(), {
     x: "x-dom-v20",
     linkedin: "linkedin-dom-v16",
-    facebook: "facebook-dom-v9",
+    facebook: "facebook-dom-v10",
   });
   assert.equal(sourceForUrl("https://www.facebook.com/"), "facebook");
   assert.equal(isCanonicalFeed("https://www.facebook.com/", "facebook"), true);
@@ -55,7 +55,7 @@ test("Facebook adapter passes synthetic Home Feed conformance", () => {
   const discovery = adapter.discoverCandidates({ uniqueElements: (items) => [...new Set(items)] });
   const helpers = { compactText, normalizeHttpUrl, structuredText: (element) => element?.innerText ?? "" };
 
-  assert.equal(adapter.version, "facebook-dom-v9");
+  assert.equal(adapter.version, "facebook-dom-v10");
   assert.equal(adapter.captureTuning.scrollStepMultiplier, 2);
   assert.deepEqual([...adapter.evidenceProfile.modalities], ["text", "image", "video", "attachment", "quoted_post"]);
   assert.equal(discovery.candidates.length, 1);
@@ -224,15 +224,28 @@ test("Facebook adapter trusts the explicit post action author and rejects presen
   assert.equal(adapter.findAuthor(candidate, { compactText }), "Ibnu Mundzir");
 });
 
-test("Facebook main adapter ignores Stories and Reels surfaces", () => {
+test("Facebook feed adapter accepts an embedded Reel as native evidence without changing candidate scope", () => {
   const adapter = loadFacebookAdapter();
   assert.equal(adapter.platformIdFromCandidates([
     "https://www.facebook.com/reel/123456789/",
-  ]), null);
-  assert.equal(adapter.findPermalinkDetails(
+  ]), "facebook:post:123456789");
+  assert.deepEqual(JSON.parse(JSON.stringify(adapter.findPermalinkDetails(
     facebookIdentityCandidate(["https://www.facebook.com/reel/123456789/"]),
     { normalizeHttpUrl },
-  ), null);
+  ))), {
+    url: "https://www.facebook.com/reel/123456789/",
+    source: "embedded_video_anchor",
+  });
+  assert.match(adapter.mediaRendering.videoRootSelector, /reel/);
+  const embeddedPoster = {
+    matches: () => false,
+    closest: (selector) => selector.includes('/reel/') ? {} : null,
+  };
+  const container = { querySelectorAll: () => [embeddedPoster] };
+  assert.deepEqual(JSON.parse(JSON.stringify(adapter.mediaAcquisition.detectExpectedKinds(container, {
+    excludeRoot: null,
+    uniqueElements: (items) => items,
+  }))), ["video"]);
 });
 
 test("Facebook adapter canonicalizes post, video, and media-parent identity", () => {

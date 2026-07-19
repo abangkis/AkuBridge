@@ -20,7 +20,7 @@ flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
     DOM --> XA["X adapter<br/>x-dom-v20<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
     DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v16<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
-    DOM --> FA["Facebook adapter<br/>facebook-dom-v9<br/>feed posts only"]
+    DOM --> FA["Facebook adapter<br/>facebook-dom-v10<br/>feed posts only"]
     XA --> R["Source-adapter registry"]
     LA --> R
     FA --> R
