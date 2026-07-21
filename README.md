@@ -9,6 +9,20 @@ window; AkuBridge clamps the value again before using it.
 
 AkuBridge is the read-only Chrome extension used by AkuBrowser to collect a bounded set of visible observations from X, LinkedIn, or Facebook.
 
+## OpenAI Build Week role
+
+During OpenAI Build Week, AkuBridge expanded from the early X/LinkedIn
+prototype into a three-source adapter registry with bounded Facebook capture,
+shared quality validation, freshness recovery, media acquisition, quiet capture
+surfaces, and explicit tab/window lifecycle ownership. Codex accelerated live
+DOM diagnosis, contract design, implementation, and regression-test creation.
+
+AkuBridge remains deliberately read-only. It observes and normalizes source
+evidence, but it never decides relevance, calls the reasoning model, performs
+social writes, or controls Timeline selection. See the
+[final project story](https://github.com/abangkis/AkuBrowser/blob/main/docs/openai-build-week-submission.md)
+and [Build Week evidence](https://github.com/abangkis/AkuBrowser/blob/main/BUILD_WEEK.md).
+
 ## Current source-adapter architecture
 
 X, LinkedIn, and Facebook DOM knowledge is separated behind one revisioned adapter
