@@ -20,10 +20,18 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   assert.deepEqual(manifest.permissions.sort(), ["scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:11122/*",
+    "http://localhost:11122/*",
     "https://facebook.com/*",
     "https://www.facebook.com/*",
     "https://www.linkedin.com/*",
     "https://x.com/*",
+  ]);
+  const browserRelay = manifest.content_scripts.find((entry) =>
+    entry.js?.includes("aku-browser-tab-bridge.js"),
+  );
+  assert.deepEqual(browserRelay?.matches?.sort(), [
+    "http://127.0.0.1:11122/*",
+    "http://localhost:11122/*",
   ]);
 
   const source = [
@@ -55,6 +63,9 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   }
   assert.equal(source.includes("SIGNAL" + "_GATEWAY"), false);
   assert.equal(source.includes("X-" + "Signal-Bridge"), false);
+  assert.match(source, /const AKU_BROWSER_ORIGINS = new Set\(/);
+  assert.match(source, /new URL\(value\)\.origin/);
+  assert.match(source, /const allowedOrigin = window\.location\.origin/);
 });
 
 test("AkuBridge recognizes the current LinkedIn feed container", () => {

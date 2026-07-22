@@ -332,4 +332,8 @@ The local AkuBrowser page receives a read-only capability handshake containing t
 
 ## Boundary
 
-AkuBridge communicates only with AkuSidecar at `http://127.0.0.1:11122` through the versioned local bridge contract. It does not import AkuSidecar source code.
+AkuBridge communicates only with AkuSidecar at `http://127.0.0.1:11122` or
+`http://localhost:11122` through the versioned local bridge contract. The
+numeric loopback address remains the canonical launcher origin; `localhost` is
+supported as an equivalent alias. AkuBridge does not import AkuSidecar source
+code.

@@ -2,8 +2,12 @@
   if (globalThis.__akuBrowserTabBridgeInstalled) return;
   globalThis.__akuBrowserTabBridgeInstalled = true;
 
-  const allowedOrigin = "http://127.0.0.1:11122";
-  if (window.location.origin !== allowedOrigin) return;
+  const allowedOrigins = new Set([
+    "http://127.0.0.1:11122",
+    "http://localhost:11122",
+  ]);
+  const allowedOrigin = window.location.origin;
+  if (!allowedOrigins.has(allowedOrigin)) return;
 
   window.addEventListener("message", async (event) => {
     if (event.source !== window || event.origin !== allowedOrigin) return;

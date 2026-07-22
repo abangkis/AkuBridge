@@ -40,6 +40,10 @@ import {
 } from "./source-catalog.js";
 
 const AKU_BROWSER_ORIGIN = "http://127.0.0.1:11122";
+const AKU_BROWSER_ORIGINS = new Set([
+  AKU_BROWSER_ORIGIN,
+  "http://localhost:11122",
+]);
 const CAPTURE_DELAY_MAX_MS = 2_000;
 const PENDING_SELF_RELOAD_KEY = "akuBridgePendingSelfReload";
 const PENDING_SELF_RELOAD_MAX_AGE_MS = 30_000;
@@ -100,7 +104,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === "AKU_BROWSER_X_MEDIA_EVIDENCE_LOOKUP") {
-    if (!sender.url?.startsWith(`${AKU_BROWSER_ORIGIN}/`)) {
+    if (!isAkuBrowserOrigin(sender.url)) {
       sendResponse({ ok: false, message: "X media evidence lookup rejected: invalid AkuBrowser origin." });
       return false;
     }
@@ -114,7 +118,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (message?.type === "AKU_BRIDGE_RELOAD_SELF") {
-    if (!sender.url?.startsWith(`${AKU_BROWSER_ORIGIN}/`)) {
+    if (!isAkuBrowserOrigin(sender.url)) {
       sendResponse({ accepted: false, message: "reload_self rejected: invalid AkuBrowser origin." });
       return false;
     }
@@ -130,7 +134,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === "AKU_BRIDGE_RELEASE_CAPTURE_SURFACE") {
-    if (!sender.url?.startsWith(`${AKU_BROWSER_ORIGIN}/`)) {
+    if (!isAkuBrowserOrigin(sender.url)) {
       sendResponse({ ok: false, message: "Capture-surface release rejected: invalid AkuBrowser origin." });
       return false;
     }
@@ -143,7 +147,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === "AKU_BRIDGE_MEDIA_RECAPTURE") {
-    if (!sender.url?.startsWith(`${AKU_BROWSER_ORIGIN}/`)) {
+    if (!isAkuBrowserOrigin(sender.url)) {
       sendResponse({ ok: false, message: "Media recapture rejected: invalid AkuBrowser origin." });
       return false;
     }
@@ -165,7 +169,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type !== "AKU_BROWSER_DISPATCH") return undefined;
-  if (!sender.url?.startsWith(`${AKU_BROWSER_ORIGIN}/`)) {
+  if (!isAkuBrowserOrigin(sender.url)) {
     sendResponse({ ok: false, message: "Dispatch rejected: invalid AkuBrowser origin." });
     return false;
   }
@@ -178,6 +182,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 function isTrustedSourceContentSender(sender) {
   if (!Number.isInteger(sender.tab?.id) || typeof sender.url !== "string") return false;
   return sourceForUrl(sender.url) !== null;
+}
+
+function isAkuBrowserOrigin(value) {
+  try {
+    return AKU_BROWSER_ORIGINS.has(new URL(value).origin);
+  } catch {
+    return false;
+  }
 }
 
 function isTrustedXSourceContentSender(sender) {
@@ -940,7 +952,7 @@ async function waitForTabComplete(tabId, timeoutMs) {
 }
 
 function assertEndpoint(endpoint) {
-  if (endpoint !== AKU_BROWSER_ORIGIN) {
+  if (!isAkuBrowserOrigin(endpoint)) {
     throw new Error("Dispatch rejected: unsupported sidecar endpoint.");
   }
 }
