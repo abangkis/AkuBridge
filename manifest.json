@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "AkuBridge",
   "version": "0.7.0.2",
-  "version_name": "0.7.0-preview.2",
+  "version_name": "0.7.0-preview.3",
   "description": "Read-only, bounded browser observation bridge for AkuBrowser.",
   "permissions": [
     "tabs",
