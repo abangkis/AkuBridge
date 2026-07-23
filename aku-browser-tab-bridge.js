@@ -148,6 +148,20 @@
       return;
     }
 
+    if (message.type === "AKU_BROWSER_CONFIGURE_BACKGROUND_DISPATCH") {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "AKU_BRIDGE_CONFIGURE_BACKGROUND_DISPATCH",
+          endpoint: message.endpoint,
+          token: message.token,
+        });
+        if (!response?.ok) throw new Error(response?.message || "AkuBridge rejected background dispatch configuration.");
+      } catch (error) {
+        window.postMessage({ type: "AKU_BROWSER_BRIDGE_ERROR", message: String(error?.message ?? error) }, allowedOrigin);
+      }
+      return;
+    }
+
     if (message.type !== "AKU_BROWSER_DISPATCH") return;
     try {
       const response = await chrome.runtime.sendMessage({

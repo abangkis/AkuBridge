@@ -17,7 +17,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   assert.equal(manifest.version_name, packageJson.version);
   assert.equal(manifest.version, "0.7.0.2");
   assert.equal(manifest.version_name, "0.7.0-preview.3");
-  assert.deepEqual(manifest.permissions.sort(), ["scripting", "storage", "tabs"]);
+  assert.deepEqual(manifest.permissions.sort(), ["alarms", "scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:11122/*",
     "http://localhost:11122/*",
@@ -91,7 +91,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v72/);
+  assert.match(contentScript, /source-adapters-v73/);
   assert.match(contentScript, /plan\.scrollFraction \* scrollStepMultiplier/);
   assert.match(contentScript, /captureQuality\.verdict === "invalid"/);
   assert.match(contentScript, /relative_text_estimate/);
@@ -328,8 +328,8 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /capabilities: response\.capabilities/);
   const capabilities = createBridgeCapabilities({ version: "0.7.0.2", version_name: "0.7.0-preview.3", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.7.0-preview.3");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v72");
-  assert.equal(capabilities.buildId, "aku-bridge-0.7.0-preview.3-source-adapters-v72");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v73");
+  assert.equal(capabilities.buildId, "aku-bridge-0.7.0-preview.3-source-adapters-v73");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v20", linkedin: "linkedin-dom-v16", facebook: "facebook-dom-v10" });
   assert.deepEqual(capabilities.mediaEvidenceAdapterVersions, { x: "x-response-evidence-v2" });
@@ -341,6 +341,14 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.ok(capabilities.actions.includes("cache_passive_media_evidence"));
   assert.ok(capabilities.actions.includes("lookup_passive_media_evidence"));
   assert.ok(capabilities.actions.includes("observe_response_media_evidence"));
+  assert.ok(capabilities.actions.includes("dispatch_background_commands"));
+  assert.match(tabBridge, /AKU_BRIDGE_CONFIGURE_BACKGROUND_DISPATCH/);
+  assert.match(worker, /pollBackgroundDispatch/);
+  assert.match(worker, /api\/bridge\/commands\/pending/);
+  assert.match(worker, /rememberBackgroundLease/);
+  assert.match(worker, /releaseTerminalBackgroundLease/);
+  assert.match(worker, /refreshBackgroundHeartbeat/);
+  assert.match(worker, /activeLeaseId/);
   assert.match(worker, /dispatchMediaRecapture/);
   assert.match(worker, /assertRecaptureTarget/);
   assert.match(worker, /managed\.openTargetTab/);

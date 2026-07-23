@@ -4,7 +4,7 @@ import {
   sourceIds,
 } from "./source-catalog.js";
 
-export const BRIDGE_RUNTIME_REVISION = "source-adapters-v72";
+export const BRIDGE_RUNTIME_REVISION = "source-adapters-v73";
 export const BRIDGE_ID = "aku-bridge-chrome-mv3-v0";
 export const BRIDGE_CONTRACT_VERSION = "aku-browser.bridge.v2";
 
@@ -25,6 +25,7 @@ export function createBridgeCapabilities(manifest) {
       "probe_freshness",
       "recover_source_freshness",
       "collect_visible",
+      "dispatch_background_commands",
       "detect_pending_content",
       "report_adapter_health",
       "report_capture_quality",

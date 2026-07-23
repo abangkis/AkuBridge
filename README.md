@@ -1,7 +1,17 @@
 # AkuBridge
 
 Current preview identity: **`0.7.0-preview.3`** / Chrome manifest
-**`0.7.0.2`** / runtime **`source-adapters-v72`**.
+**`0.7.0.2`** / runtime **`source-adapters-v73`**.
+
+Runtime v73 adds bounded background command dispatch for AkuBrowser Auto
+Update. After a trusted local AkuBrowser page configures the loopback endpoint
+and Bridge token, the MV3 service worker polls once per minute for a persisted
+pending command. It runs the same claim/observation/failure contract as page
+dispatch, clears rejected credentials, retains a managed capture lease across
+bounded follow-up commands, and releases Bridge-owned capture surfaces after
+the automatic session becomes terminal. The same bounded poll refreshes the
+authenticated capability heartbeat so a restarted Sidecar can recover Bridge
+readiness without requiring an open AkuBrowser page.
 
 Source readiness is registry-driven. Sidecar commands may tune each source's
 hydration wait in whole seconds inside that source's fixed default +/- 5 second

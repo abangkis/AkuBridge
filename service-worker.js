@@ -47,6 +47,9 @@ const AKU_BROWSER_ORIGINS = new Set([
 const CAPTURE_DELAY_MAX_MS = 2_000;
 const PENDING_SELF_RELOAD_KEY = "akuBridgePendingSelfReload";
 const PENDING_SELF_RELOAD_MAX_AGE_MS = 30_000;
+const BACKGROUND_DISPATCH_CONFIG_KEY = "akuBridgeBackgroundDispatch";
+const BACKGROUND_DISPATCH_ALARM = "akuBridgeBackgroundDispatch";
+let backgroundDispatching = false;
 const commandGuard = createCommandGuard();
 const managedCaptureWindow = createManagedCaptureWindowRuntime(chrome);
 const xMediaEvidenceStore = createXMediaEvidenceStore(chrome.storage.local);
@@ -66,6 +69,14 @@ const SOURCE_SCRIPT_FILES = [
 
 void resumePendingSelfReload().catch((error) => {
   console.error("AkuBridge could not resume the pending AkuBrowser tab reload.", error);
+});
+void restoreBackgroundDispatch().catch((error) => {
+  console.error("AkuBridge could not restore background dispatch.", error);
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== BACKGROUND_DISPATCH_ALARM) return;
+  void pollBackgroundDispatch().catch((error) => console.warn("AkuBridge background dispatch deferred.", error));
 });
 
 chrome.action.onClicked.addListener(() => {
@@ -116,6 +127,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "AKU_BRIDGE_GET_CAPABILITIES") {
     sendResponse({ ok: true, capabilities: bridgeCapabilities() });
     return false;
+  }
+  if (message?.type === "AKU_BRIDGE_CONFIGURE_BACKGROUND_DISPATCH") {
+    if (!isAkuBrowserOrigin(sender.url)) {
+      sendResponse({ ok: false, message: "Background dispatch configuration rejected: invalid AkuBrowser origin." });
+      return false;
+    }
+    configureBackgroundDispatch(message.endpoint, message.token)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+    return true;
   }
   if (message?.type === "AKU_BRIDGE_RELOAD_SELF") {
     if (!isAkuBrowserOrigin(sender.url)) {
@@ -252,6 +273,10 @@ async function dispatchRun(message) {
     throw new AkuBridgeError("duplicate_command", "dispatch", `AkuBridge rejected duplicate command ${command.id}.`);
   }
 
+  if (message.background === true && typeof command.payload.captureLeaseId === "string") {
+    await rememberBackgroundLease(message.endpoint, message.token, command.payload.captureLeaseId);
+  }
+
   try {
     if (command.type !== "collect_visible") {
       throw new Error(`Unsupported browser command: ${command.type}.`);
@@ -278,6 +303,115 @@ async function dispatchRun(message) {
     ).catch(() => undefined);
     commandGuard.finish(command.id);
     throw error;
+  }
+}
+
+async function rememberBackgroundLease(endpoint, token, leaseId) {
+  const stored = await chrome.storage.local.get(BACKGROUND_DISPATCH_CONFIG_KEY);
+  const current = stored?.[BACKGROUND_DISPATCH_CONFIG_KEY];
+  if (!current || current.endpoint !== endpoint || current.token !== token) return;
+  await chrome.storage.local.set({
+    [BACKGROUND_DISPATCH_CONFIG_KEY]: { ...current, activeLeaseId: leaseId },
+  });
+}
+
+async function releaseTerminalBackgroundLease(config) {
+  if (typeof config.activeLeaseId !== "string" || !config.activeLeaseId) return config;
+  const response = await fetch(
+    `${config.endpoint}/api/sessions/${encodeURIComponent(config.activeLeaseId)}`,
+    { headers: bridgeHeaders(config.token), cache: "no-store" },
+  );
+  if (response.status === 401 || response.status === 403) {
+    await chrome.storage.local.remove(BACKGROUND_DISPATCH_CONFIG_KEY);
+    await chrome.alarms.clear(BACKGROUND_DISPATCH_ALARM);
+    return null;
+  }
+  let terminal = response.status === 404;
+  if (response.ok) {
+    const session = (await response.json()).session;
+    terminal = ["completed", "partial", "failed", "cancelled"].includes(session?.status);
+  } else if (!terminal) {
+    throw new Error(await responseError(response, "Could not inspect background session lifecycle"));
+  }
+  if (!terminal) return config;
+  await managedCaptureWindow.release(config.activeLeaseId).catch(() => undefined);
+  const next = { ...config };
+  delete next.activeLeaseId;
+  await chrome.storage.local.set({ [BACKGROUND_DISPATCH_CONFIG_KEY]: next });
+  return next;
+}
+
+async function refreshBackgroundHeartbeat(config) {
+  const response = await fetch(`${config.endpoint}/api/bridge/heartbeat`, {
+    method: "POST",
+    headers: { ...bridgeHeaders(config.token), "Content-Type": "application/json" },
+    body: JSON.stringify({ capabilities: bridgeCapabilities() }),
+  });
+  if (response.status === 401 || response.status === 403) {
+    await chrome.storage.local.remove(BACKGROUND_DISPATCH_CONFIG_KEY);
+    await chrome.alarms.clear(BACKGROUND_DISPATCH_ALARM);
+    return false;
+  }
+  if (!response.ok) throw new Error(await responseError(response, "Could not refresh background Bridge heartbeat"));
+  return true;
+}
+
+async function configureBackgroundDispatch(endpoint, token) {
+  assertEndpoint(endpoint);
+  if (typeof token !== "string" || token.length < 32 || token.length > 256) throw new Error("Background dispatch requires a valid Bridge token.");
+  const stored = await chrome.storage.local.get(BACKGROUND_DISPATCH_CONFIG_KEY);
+  const current = stored?.[BACKGROUND_DISPATCH_CONFIG_KEY];
+  const next = { endpoint, token };
+  if (current?.endpoint === endpoint && current?.token === token && typeof current.activeLeaseId === "string") {
+    next.activeLeaseId = current.activeLeaseId;
+  }
+  await chrome.storage.local.set({ [BACKGROUND_DISPATCH_CONFIG_KEY]: next });
+  await chrome.alarms.create(BACKGROUND_DISPATCH_ALARM, { periodInMinutes: 1 });
+  await pollBackgroundDispatch();
+}
+
+async function restoreBackgroundDispatch() {
+  const stored = await chrome.storage.local.get(BACKGROUND_DISPATCH_CONFIG_KEY);
+  const config = stored?.[BACKGROUND_DISPATCH_CONFIG_KEY];
+  if (!config) return;
+  try {
+    assertEndpoint(config.endpoint);
+    if (typeof config.token !== "string" || config.token.length < 32) throw new Error("invalid stored token");
+  } catch {
+    await chrome.storage.local.remove(BACKGROUND_DISPATCH_CONFIG_KEY);
+    return;
+  }
+  await chrome.alarms.create(BACKGROUND_DISPATCH_ALARM, { periodInMinutes: 1 });
+  await pollBackgroundDispatch();
+}
+
+async function pollBackgroundDispatch() {
+  if (backgroundDispatching) return;
+  const stored = await chrome.storage.local.get(BACKGROUND_DISPATCH_CONFIG_KEY);
+  let config = stored?.[BACKGROUND_DISPATCH_CONFIG_KEY];
+  if (!config) return;
+  backgroundDispatching = true;
+  try {
+    if (!(await refreshBackgroundHeartbeat(config))) return;
+    config = await releaseTerminalBackgroundLease(config);
+    if (!config) return;
+    const response = await fetch(`${config.endpoint}/api/bridge/commands/pending`, { headers: bridgeHeaders(config.token), cache: "no-store" });
+    if (response.status === 204) return;
+    if (response.status === 401 || response.status === 403) {
+      await chrome.storage.local.remove(BACKGROUND_DISPATCH_CONFIG_KEY);
+      await chrome.alarms.clear(BACKGROUND_DISPATCH_ALARM);
+      return;
+    }
+    if (!response.ok) throw new Error(await responseError(response, "Could not inspect pending background command"));
+    const runId = (await response.json()).runId;
+    if (typeof runId !== "string" || !runId) return;
+    try {
+      await dispatchRun({ endpoint: config.endpoint, token: config.token, runId, background: true });
+    } catch (error) {
+      if (error?.message !== "No queued browser command was available for this run.") throw error;
+    }
+  } finally {
+    backgroundDispatching = false;
   }
 }
 
