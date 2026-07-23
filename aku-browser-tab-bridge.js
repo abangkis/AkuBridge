@@ -73,6 +73,7 @@
         const response = await chrome.runtime.sendMessage({
           type: "AKU_BRIDGE_RELEASE_CAPTURE_SURFACE",
           leaseId: message.leaseId,
+          source: message.source ?? null,
         });
         if (!response?.ok) {
           throw new Error(response?.message || "AkuBridge rejected capture-surface release.");
@@ -81,6 +82,7 @@
           {
             type: "AKU_BROWSER_CAPTURE_SURFACE_RELEASED",
             leaseId: message.leaseId,
+            source: message.source ?? null,
             outcome: response.outcome ?? null,
           },
           allowedOrigin,
@@ -90,6 +92,7 @@
           {
             type: "AKU_BROWSER_CAPTURE_SURFACE_RELEASE_FAILED",
             leaseId: message.leaseId,
+            source: message.source ?? null,
             message: String(error?.message ?? error),
           },
           allowedOrigin,

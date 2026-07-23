@@ -5,10 +5,33 @@ import {
   planCaptureVisibility,
 } from "../capture-visibility-policy.js";
 
+test("single-window Quiet is the default visibility policy", () => {
+  assert.equal(normalizeCaptureVisibilityPolicy(undefined), "quiet");
+  assert.deepEqual(planCaptureVisibility({ mode: "catch_up" }), {
+    policy: "quiet",
+    initialMode: "managed_window",
+    windowIsolation: "shared",
+    allowSameWindowFallback: false,
+  });
+});
+
 test("Quiet catch-up requires the managed window without visible fallback", () => {
   assert.deepEqual(planCaptureVisibility({ policy: "quiet", mode: "catch_up" }), {
     policy: "quiet",
     initialMode: "managed_window",
+    windowIsolation: "shared",
+    allowSameWindowFallback: false,
+  });
+});
+
+test("Multi-window Quiet gives every source its own managed window", () => {
+  assert.deepEqual(planCaptureVisibility({
+    policy: "quiet_multi_window",
+    mode: "catch_up",
+  }), {
+    policy: "quiet_multi_window",
+    initialMode: "managed_window",
+    windowIsolation: "per_source",
     allowSameWindowFallback: false,
   });
 });
@@ -28,6 +51,7 @@ test("item media recapture stays inside the managed capture surface", () => {
   assert.deepEqual(planCaptureVisibility({ policy: "quiet", mode: "recapture_media" }), {
     policy: "quiet",
     initialMode: "managed_window",
+    windowIsolation: "shared",
     allowSameWindowFallback: false,
     foregroundAuthorized: false,
   });
@@ -48,6 +72,9 @@ test("foreground media recapture requires an explicit per-job authorization", ()
   assert.equal(foreground.foregroundAuthorized, true);
 });
 
-test("unknown visibility policies fail closed to Quiet", () => {
-  assert.equal(normalizeCaptureVisibilityPolicy("surprise_me"), "quiet");
+test("unknown visibility policies fail closed to single-window Quiet", () => {
+  assert.equal(
+    normalizeCaptureVisibilityPolicy("surprise_me"),
+    "quiet",
+  );
 });

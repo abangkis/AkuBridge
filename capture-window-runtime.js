@@ -5,10 +5,14 @@ export const CAPTURE_WINDOW_STORAGE_KEY = "akuBridgeManagedCaptureWindowV1";
 
 export function createManagedCaptureWindowRuntime(chromeApi) {
   return Object.freeze({
-    async prepare(source, { openIfMissing = true, leaseId = null } = {}) {
+    async prepare(
+      source,
+      { openIfMissing = true, leaseId = null, windowIsolation = "shared" } = {},
+    ) {
       const focusSnapshot = await captureWorkingFocus(chromeApi);
       const state = await loadState(chromeApi);
-      let binding = await validateBinding(chromeApi, state, source);
+      const isolation = normalizeWindowIsolation(windowIsolation);
+      let binding = await validateBinding(chromeApi, state, source, isolation);
       let opened = false;
 
       if (!binding) {
@@ -18,13 +22,20 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
             { source, reason: "managed_tab_missing" },
           );
         }
-        binding = await createBinding(chromeApi, state, source);
+        binding = await createBinding(chromeApi, state, source, isolation);
         opened = true;
       }
 
       const claimedState = normalizeManagedCaptureState(binding.state ?? state);
-      claimedState.windowId = binding.windowId;
-      claimedState.tabs[source] = binding.tabId;
+      if (isolation === "per_source") {
+        claimedState.sourceWindows[source] = {
+          windowId: binding.windowId,
+          tabId: binding.tabId,
+        };
+      } else {
+        claimedState.windowId = binding.windowId;
+        claimedState.tabs[source] = binding.tabId;
+      }
       claimedState.ownedByBridge = true;
       claimedState.leaseId = normalizeLeaseId(leaseId);
       await saveState(chromeApi, claimedState);
@@ -104,30 +115,37 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
       if (state.leaseId && state.leaseId !== requestedLeaseId) {
         return { released: false, reason: "lease_mismatch" };
       }
-      const tabId = state.tabs[source];
+      const isolatedBinding = state.sourceWindows[source] ?? null;
+      const surfaceWindowId = isolatedBinding?.windowId ?? state.windowId;
+      const tabId = isolatedBinding?.tabId ?? state.tabs[source];
       if (!Number.isInteger(tabId) || !state.ownedByBridge) {
         return { released: false, reason: "no_owned_source_surface" };
       }
 
       let window;
       try {
-        window = await chromeApi.windows.get(state.windowId, { populate: true });
+        window = await chromeApi.windows.get(surfaceWindowId, { populate: true });
       } catch {
-        delete state.tabs[source];
+        removeSourceBinding(state, source, isolatedBinding !== null);
         await persistRemainingState(chromeApi, state);
         return { released: false, reason: "surface_already_closed" };
       }
-      const ownedTabs = ownedTabsInWindow(window.tabs ?? [], state.tabs);
+      const bindings = isolatedBinding
+        ? { [source]: isolatedBinding.tabId }
+        : state.tabs;
+      const ownedTabs = ownedTabsInWindow(window.tabs ?? [], bindings);
       const ownedIds = new Set(ownedTabs.map((tab) => tab.id));
       const userTabs = (window.tabs ?? []).filter((tab) => !ownedIds.has(tab.id));
       const targetOwned = ownedIds.has(tabId);
       const remainingManagedTabs = ownedTabs.filter((tab) => tab.id !== tabId).length;
 
-      delete state.tabs[source];
+      removeSourceBinding(state, source, isolatedBinding !== null);
       if (targetOwned && remainingManagedTabs === 0 && userTabs.length === 0) {
-        await chromeApi.windows.remove(state.windowId);
-        state.windowId = null;
-        state.tabs = {};
+        await chromeApi.windows.remove(surfaceWindowId);
+        if (!isolatedBinding) {
+          state.windowId = null;
+          state.tabs = {};
+        }
       } else if (targetOwned) {
         await chromeApi.tabs.remove(tabId);
       }
@@ -144,14 +162,16 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
       const state = await loadState(chromeApi);
       const requestedLeaseId = normalizeLeaseId(leaseId);
       const hasTransientTabs = Object.keys(state.transientTabs).length > 0;
-      if ((!state.windowId && !hasTransientTabs) || !state.ownedByBridge) {
+      const hasManagedWindows = state.windowId !== null ||
+        Object.keys(state.sourceWindows).length > 0;
+      if ((!hasManagedWindows && !hasTransientTabs) || !state.ownedByBridge) {
         return { released: false, reason: "no_owned_surface" };
       }
       if (state.leaseId && state.leaseId !== requestedLeaseId) {
         return { released: false, reason: "lease_mismatch" };
       }
       const transient = await closeTrackedTabs(chromeApi, state.transientTabs);
-      if (!state.windowId) {
+      if (!hasManagedWindows) {
         await clearState(chromeApi);
         return {
           released: transient.closedTabs > 0,
@@ -160,47 +180,41 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
           preservedUserTabs: transient.preservedTabs,
         };
       }
-      let window;
-      try {
-        window = await chromeApi.windows.get(state.windowId, { populate: true });
-      } catch {
-        await clearState(chromeApi);
-        if (transient.closedTabs > 0) {
-          return {
-            released: true,
-            mode: "owned_transient_tabs_closed",
-            closedTabs: transient.closedTabs,
-            preservedUserTabs: transient.preservedTabs,
-          };
+      const surfaces = managedSurfaces(state);
+      let closedManagedTabs = 0;
+      let preservedUserTabs = transient.preservedTabs;
+      let closedWindows = 0;
+      for (const surface of surfaces) {
+        let window;
+        try {
+          window = await chromeApi.windows.get(surface.windowId, { populate: true });
+        } catch {
+          continue;
         }
-        return { released: false, reason: "surface_already_closed" };
-      }
-      const ownedTabs = ownedTabsInWindow(window.tabs ?? [], state.tabs);
-      const ownedIds = new Set(ownedTabs.map((tab) => tab.id));
-      const userTabs = (window.tabs ?? []).filter((tab) => !ownedIds.has(tab.id));
-      if (ownedTabs.length > 0 && userTabs.length === 0) {
-        await chromeApi.windows.remove(state.windowId);
-        await clearState(chromeApi);
-        return {
-          released: true,
-          mode: "owned_window_closed",
-          closedTabs: ownedTabs.length + transient.closedTabs,
-          closedManagedTabs: ownedTabs.length,
-          closedTransientTabs: transient.closedTabs,
-          preservedUserTabs: transient.preservedTabs,
-        };
-      }
-      if (ownedTabs.length > 0) {
-        await chromeApi.tabs.remove(ownedTabs.map((tab) => tab.id));
+        const ownedTabs = ownedTabsInWindow(window.tabs ?? [], surface.bindings);
+        const ownedIds = new Set(ownedTabs.map((tab) => tab.id));
+        const userTabs = (window.tabs ?? []).filter((tab) => !ownedIds.has(tab.id));
+        preservedUserTabs += userTabs.length;
+        if (ownedTabs.length > 0 && userTabs.length === 0) {
+          await chromeApi.windows.remove(surface.windowId);
+          closedWindows += 1;
+        } else if (ownedTabs.length > 0) {
+          await chromeApi.tabs.remove(ownedTabs.map((tab) => tab.id));
+        }
+        closedManagedTabs += ownedTabs.length;
       }
       await clearState(chromeApi);
+      const released = closedManagedTabs > 0 || transient.closedTabs > 0;
+      const mode = closedWindows === surfaces.length && surfaces.length > 0
+        ? (surfaces.length === 1 ? "owned_window_closed" : "owned_windows_closed")
+        : "owned_tabs_closed_user_window_preserved";
       return {
-        released: ownedTabs.length > 0 || transient.closedTabs > 0,
-        mode: "owned_tabs_closed_user_window_preserved",
-        closedTabs: ownedTabs.length + transient.closedTabs,
-        closedManagedTabs: ownedTabs.length,
+        released,
+        mode,
+        closedTabs: closedManagedTabs + transient.closedTabs,
+        closedManagedTabs,
         closedTransientTabs: transient.closedTabs,
-        preservedUserTabs: userTabs.length + transient.preservedTabs,
+        preservedUserTabs,
       };
     },
   });
@@ -252,12 +266,24 @@ export function normalizeManagedCaptureState(value) {
         : [],
     ),
   );
+  const sourceWindows = Object.fromEntries(
+    sourceIds().flatMap((source) => {
+      const binding = value?.sourceWindows?.[source];
+      return Number.isInteger(binding?.windowId) && Number.isInteger(binding?.tabId)
+        ? [[source, { windowId: binding.windowId, tabId: binding.tabId }]]
+        : [];
+    }),
+  );
   return {
     windowId,
     tabs,
+    sourceWindows,
     transientTabs,
     ownedByBridge:
-      value?.ownedByBridge === true || windowId !== null || Object.keys(transientTabs).length > 0,
+      value?.ownedByBridge === true ||
+      windowId !== null ||
+      Object.keys(sourceWindows).length > 0 ||
+      Object.keys(transientTabs).length > 0,
     leaseId: normalizeLeaseId(value?.leaseId),
   };
 }
@@ -279,24 +305,35 @@ async function clearState(chromeApi) {
 
 async function persistRemainingState(chromeApi, state) {
   const hasManagedTabs = Object.keys(state.tabs).length > 0;
+  const hasSourceWindows = Object.keys(state.sourceWindows).length > 0;
   const hasTransientTabs = Object.keys(state.transientTabs).length > 0;
-  if (!hasManagedTabs && !hasTransientTabs) {
+  if (!hasManagedTabs && !hasSourceWindows && !hasTransientTabs) {
     await clearState(chromeApi);
     return;
   }
   await saveState(chromeApi, state);
 }
 
-async function validateBinding(chromeApi, state, source) {
-  if (!state.windowId) return null;
+async function validateBinding(chromeApi, state, source, isolation) {
+  const isolatedBinding = isolation === "per_source"
+    ? state.sourceWindows[source]
+    : null;
+  const windowId = isolatedBinding?.windowId ?? state.windowId;
+  if (!windowId) return null;
   let window;
   try {
-    window = await chromeApi.windows.get(state.windowId, { populate: true });
+    window = await chromeApi.windows.get(windowId, { populate: true });
   } catch {
-    await saveState(chromeApi, { windowId: null, tabs: {} });
+    if (isolatedBinding) {
+      delete state.sourceWindows[source];
+    } else {
+      state.windowId = null;
+      state.tabs = {};
+    }
+    await persistRemainingState(chromeApi, state);
     return null;
   }
-  const rememberedId = state.tabs[source];
+  const rememberedId = isolatedBinding?.tabId ?? state.tabs[source];
   const tab = (window.tabs ?? []).find((candidate) =>
     !candidate.discarded &&
     candidate.id === rememberedId &&
@@ -306,8 +343,8 @@ async function validateBinding(chromeApi, state, source) {
   return { windowId: window.id, tabId: tab.id, state };
 }
 
-async function createBinding(chromeApi, state, source) {
-  let windowId = state.windowId;
+async function createBinding(chromeApi, state, source, isolation) {
+  let windowId = isolation === "per_source" ? null : state.windowId;
   let tab;
   if (!windowId) {
     const created = await chromeApi.windows.create({
@@ -333,8 +370,12 @@ async function createBinding(chromeApi, state, source) {
     });
   }
   const next = normalizeManagedCaptureState(state);
-  next.windowId = windowId;
-  next.tabs[source] = tab.id;
+  if (isolation === "per_source") {
+    next.sourceWindows[source] = { windowId, tabId: tab.id };
+  } else {
+    next.windowId = windowId;
+    next.tabs[source] = tab.id;
+  }
   await saveState(chromeApi, next);
   return { windowId, tabId: tab.id, state: next };
 }
@@ -347,6 +388,32 @@ function ownedTabsInWindow(tabs, bindings) {
     );
     return tab ? [tab] : [];
   });
+}
+
+function managedSurfaces(state) {
+  const surfaces = [];
+  if (Number.isInteger(state.windowId)) {
+    surfaces.push({ windowId: state.windowId, bindings: state.tabs });
+  }
+  for (const [source, binding] of Object.entries(state.sourceWindows)) {
+    surfaces.push({
+      windowId: binding.windowId,
+      bindings: { [source]: binding.tabId },
+    });
+  }
+  return surfaces;
+}
+
+function removeSourceBinding(state, source, isolated) {
+  if (isolated) {
+    delete state.sourceWindows[source];
+  } else {
+    delete state.tabs[source];
+  }
+}
+
+function normalizeWindowIsolation(value) {
+  return value === "per_source" ? "per_source" : "shared";
 }
 
 async function closeTrackedTabs(chromeApi, bindings) {

@@ -34,6 +34,7 @@ import {
   matchPatternsFor,
   sourceRuntimeScripts,
   sourceDefinition,
+  sourceIds,
   sourceForUrl,
   sourceRequiresVisualHydration,
   sourceHydrationTimeout,
@@ -159,7 +160,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, message: "Capture-surface release rejected: invalid AkuBrowser origin." });
       return false;
     }
-    managedCaptureWindow.release(message.leaseId)
+    const release = typeof message.source === "string"
+      ? managedCaptureWindow.releaseSource(message.source, message.leaseId)
+      : managedCaptureWindow.release(message.leaseId);
+    release
       .then((outcome) => sendResponse({ ok: true, outcome }))
       .catch((error) => sendResponse({
         ok: false,
@@ -310,9 +314,9 @@ async function rememberBackgroundLease(endpoint, token, leaseId) {
   const stored = await chrome.storage.local.get(BACKGROUND_DISPATCH_CONFIG_KEY);
   const current = stored?.[BACKGROUND_DISPATCH_CONFIG_KEY];
   if (!current || current.endpoint !== endpoint || current.token !== token) return;
-  await chrome.storage.local.set({
-    [BACKGROUND_DISPATCH_CONFIG_KEY]: { ...current, activeLeaseId: leaseId },
-  });
+  const next = { ...current, activeLeaseId: leaseId };
+  if (current.activeLeaseId !== leaseId) next.releasedSources = [];
+  await chrome.storage.local.set({ [BACKGROUND_DISPATCH_CONFIG_KEY]: next });
 }
 
 async function releaseTerminalBackgroundLease(config) {
@@ -327,16 +331,30 @@ async function releaseTerminalBackgroundLease(config) {
     return null;
   }
   let terminal = response.status === 404;
+  let session = null;
   if (response.ok) {
-    const session = (await response.json()).session;
+    session = (await response.json()).session;
     terminal = ["completed", "partial", "failed", "cancelled"].includes(session?.status);
   } else if (!terminal) {
     throw new Error(await responseError(response, "Could not inspect background session lifecycle"));
   }
-  if (!terminal) return config;
+  const releasedSources = new Set(Array.isArray(config.releasedSources) ? config.releasedSources : []);
+  if (session?.runs && typeof config.activeLeaseId === "string") {
+    for (const run of session.runs) {
+      if (!sourceIds().includes(run?.source) || !["completed", "failed", "cancelled"].includes(run?.status) || releasedSources.has(run.source)) continue;
+      const outcome = await managedCaptureWindow.releaseSource(run.source, config.activeLeaseId).catch(() => null);
+      if (outcome && outcome.reason !== "lease_mismatch") releasedSources.add(run.source);
+    }
+  }
+  if (!terminal) {
+    const next = { ...config, releasedSources: [...releasedSources] };
+    await chrome.storage.local.set({ [BACKGROUND_DISPATCH_CONFIG_KEY]: next });
+    return next;
+  }
   await managedCaptureWindow.release(config.activeLeaseId).catch(() => undefined);
   const next = { ...config };
   delete next.activeLeaseId;
+  delete next.releasedSources;
   await chrome.storage.local.set({ [BACKGROUND_DISPATCH_CONFIG_KEY]: next });
   return next;
 }
@@ -672,6 +690,7 @@ async function findOrOpenSourceTab(
       managed = await managedCaptureWindow.prepare(source, {
         openIfMissing,
         leaseId: captureLeaseId,
+        windowIsolation: visibilityPlan.windowIsolation,
       });
       if (managed.opened) await waitForTabComplete(managed.tab.id, 20_000);
       let captureTab = managed.tab;

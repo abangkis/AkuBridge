@@ -76,6 +76,33 @@ test("managed capture accepts a transient focus change that it successfully rest
   });
 });
 
+test("multi-window Quiet creates one non-focused managed window per source", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const x = await runtime.prepare("x", {
+    leaseId: "session-1",
+    windowIsolation: "per_source",
+  });
+  const linkedin = await runtime.prepare("linkedin", {
+    leaseId: "session-1",
+    windowIsolation: "per_source",
+  });
+
+  assert.notEqual(x.tab.windowId, linkedin.tab.windowId);
+  assert.equal(chrome.createdWindowOptionsList.length, 2);
+  assert.equal(chrome.createdWindowOptionsList.every((entry) => entry.focused === false), true);
+  assert.equal(chrome.createdTabOptions.length, 0);
+  assert.equal(chrome.focusedWindowId, 1);
+  assert.deepEqual(await runtime.release("session-1"), {
+    released: true,
+    mode: "owned_windows_closed",
+    closedTabs: 2,
+    closedManagedTabs: 2,
+    closedTransientTabs: 0,
+    preservedUserTabs: 0,
+  });
+});
+
 test("managed recapture activates its target inside the background window without foregrounding it", async () => {
   const chrome = fakeChrome();
   const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x", {
@@ -152,6 +179,7 @@ test("managed capture state accepts only known numeric bindings", () => {
     windowId: 8,
     tabs: { x: 9 },
     transientTabs: { linkedin: 12 },
+    sourceWindows: {},
     ownedByBridge: true,
     leaseId: "session-1",
   });
@@ -279,6 +307,7 @@ function fakeChrome() {
     focusedWindowId: 1,
     activeByWindow,
     createdWindowOptions: null,
+    createdWindowOptionsList: [],
     windowsById: windows,
     removedWindowIds: [],
     removedTabIds: [],
@@ -305,11 +334,14 @@ function fakeChrome() {
       },
       async create(options) {
         state.createdWindowOptions = options;
-        const tab = { id: 21, windowId: 2, active: true, url: options.url };
+        state.createdWindowOptionsList.push({ ...options });
+        const windowId = Math.max(...windows.keys()) + 1;
+        const tabId = Math.max(...tabs.keys()) + 10;
+        const tab = { id: tabId, windowId, active: true, url: options.url };
         tabs.set(tab.id, tab);
-        activeByWindow.set(2, tab.id);
-        windows.set(2, { id: 2, tabs: [tab] });
-        return { id: 2, tabs: [tab] };
+        activeByWindow.set(windowId, tab.id);
+        windows.set(windowId, { id: windowId, tabs: [tab] });
+        return { id: windowId, tabs: [tab] };
       },
       async update(id, options) {
         if (options.focused && state.failFocusRestore) throw new Error("Focus restore blocked");

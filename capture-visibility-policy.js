@@ -1,15 +1,20 @@
-const POLICIES = new Set(["quiet", "adaptive_fidelity"]);
+const DEFAULT_POLICY = "quiet";
+const POLICIES = new Set([DEFAULT_POLICY, "quiet_multi_window", "adaptive_fidelity"]);
 
 export function normalizeCaptureVisibilityPolicy(value) {
-  return POLICIES.has(value) ? value : "quiet";
+  return POLICIES.has(value) ? value : DEFAULT_POLICY;
 }
 
 export function planCaptureVisibility({ policy, mode, foregroundAuthorized = false }) {
   const normalizedPolicy = normalizeCaptureVisibilityPolicy(policy);
+  const windowIsolation = normalizedPolicy === "quiet_multi_window"
+    ? "per_source"
+    : "shared";
   if (mode === "recapture_media") {
     return {
       policy: normalizedPolicy,
       initialMode: "managed_window",
+      windowIsolation,
       allowSameWindowFallback: false,
       foregroundAuthorized: foregroundAuthorized === true,
     };
@@ -31,6 +36,7 @@ export function planCaptureVisibility({ policy, mode, foregroundAuthorized = fal
   return {
     policy: normalizedPolicy,
     initialMode: "managed_window",
+    windowIsolation,
     allowSameWindowFallback: false,
   };
 }

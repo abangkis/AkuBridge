@@ -1,7 +1,7 @@
 # AkuBridge
 
 Current preview identity: **`0.7.0-preview.3`** / Chrome manifest
-**`0.7.0.2`** / runtime **`source-adapters-v73`**.
+**`0.7.0.2`** / runtime **`source-adapters-v76`**.
 
 Runtime v73 adds bounded background command dispatch for AkuBrowser Auto
 Update. After a trusted local AkuBrowser page configures the loopback endpoint
@@ -72,7 +72,7 @@ The generic visibility orchestrator owns the capture surface before parsing:
 Quiet catch-up uses a reusable, dedicated non-focused Chrome window. Adaptive
 instead uses a canonical source tab in an ordinary Chrome window directly; it
 preserves an existing user tab, while a missing tab opened by Bridge is tracked
-under the session lease and closed at terminal cleanup. The source adapters own page matching, feed-root and candidate discovery,
+under the session lease and closed when its source run finishes; terminal cleanup remains an idempotent fallback. The source adapters own page matching, feed-root and candidate discovery,
 source-native text/author/presentation/relationship extraction, typed
 attachments, media
 selectors and exclusions, a versioned freshness strategy, and a versioned
@@ -198,11 +198,13 @@ development. Cooperative reload preserves Chrome, source tabs, profile state,
 and login sessions.
 
 AkuBridge does not like, reply, follow, message, or post. For Catch Up, the
-default `quiet` policy creates or reuses canonical tabs for every active source in one
-dedicated Chrome window created with `focused: false`. Activating a tab inside
-that window does not authorize replacing the active tab in the user's working
-window. The managed binding is stored locally and revalidated after service
-worker or browser lifecycle changes. `adaptive_fidelity` does not create the
+default `quiet` policy creates one shared dedicated Chrome window with
+`focused: false`. The experimental `quiet_multi_window` option creates one
+dedicated window per active source while the browser capture lane remains
+serial. Activating a tab inside either managed surface does not authorize
+replacing the active tab in the user's working window. Managed
+bindings are stored locally and revalidated after service-worker or browser
+lifecycle changes. `adaptive_fidelity` does not create the
 Quiet managed window first. It uses a canonical source tab in an ordinary
 Chrome window directly, activating it only inside that window and restoring
 the prior tab afterward. An existing user tab is preserved; a missing tab
@@ -211,14 +213,23 @@ still controls whether either policy may create its required source tab;
 `fail_fast` therefore fails when no valid source surface exists. Manual Live
 may use the active page for the selected source. A follow-up round never opens
 a replacement tab.
+
+Chrome's extension focus APIs identify the last focused Chrome window, not the
+foreground desktop application. Creating or activating several managed windows
+while another application is foreground can therefore make Chrome surface
+itself. Multi-window Quiet remains a trial mode until AkuBridge has an
+OS-aware, fail-closed focus boundary; single-window Quiet is the default because
+it minimizes those window creation and activation transitions.
 The fresh Standard 1x plan permits two native scrolls and three snapshots;
 explicit bounded profiles may raise the contract to at most six scrolls and
 seven snapshots. Computer Use is not part of this native path.
 
 Every managed surface is owned through a bounded capture lease. Standalone
 runs use the run ID; all source children of a unified check share the
-session ID so the window remains available between sources and closes only
-after the whole session is terminal. Release is idempotent and survives UI or
+session ID so the window remains available across that source's bounded
+follow-up acquisition. Each source surface is released when its source run
+becomes terminal, while full session release remains an idempotent fallback.
+Release is idempotent and survives UI or
 service-worker restart through the stored binding. AkuBridge closes the whole
 window only when every remaining tab is one of its recorded canonical feed
 tabs. If the user adds another tab, navigates a managed tab elsewhere, or
