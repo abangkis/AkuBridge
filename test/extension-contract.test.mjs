@@ -15,8 +15,8 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version_name, packageJson.version);
-  assert.equal(manifest.version, "0.7.0.2");
-  assert.equal(manifest.version_name, "0.7.0-preview.3");
+  assert.equal(manifest.version, "0.7.1.0");
+  assert.equal(manifest.version_name, "0.7.1");
   assert.deepEqual(manifest.permissions.sort(), ["alarms", "scripting", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:11122/*",
@@ -326,10 +326,10 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
   assert.match(tabBridge, /AKU_BROWSER_MEDIA_RECAPTURE/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
-  const capabilities = createBridgeCapabilities({ version: "0.7.0.2", version_name: "0.7.0-preview.3", manifest_version: 3 });
-  assert.equal(capabilities.extensionVersion, "0.7.0-preview.3");
+  const capabilities = createBridgeCapabilities({ version: "0.7.1.0", version_name: "0.7.1", manifest_version: 3 });
+  assert.equal(capabilities.extensionVersion, "0.7.1");
   assert.equal(capabilities.runtimeRevision, "source-adapters-v76");
-  assert.equal(capabilities.buildId, "aku-bridge-0.7.0-preview.3-source-adapters-v76");
+  assert.equal(capabilities.buildId, "aku-bridge-0.7.1-source-adapters-v76");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v20", linkedin: "linkedin-dom-v16", facebook: "facebook-dom-v10" });
   assert.deepEqual(capabilities.mediaEvidenceAdapterVersions, { x: "x-response-evidence-v2" });
