@@ -19,7 +19,7 @@ test("source catalog exposes Facebook without changing the X media capability", 
   assert.deepEqual(sourceAdapterVersions(), {
     x: "x-dom-v20",
     linkedin: "linkedin-dom-v16",
-    facebook: "facebook-dom-v10",
+    facebook: "facebook-dom-v11",
   });
   assert.equal(sourceForUrl("https://www.facebook.com/"), "facebook");
   assert.equal(isCanonicalFeed("https://www.facebook.com/", "facebook"), true);
@@ -55,7 +55,7 @@ test("Facebook adapter passes synthetic Home Feed conformance", () => {
   const discovery = adapter.discoverCandidates({ uniqueElements: (items) => [...new Set(items)] });
   const helpers = { compactText, normalizeHttpUrl, structuredText: (element) => element?.innerText ?? "" };
 
-  assert.equal(adapter.version, "facebook-dom-v10");
+  assert.equal(adapter.version, "facebook-dom-v11");
   assert.equal(adapter.captureTuning.scrollStepMultiplier, 2);
   assert.deepEqual([...adapter.evidenceProfile.modalities], ["text", "image", "video", "attachment", "quoted_post"]);
   assert.equal(discovery.candidates.length, 1);
@@ -148,6 +148,41 @@ test("Facebook adapter discovers the live Home Feed aria-posinset structure", ()
   assert.equal(adapter.feedRootPresent(), true);
   assert.equal(discovery.strategy, liveSelector);
   assert.equal(discovery.candidates.length, 1);
+  assert.equal(discovery.readinessCandidates.length, 1);
+});
+
+test("Facebook adapter distinguishes structural feed cards from eligible posts", () => {
+  const memoryCard = facebookCandidate();
+  memoryCard.parentElement = { closest: () => null };
+  memoryCard.querySelectorAll = (selector) => {
+    if (selector === '[role="button"], button') {
+      return ["Actions for this post", "Send", "Share"].map((label) => ({
+        innerText: "",
+        getAttribute: (name) => name === "aria-label" ? label : null,
+      }));
+    }
+    return [];
+  };
+  const liveSelector = 'div[aria-posinset]';
+  const document = {
+    body: {},
+    querySelector(value) { return value.includes(liveSelector) ? memoryCard : null; },
+    querySelectorAll(value) { return value === liveSelector ? [memoryCard] : []; },
+  };
+  const context = vm.createContext({
+    document,
+    window: { document, location: { hostname: "www.facebook.com", pathname: "/" } },
+    URL,
+  });
+  context.globalThis = context;
+  run(context, "source-adapter-runtime.js");
+  run(context, "adapters/facebook-adapter.js");
+  const discovery = context.AkuSourceAdapters.get("facebook").discoverCandidates({
+    uniqueElements: (items) => [...new Set(items)],
+  });
+
+  assert.equal(discovery.readinessCandidates.length, 1);
+  assert.equal(discovery.candidates.length, 0);
 });
 
 test("Facebook adapter reads the current profile-link header and rendered relative time", () => {

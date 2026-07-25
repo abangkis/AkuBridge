@@ -859,6 +859,8 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
       `(${readiness.selectorCandidateCount} selector candidates, ` +
       `${readiness.visibleSelectorCandidateCount ?? 0} visible, ` +
       `${readiness.windowVisibleSelectorCandidateCount ?? 0} window-visible, ` +
+      `structural=${readiness.structuralCandidateCount ?? 0}, ` +
+      `structural-visible=${readiness.visibleStructuralCandidateCount ?? 0}, ` +
       `semantic=${readiness.semanticSelectorCandidateCount ?? 0}, ` +
       `action=${readiness.actionAnchoredCandidateCount ?? 0}, ` +
       `visual=${readiness.visualHydrationReady ?? "not_required"}, ` +
@@ -887,7 +889,7 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
 }
 
 function isSourceCaptureReady(readiness) {
-  return readiness.state === "feed_ready";
+  return readiness.state === "feed_ready" || readiness.state === "feed_empty";
 }
 
 async function assertTabLease(lease, stage) {
@@ -924,6 +926,8 @@ async function waitForSourceReady(
     state: "page_shell",
     selectorCandidateCount: 0,
     visibleSelectorCandidateCount: 0,
+    structuralCandidateCount: 0,
+    visibleStructuralCandidateCount: 0,
     loadingIndicator: false,
     feedRootPresent: false,
     scrollContext: "unknown",
@@ -970,6 +974,8 @@ async function probeSourceReadiness(tabId, source) {
     state: "page_shell",
     selectorCandidateCount: 0,
     visibleSelectorCandidateCount: 0,
+    structuralCandidateCount: 0,
+    visibleStructuralCandidateCount: 0,
   };
 }
 

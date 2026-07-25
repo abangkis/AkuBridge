@@ -91,7 +91,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v76/);
+  assert.match(contentScript, /source-adapters-v77/);
   assert.match(contentScript, /plan\.scrollFraction \* scrollStepMultiplier/);
   assert.match(contentScript, /captureQuality\.verdict === "invalid"/);
   assert.match(contentScript, /relative_text_estimate/);
@@ -218,6 +218,8 @@ test("LinkedIn capture composes readiness with generic freshness recovery", () =
 
   assert.match(contentScript, /AKU_BROWSER_PROBE_SOURCE_READY/);
   assert.match(contentScript, /selector_mismatch/);
+  assert.match(contentScript, /feed_empty/);
+  assert.match(worker, /readiness\.state === "feed_empty"/);
   assert.match(contentScript, /login_required/);
   assert.match(contentScript, /adapter\.availability/);
   assert.match(contentScript, /availability\?\.state/);
@@ -252,7 +254,10 @@ test("background X capture activates for the full bounded capture so scrolled me
   );
   assert.match(worker, /const requireVisualHydration = options\.requireVisualHydration \?\? sourceRequiresVisualHydration\(source\)/);
   assert.match(worker, /requireVisualHydration: !targetUrl \|\| visibilityPlan\.foregroundAuthorized/);
-  assert.match(worker, /function isSourceCaptureReady\(readiness\) \{\s*return readiness\.state === "feed_ready";/);
+  assert.match(
+    worker,
+    /function isSourceCaptureReady\(readiness\) \{\s*return readiness\.state === "feed_ready" \|\| readiness\.state === "feed_empty";/,
+  );
   assert.match(worker, /restoreTabFocus/);
   assert.doesNotMatch(worker, /X_BACKGROUND_PROBE_TIMEOUT_MS/);
   assert.doesNotMatch(worker, /isTerminalReadiness/);
@@ -328,10 +333,10 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /capabilities: response\.capabilities/);
   const capabilities = createBridgeCapabilities({ version: "0.7.1.0", version_name: "0.7.1", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.7.1");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v76");
-  assert.equal(capabilities.buildId, "aku-bridge-0.7.1-source-adapters-v76");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v77");
+  assert.equal(capabilities.buildId, "aku-bridge-0.7.1-source-adapters-v77");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v20", linkedin: "linkedin-dom-v16", facebook: "facebook-dom-v10" });
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v20", linkedin: "linkedin-dom-v16", facebook: "facebook-dom-v11" });
   assert.deepEqual(capabilities.mediaEvidenceAdapterVersions, { x: "x-response-evidence-v2" });
   assert.ok(capabilities.actions.includes("reload_self"));
   assert.ok(capabilities.actions.includes("report_capture_quality"));

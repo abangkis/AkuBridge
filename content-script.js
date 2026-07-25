@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v76";
+  const runtimeRevision = "source-adapters-v77";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -56,12 +56,16 @@
     const loginRequired = adapter.loginRequired?.() === true;
     const discovery = discoverSourceCandidates(source);
     const candidates = discovery.candidates;
+    const readinessCandidates = discovery.readinessCandidates ?? candidates;
     const loading = Boolean(document.querySelector(
       '[aria-busy="true"], .artdeco-loader, [data-test-id*="loading" i]',
     ));
     const feedRoot = adapter.feedRootPresent?.() === true;
     const scrollContext = getScrollContext(source, candidates);
     const visibleCandidates = candidates.filter((element) =>
+      isVisibleInViewport(element, scrollContext),
+    );
+    const visibleReadinessCandidates = readinessCandidates.filter((element) =>
       isVisibleInViewport(element, scrollContext),
     );
     const visualHydration = summarizeVisualHydration(source, visibleCandidates);
@@ -73,12 +77,16 @@
       ? "login_required"
       : visibleCandidates.length > 0
         ? "feed_ready"
+        : visibleReadinessCandidates.length > 0
+          ? "feed_empty"
         : loading || document.readyState !== "complete"
           ? "loading"
-          : candidates.length > 0
-            ? "feed_not_visible"
-          : feedRoot
-            ? "selector_mismatch"
+        : candidates.length > 0
+          ? "feed_not_visible"
+        : readinessCandidates.length > 0
+          ? "feed_not_visible"
+        : feedRoot
+          ? "selector_mismatch"
             : "page_shell");
     return readiness(
       state,
@@ -93,6 +101,8 @@
       discovery.actionAnchoredCandidateCount,
       visualHydration,
       availability,
+      readinessCandidates.length,
+      visibleReadinessCandidates.length,
     );
   }
 
@@ -109,6 +119,8 @@
     actionAnchoredCandidateCount = 0,
     visualHydration = {},
     availability = null,
+    structuralCandidateCount = selectorCandidateCount,
+    visibleStructuralCandidateCount = visibleSelectorCandidateCount,
   ) {
     return {
       runtimeRevision,
@@ -124,6 +136,8 @@
       windowVisibleSelectorCandidateCount,
       semanticSelectorCandidateCount,
       actionAnchoredCandidateCount,
+      structuralCandidateCount,
+      visibleStructuralCandidateCount,
       ...visualHydration,
       availability,
       documentReadyState: document.readyState,
@@ -300,7 +314,9 @@
         adapterCapabilities: sourceAdapters.capabilities(),
         adapterHealth: {
           state: candidateCount === 0
-            ? "selector_mismatch"
+            ? snapshots.some((snapshot) => snapshot.structuralCandidateCount > 0)
+              ? "feed_empty"
+              : "selector_mismatch"
             : captureQuality.verdict === "complete"
               ? "healthy"
               : "degraded",
@@ -382,7 +398,8 @@
             : "Initial acquisition round; no continuation frontier was requested.",
           ...snapshots.map(
             (snapshot) =>
-              `${snapshot.adapterVersion}: ${snapshot.selectorCandidateCount} selector candidate(s), ${snapshot.visibleContainerCount} visible, ${snapshot.newCandidateCount} new.`,
+              `${snapshot.adapterVersion}: ${snapshot.selectorCandidateCount} eligible candidate(s), ` +
+              `${snapshot.structuralCandidateCount} structural, ${snapshot.visibleContainerCount} visible, ${snapshot.newCandidateCount} new.`,
           ),
           payload.sourceReadiness
             ? `Source readiness: ${payload.sourceReadiness.state}; ${payload.sourceReadiness.selectorCandidateCount} selector candidate(s) after ${payload.sourceReadiness.waitMs ?? 0}ms.`
@@ -423,6 +440,10 @@
           payload.sourceReadiness?.selectorCandidateCount ?? 0,
         sourceVisibleSelectorCandidateCount:
           payload.sourceReadiness?.visibleSelectorCandidateCount ?? 0,
+        sourceStructuralCandidateCount:
+          payload.sourceReadiness?.structuralCandidateCount ?? 0,
+        sourceVisibleStructuralCandidateCount:
+          payload.sourceReadiness?.visibleStructuralCandidateCount ?? 0,
         sourceLoadingIndicator: payload.sourceReadiness?.loadingIndicator === true,
         sourceFeedRootPresent: payload.sourceReadiness?.feedRootPresent === true,
         sourceVisualHydrationRequired:
@@ -523,6 +544,7 @@
     const capturedAt = new Date().toISOString();
     const discovery = discoverSourceCandidates(source);
     const selectorCandidates = discovery.candidates;
+    const structuralCandidates = discovery.readinessCandidates ?? selectorCandidates;
     const containers = selectorCandidates.filter((element) =>
       isVisibleInViewport(element, scrollContext),
     );
@@ -689,6 +711,7 @@
       selectorStrategy: discovery.strategy ?? "unknown",
       selectorCounts: discovery.selectorCounts ?? {},
       selectorCandidateCount: selectorCandidates.length,
+      structuralCandidateCount: structuralCandidates.length,
       visibleContainerCount: containers.length,
       capturedAt,
       scrollY: Math.round(readScrollPosition(scrollContext).y),

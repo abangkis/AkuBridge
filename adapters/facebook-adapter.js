@@ -19,7 +19,7 @@
 
   registry.register({
     source: "facebook",
-    version: "facebook-dom-v10",
+    version: "facebook-dom-v11",
     mediaHosts: Object.freeze(["fbcdn.net", "fbsbx.com"]),
     platformIdFromCandidates: (values) => {
       for (const value of Array.isArray(values) ? values : []) {
@@ -104,12 +104,14 @@
       const actionAnchoredCandidates = [...document.querySelectorAll(postActionSelector)]
         .map((action) => action.closest?.('div[aria-posinset], [role="article"]'))
         .filter(Boolean);
-      const candidates = uniqueElements([
+      const readinessCandidates = uniqueElements([
         ...actionAnchoredCandidates,
         ...candidateSelectors.flatMap((selector) => [...document.querySelectorAll(selector)]),
-      ]).filter(isTopLevelFeedPost);
+      ]);
+      const candidates = readinessCandidates.filter(isTopLevelFeedPost);
       return {
         candidates,
+        readinessCandidates,
         semanticCandidateCount: candidates.length,
         actionAnchoredCandidateCount: actionAnchoredCandidates.length,
         strategy: actionAnchoredCandidates.length > 0
