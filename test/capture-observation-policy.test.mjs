@@ -16,7 +16,7 @@ test("empty capture diagnostics preserve selector and readiness evidence without
   const details = emptyCaptureDiagnostics({
     source: "facebook",
     snapshots: [{
-      adapterVersion: "facebook-dom-v11",
+      adapterVersion: "facebook-dom-v12",
       selectorStrategy: "div[aria-posinset]",
       selectorCounts: { "div[aria-posinset]": 2 },
       selectorCandidateCount: 2,
@@ -34,7 +34,7 @@ test("empty capture diagnostics preserve selector and readiness evidence without
   });
   assert.deepEqual(details, {
     source: "facebook",
-    adapterVersion: "facebook-dom-v11",
+    adapterVersion: "facebook-dom-v12",
     adapterState: "degraded",
     selectorStrategy: "div[aria-posinset]",
     selectorCounts: { "div[aria-posinset]": 2 },

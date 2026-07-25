@@ -17,9 +17,9 @@ test("source adapters register independently behind one contract", () => {
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v20" },
-      { source: "linkedin", version: "linkedin-dom-v16" },
-      { source: "facebook", version: "facebook-dom-v11" },
+      { source: "x", version: "x-dom-v21" },
+      { source: "linkedin", version: "linkedin-dom-v17" },
+      { source: "facebook", version: "facebook-dom-v12" },
     ],
   );
   assert.equal(context.AkuSourceAdapters.get("x").matchesPage(), true);
@@ -73,13 +73,74 @@ test("adapter registry rejects duplicates and unknown sources", () => {
   assert.throws(() => context.AkuSourceAdapters.get("missing"), /no loaded source adapter/);
 });
 
+test("generic platform-origin contract preserves kind and object scope", () => {
+  const context = createBrowserContext();
+  runScript(context, "source-adapter-runtime.js");
+  const label = {
+    innerText: "AI info",
+    textContent: "AI info",
+    getAttribute(name) {
+      return name === "aria-label" ? "AI info" : null;
+    },
+  };
+  const container = {
+    querySelectorAll() { return [label]; },
+  };
+  const signals = context.AkuSourceAdapters.extractOriginSignals(container, {
+    source: "facebook",
+    definitions: [{
+      kind: "platform_ai_label",
+      scope: "attached_media",
+      labels: ["AI info"],
+    }],
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(signals)), [{
+    kind: "platform_ai_label",
+    scope: "attached_media",
+    authority: "platform",
+    label: "AI info",
+    source: "facebook",
+  }]);
+});
+
+test("X, LinkedIn, and Facebook expose platform origin labels through one presentation field", () => {
+  const context = createBrowserContext();
+  runScript(context, "source-adapter-runtime.js");
+  runScript(context, path.join("adapters", "x-adapter.js"));
+  runScript(context, path.join("adapters", "linkedin-adapter.js"));
+  runScript(context, path.join("adapters", "facebook-adapter.js"));
+  const compactText = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+  const helpers = { compactText, normalizeHttpUrl: (value) => value ?? "" };
+  for (const [source, label, expectedKind] of [
+    ["x", "Made with AI", "platform_ai_label"],
+    ["linkedin", "Content Credentials", "content_credentials"],
+    ["facebook", "AI info", "platform_ai_label"],
+  ]) {
+    const element = {
+      innerText: label,
+      textContent: label,
+      getAttribute(name) { return name === "aria-label" ? label : null; },
+    };
+    const container = {
+      innerText: "",
+      querySelector() { return null; },
+      querySelectorAll(selector) {
+        return selector === '[aria-label],[title],[role="button"],button,a' ? [element] : [];
+      },
+    };
+    const presentation = context.AkuSourceAdapters.get(source).extractPresentation(container, helpers);
+    assert.equal(presentation.originSignals[0]?.kind, expectedKind, `${source} signal`);
+    assert.equal(presentation.originSignals[0]?.scope, "attached_media", `${source} scope`);
+  }
+});
+
 test("a reinjected adapter runtime replaces the stale registry generation", () => {
   const context = createBrowserContext();
   const previous = { runtimeRevision: "source-adapters-v3" };
   context.AkuSourceAdapters = previous;
   runScript(context, "source-adapter-runtime.js");
   assert.notEqual(context.AkuSourceAdapters, previous);
-  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v13");
+  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v14");
   assert.deepEqual([...context.AkuSourceAdapters.capabilities()], []);
 });
 
@@ -100,9 +161,9 @@ test("the complete adapter bundle can replace its current registry generation", 
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v20" },
-      { source: "linkedin", version: "linkedin-dom-v16" },
-      { source: "facebook", version: "facebook-dom-v11" },
+      { source: "x", version: "x-dom-v21" },
+      { source: "linkedin", version: "linkedin-dom-v17" },
+      { source: "facebook", version: "facebook-dom-v12" },
     ],
   );
 });

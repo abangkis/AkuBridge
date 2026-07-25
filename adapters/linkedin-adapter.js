@@ -20,7 +20,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v16",
+    version: "linkedin-dom-v17",
     maxBlocksPerSnapshot: 8,
     scrollContext: "nearest_scrollable",
     scrollRootSelectors: Object.freeze(['[data-testid="mainFeed"]', "main", "#workspace"]),
@@ -227,6 +227,21 @@
             : "unavailable",
         edited: /\bEdited\b/i.test(timestampText),
         promoted,
+        originSignals: registry.extractOriginSignals(container, {
+          source: "linkedin",
+          definitions: [
+            {
+              kind: "platform_ai_label",
+              scope: "attached_media",
+              labels: ["AI-generated", "Made with AI"],
+            },
+            {
+              kind: "content_credentials",
+              scope: "attached_media",
+              labels: ["Content Credentials"],
+            },
+          ],
+        }),
       };
     },
     extractAttachments: (container, { compactText, normalizeHttpUrl, normalizeHttpsUrl }) =>

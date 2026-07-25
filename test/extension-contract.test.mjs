@@ -86,12 +86,12 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
     linkedInAdapter,
     /\[data-testid="mainFeed"\] \[role="listitem"\]/,
   );
-  assert.match(linkedInAdapter, /linkedin-dom-v16/);
+  assert.match(linkedInAdapter, /linkedin-dom-v17/);
   assert.match(contentScript, /platformId/);
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v78/);
+  assert.match(contentScript, /source-adapters-v79/);
   assert.match(contentScript, /plan\.scrollFraction \* scrollStepMultiplier/);
   assert.match(contentScript, /captureQuality\.verdict === "invalid"/);
   assert.match(contentScript, /relative_text_estimate/);
@@ -333,10 +333,10 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /capabilities: response\.capabilities/);
   const capabilities = createBridgeCapabilities({ version: "0.7.1.0", version_name: "0.7.1", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.7.1");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v78");
-  assert.equal(capabilities.buildId, "aku-bridge-0.7.1-source-adapters-v78");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v79");
+  assert.equal(capabilities.buildId, "aku-bridge-0.7.1-source-adapters-v79");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v20", linkedin: "linkedin-dom-v16", facebook: "facebook-dom-v11" });
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v21", linkedin: "linkedin-dom-v17", facebook: "facebook-dom-v12" });
   assert.deepEqual(capabilities.mediaEvidenceAdapterVersions, { x: "x-response-evidence-v2" });
   assert.ok(capabilities.actions.includes("reload_self"));
   assert.ok(capabilities.actions.includes("report_capture_quality"));

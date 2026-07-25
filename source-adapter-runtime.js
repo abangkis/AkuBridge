@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v13";
+  const runtimeRevision = "source-adapters-v14";
   const supportedContentFamilies = new Set(["feed_post"]);
   const supportedEvidenceModalities = new Set([
     "text",
@@ -109,10 +109,57 @@
         "report_capture_quality",
         "acquire_missing_media",
         "extract_source_semantics",
+        "extract_origin_signals",
         "report_frontier",
         "report_source_events",
       ],
     }));
+  }
+
+  function extractOriginSignals(container, contract = {}) {
+    const source = String(contract.source ?? "").trim().slice(0, 40);
+    const definitions = Array.isArray(contract.definitions) ? contract.definitions : [];
+    const result = [];
+    const seen = new Set();
+    for (const definition of definitions) {
+      const kind = String(definition?.kind ?? "").trim();
+      const scope = String(definition?.scope ?? "").trim();
+      if (!["platform_ai_label", "content_credentials"].includes(kind) ||
+          !["social_post", "attached_media", "author_account"].includes(scope)) {
+        continue;
+      }
+      const labels = new Map((definition.labels ?? []).map((label) => {
+        const bounded = String(label ?? "").trim().replace(/\s+/g, " ").slice(0, 120);
+        return [bounded.toLocaleLowerCase(), bounded];
+      }).filter(([label]) => label));
+      if (!labels.size) continue;
+      const selector = definition.selector || '[aria-label],[title],[role="button"],button,a';
+      for (const element of container?.querySelectorAll?.(selector) ?? []) {
+        const candidates = [
+          element.getAttribute?.("aria-label"),
+          element.getAttribute?.("title"),
+          element.innerText,
+          element.textContent,
+        ];
+        for (const candidate of candidates) {
+          const normalized = String(candidate ?? "").trim().replace(/\s+/g, " ").slice(0, 120);
+          const label = labels.get(normalized.toLocaleLowerCase());
+          if (!label) continue;
+          const key = `${kind}\u0000${scope}\u0000${label.toLocaleLowerCase()}`;
+          if (seen.has(key)) break;
+          seen.add(key);
+          result.push(Object.freeze({
+            kind,
+            scope,
+            authority: "platform",
+            label,
+            source,
+          }));
+          break;
+        }
+      }
+    }
+    return result.slice(0, 8);
   }
 
   globalThis.AkuSourceAdapters = Object.freeze({
@@ -120,5 +167,6 @@
     register,
     get,
     capabilities,
+    extractOriginSignals,
   });
 })();

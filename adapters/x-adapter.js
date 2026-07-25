@@ -4,7 +4,7 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v20",
+    version: "x-dom-v21",
     mediaHosts: Object.freeze(["pbs.twimg.com", "video.twimg.com"]),
     structuredMediaEvidence: Object.freeze({
       payloadField: "xStructuredMediaEvidence",
@@ -152,6 +152,16 @@
         engagement: engagementCounts(container),
       };
     },
+    extractPresentation: (container) => ({
+      originSignals: registry.extractOriginSignals(container, {
+        source: "x",
+        definitions: [{
+          kind: "platform_ai_label",
+          scope: "attached_media",
+          labels: ["Made with AI", "AI-generated"],
+        }],
+      }),
+    }),
     extractQuotedPost: (container, {
       compactText,
       normalizeHttpUrl,

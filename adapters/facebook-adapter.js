@@ -19,7 +19,7 @@
 
   registry.register({
     source: "facebook",
-    version: "facebook-dom-v11",
+    version: "facebook-dom-v12",
     mediaHosts: Object.freeze(["fbcdn.net", "fbsbx.com"]),
     platformIdFromCandidates: (values) => {
       for (const value of Array.isArray(values) ? values : []) {
@@ -199,6 +199,14 @@
             ? "not_exposed_promoted"
             : "unavailable",
         promoted: sponsored,
+        originSignals: registry.extractOriginSignals(container, {
+          source: "facebook",
+          definitions: [{
+            kind: "platform_ai_label",
+            scope: "attached_media",
+            labels: ["AI info", "Made with AI", "Imagined with AI"],
+          }],
+        }),
       };
     },
     estimateRelativeTimestamp: estimateFacebookRelativeTimestamp,
