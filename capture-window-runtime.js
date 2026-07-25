@@ -1,5 +1,5 @@
 import { expectedFeedUrl, isCanonicalFeedUrl } from "./source-tab-policy.js";
-import { sourceIds } from "./source-catalog.js";
+import { sourceForUrl, sourceIds } from "./source-catalog.js";
 
 export const CAPTURE_WINDOW_STORAGE_KEY = "akuBridgeManagedCaptureWindowV1";
 
@@ -14,6 +14,7 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
       const isolation = normalizeWindowIsolation(windowIsolation);
       let binding = await validateBinding(chromeApi, state, source, isolation);
       let opened = false;
+      let reset = binding?.reset === true;
 
       if (!binding) {
         if (!openIfMissing) {
@@ -24,6 +25,7 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
         }
         binding = await createBinding(chromeApi, state, source, isolation);
         opened = true;
+        reset = false;
       }
 
       const claimedState = normalizeManagedCaptureState(binding.state ?? state);
@@ -51,6 +53,7 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
       return {
         tab: await chromeApi.tabs.get(binding.tabId),
         opened,
+        reset,
         focusSnapshot,
         openTargetTab: (url) => openManagedTargetTab(
           chromeApi,
@@ -335,12 +338,26 @@ async function validateBinding(chromeApi, state, source, isolation) {
   }
   const rememberedId = isolatedBinding?.tabId ?? state.tabs[source];
   const tab = (window.tabs ?? []).find((candidate) =>
-    !candidate.discarded &&
-    candidate.id === rememberedId &&
-    isCanonicalFeedUrl(candidate.url, source),
+    !candidate.discarded && candidate.id === rememberedId
   );
-  if (!tab) return null;
-  return { windowId: window.id, tabId: tab.id, state };
+  if (!tab) {
+    removeSourceBinding(state, source, isolatedBinding !== null);
+    await persistRemainingState(chromeApi, state);
+    return null;
+  }
+  if (isCanonicalFeedUrl(tab.url, source)) {
+    return { windowId: window.id, tabId: tab.id, state, reset: false };
+  }
+  if (sourceForUrl(tab.url) === source) {
+    await chromeApi.tabs.update(tab.id, {
+      url: expectedFeedUrl(source),
+      active: true,
+    });
+    return { windowId: window.id, tabId: tab.id, state, reset: true };
+  }
+  removeSourceBinding(state, source, isolatedBinding !== null);
+  await persistRemainingState(chromeApi, state);
+  return null;
 }
 
 async function createBinding(chromeApi, state, source, isolation) {
@@ -384,7 +401,10 @@ function ownedTabsInWindow(tabs, bindings) {
   return sourceIds().flatMap((source) => {
     const id = bindings[source];
     const tab = tabs.find((candidate) =>
-      candidate.id === id && isCanonicalFeedUrl(candidate.url, source)
+      candidate.id === id && (
+        isCanonicalFeedUrl(candidate.url, source) ||
+        sourceForUrl(candidate.url) === source
+      )
     );
     return tab ? [tab] : [];
   });

@@ -1,15 +1,16 @@
 # AkuBridge
 
 Current preview identity: **`0.7.1`** / Chrome manifest
-**`0.7.1.0`** / runtime **`source-adapters-v77`**.
+**`0.7.1.0`** / runtime **`source-adapters-v78`**.
 
 Runtime v73 adds bounded background command dispatch for AkuBrowser Auto
 Update. After a trusted local AkuBrowser page configures the loopback endpoint
 and Bridge token, the MV3 service worker polls once per minute for a persisted
 pending command. It runs the same claim/observation/failure contract as page
 dispatch, clears rejected credentials, retains a managed capture lease across
-bounded follow-up commands, and releases Bridge-owned capture surfaces after
-the automatic session becomes terminal. The same bounded poll refreshes the
+bounded follow-up commands, and releases each Bridge-owned source surface when
+acquisition is finished and Candidate Evaluation begins. Terminal session
+cleanup remains an idempotent fallback. The same bounded poll refreshes the
 authenticated capability heartbeat so a restarted Sidecar can recover Bridge
 readiness without requiring an open AkuBrowser page.
 
@@ -227,15 +228,18 @@ seven snapshots. Computer Use is not part of this native path.
 Every managed surface is owned through a bounded capture lease. Standalone
 runs use the run ID; all source children of a unified check share the
 session ID so the window remains available across that source's bounded
-follow-up acquisition. Each source surface is released when its source run
-becomes terminal, while full session release remains an idempotent fallback.
+follow-up acquisition. Each source surface is released as soon as Acquisition
+Planning can no longer request follow-up capture and Candidate Evaluation
+begins; terminal source and session cleanup remain idempotent fallbacks.
 Release is idempotent and survives UI or
 service-worker restart through the stored binding. AkuBridge closes the whole
-window only when every remaining tab is one of its recorded canonical feed
-tabs. If the user adds another tab, navigates a managed tab elsewhere, or
-otherwise takes control of the surface, Bridge closes only the still-provable
-owned feed tabs and preserves the user's tab and window. Pre-existing source
-tabs and working windows are never registered as owned cleanup targets.
+window only when every remaining tab is one of its recorded source surfaces.
+An internal same-source redirect, including Facebook feed routing, remains
+Bridge-owned and is reset to the canonical feed on reuse. If the user adds
+another tab, navigates a managed tab outside its registered source, or otherwise
+takes control of the surface, Bridge closes only the still-provable owned source
+tabs and preserves the user's tab and window. Pre-existing source tabs and
+working windows are never registered as owned cleanup targets.
 
 Each captured evidence block may include up to four content images or video
 posters for Source layout. Generic DOM candidates retain the minimum-geometry

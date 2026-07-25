@@ -22,6 +22,9 @@ import {
 import { createManagedCaptureWindowRuntime } from "./capture-window-runtime.js";
 import { inspectCaptureSurface } from "./capture-surface-telemetry.js";
 import {
+  sourceCaptureSurfaceReleasable,
+} from "./capture-surface-lifecycle-policy.js";
+import {
   BRIDGE_CONTRACT_VERSION,
   BRIDGE_ID,
   createBridgeCapabilities,
@@ -341,7 +344,7 @@ async function releaseTerminalBackgroundLease(config) {
   const releasedSources = new Set(Array.isArray(config.releasedSources) ? config.releasedSources : []);
   if (session?.runs && typeof config.activeLeaseId === "string") {
     for (const run of session.runs) {
-      if (!sourceIds().includes(run?.source) || !["completed", "failed", "cancelled"].includes(run?.status) || releasedSources.has(run.source)) continue;
+      if (!sourceIds().includes(run?.source) || !sourceCaptureSurfaceReleasable(run) || releasedSources.has(run.source)) continue;
       const outcome = await managedCaptureWindow.releaseSource(run.source, config.activeLeaseId).catch(() => null);
       if (outcome && outcome.reason !== "lease_mismatch") releasedSources.add(run.source);
     }
@@ -692,7 +695,9 @@ async function findOrOpenSourceTab(
         leaseId: captureLeaseId,
         windowIsolation: visibilityPlan.windowIsolation,
       });
-      if (managed.opened) await waitForTabComplete(managed.tab.id, 20_000);
+      if (managed.opened || managed.reset) {
+        await waitForTabComplete(managed.tab.id, 20_000);
+      }
       let captureTab = managed.tab;
       let captureTabOpened = managed.opened;
       let captureVisibilityMode = "managed_window";

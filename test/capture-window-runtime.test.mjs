@@ -269,6 +269,41 @@ test("source failure closes only its Bridge-owned managed tab", async () => {
   });
 });
 
+test("managed Facebook capture resets an internal redirect instead of leaking a new surface", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const first = await runtime.prepare("facebook", { leaseId: "session-1" });
+  await chrome.tabs.update(first.tab.id, {
+    url: "https://www.facebook.com/home.php",
+  });
+
+  const reused = await runtime.prepare("facebook", { leaseId: "session-1" });
+
+  assert.equal(reused.opened, false);
+  assert.equal(reused.reset, true);
+  assert.equal(reused.tab.id, first.tab.id);
+  assert.equal(reused.tab.url, "https://www.facebook.com/");
+  assert.equal(chrome.createdWindowOptionsList.length, 1);
+});
+
+test("source cleanup closes a Bridge-owned Facebook tab after an internal redirect", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const prepared = await runtime.prepare("facebook", { leaseId: "session-1" });
+  await chrome.tabs.update(prepared.tab.id, {
+    url: "https://www.facebook.com/home.php",
+  });
+
+  assert.deepEqual(await runtime.releaseSource("facebook", "session-1"), {
+    released: true,
+    mode: "owned_source_surface_closed",
+    closedTabs: 1,
+    remainingManagedTabs: 0,
+    preservedUserTabs: 0,
+  });
+  assert.deepEqual(chrome.removedWindowIds, [2]);
+});
+
 test("source cleanup cannot close a newer leased managed tab", async () => {
   const chrome = fakeChrome();
   const runtime = createManagedCaptureWindowRuntime(chrome);
@@ -370,11 +405,15 @@ function fakeChrome() {
       },
       async update(id, options) {
         const tab = tabs.get(id);
+        if (typeof options.url === "string") tab.url = options.url;
         if (options.active) {
           activeByWindow.set(tab.windowId, id);
           if (state.focusManagedWindowOnTabActivation) state.focusedWindowId = tab.windowId;
         }
-        return { ...tab, active: options.active === true };
+        return {
+          ...tab,
+          active: activeByWindow.get(tab.windowId) === id,
+        };
       },
       async create(options) {
         state.createdTabOptions.push({ ...options });
