@@ -1,7 +1,7 @@
 # AkuBridge
 
-Current preview identity: **`0.7.2`** / Chrome manifest
-**`0.7.2.0`** / runtime **`source-adapters-v79`**.
+Current preview identity: **`0.7.3`** / Chrome manifest
+**`0.7.3.0`** / runtime **`source-adapters-v79`**.
 
 Runtime v73 adds bounded background command dispatch for AkuBrowser Auto
 Update. After a trusted local AkuBrowser page configures the loopback endpoint
@@ -161,7 +161,7 @@ npm run package:verify
 
 Load this directory as an unpacked extension from `chrome://extensions` with
 Developer mode enabled. Manual installation is the supported
-`0.7.2` distribution path on Windows and macOS; the preview does not
+`0.7.3` distribution path on Windows and macOS; the preview does not
 claim silent local-CRX installation. It assumes Chrome is already signed in to
 every enabled source. This manual step is required only for the initial bootstrap or
 recovery when the installed extension cannot handle cooperative self-reload.
