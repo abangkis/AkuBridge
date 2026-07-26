@@ -34,7 +34,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "facebook",
     displayName: "Facebook",
-    adapterVersion: "facebook-dom-v13",
+    adapterVersion: "facebook-dom-v14",
     adapterScript: "adapters/facebook-adapter.js",
     supportScripts: Object.freeze([]),
     feedUrl: "https://www.facebook.com/",
@@ -44,7 +44,10 @@ const SOURCE_DEFINITIONS = Object.freeze([
     nativePostPath: /\/(?:posts\/|permalink\/|story\.php|photo|videos\/|reel\/)/,
     hydration: Object.freeze({ defaultTimeoutMs: 25_000, minTimeoutMs: 20_000, maxTimeoutMs: 30_000 }),
     readiness: Object.freeze({ initialTimeoutMs: 25_000 }),
-    captureRecovery: Object.freeze({ emptyObservation: "reload_managed_once" }),
+    captureRecovery: Object.freeze({
+      emptyObservation: "reload_managed_once",
+      managedLoad: "recreate_managed_once",
+    }),
   }),
 ]);
 

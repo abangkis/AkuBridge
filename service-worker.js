@@ -25,6 +25,10 @@ import {
   sourceCaptureSurfaceReleasable,
 } from "./capture-surface-lifecycle-policy.js";
 import {
+  managedSurfaceReleaseAllowsRecreate,
+  shouldRecoverManagedLoad,
+} from "./managed-load-recovery-policy.js";
+import {
   BRIDGE_CONTRACT_VERSION,
   BRIDGE_ID,
   createBridgeCapabilities,
@@ -886,14 +890,70 @@ async function findOrOpenSourceTab(
   let targetCaptureTabId = null;
   if (visibilityPlan.initialMode === "managed_window") {
     let managed = null;
+    let managedLoadAttempt = 0;
+    const managedLifecycleEvents = [];
     try {
-      managed = await managedCaptureWindow.prepare(source, {
-        openIfMissing,
-        leaseId: captureLeaseId,
-        windowIsolation: visibilityPlan.windowIsolation,
-      });
-      if (managed.opened || managed.reset) {
-        await waitForTabComplete(managed.tab.id, 20_000);
+      while (true) {
+        managed = await managedCaptureWindow.prepare(source, {
+          openIfMissing,
+          leaseId: captureLeaseId,
+          windowIsolation: visibilityPlan.windowIsolation,
+        });
+        managedLifecycleEvents.push(...(managed.lifecycleEvents ?? []));
+        managed.lifecycleEvents.splice(
+          0,
+          managed.lifecycleEvents.length,
+          ...managedLifecycleEvents,
+        );
+        try {
+          if (managed.opened || managed.reset) {
+            await waitForTabComplete(managed.tab.id, 20_000, {
+              source,
+              phase: managed.reset ? "canonical_feed_reset" : "managed_surface_created",
+            });
+          }
+          break;
+        } catch (error) {
+          const recoveryPolicy = sourceDefinition(source)?.captureRecovery?.managedLoad;
+          if (!shouldRecoverManagedLoad({
+            source,
+            error,
+            attempt: managedLoadAttempt,
+            opened: managed.opened,
+            reset: managed.reset,
+            policy: recoveryPolicy,
+          })) throw error;
+          managedLifecycleEvents.push(captureSurfaceEvent("release_requested", source, {
+            outcome: "managed_navigation_retry",
+            causeCode: error.code,
+            recoveryAttempt: managedLoadAttempt + 1,
+          }));
+          const releaseOutcome = await managedCaptureWindow.releaseSource(
+            source,
+            captureLeaseId,
+          );
+          managedLifecycleEvents.push(...(releaseOutcome?.events ?? []));
+          if (!managedSurfaceReleaseAllowsRecreate(releaseOutcome)) {
+            throw new AkuBridgeError(
+              "managed_surface_release_incomplete",
+              "cleanup",
+              "AkuBridge could not safely recycle the stalled managed source surface.",
+              {
+                source,
+                releaseReason: String(
+                  releaseOutcome?.reason ?? releaseOutcome?.mode ?? "unknown",
+                ).slice(0, 80),
+              },
+            );
+          }
+          managedLifecycleEvents.push(captureSurfaceEvent("reconciled", source, {
+            outcome: "managed_navigation_recreated",
+            causeCode: error.code,
+            recoveryAttempt: managedLoadAttempt + 1,
+          }));
+          managedLoadAttempt += 1;
+          managed = null;
+        }
       }
       let captureTab = managed.tab;
       let captureTabOpened = managed.opened;
@@ -928,17 +988,26 @@ async function findOrOpenSourceTab(
       prepared.closeOnExit = Boolean(targetUrl);
       return prepared;
     } catch (error) {
-      if (managed?.lifecycleEvents?.length) {
-        error.captureSurfaceLifecycle = managed.lifecycleEvents;
-      }
+      const lifecycleEvents = managed?.lifecycleEvents?.length
+        ? [...managed.lifecycleEvents]
+        : [...managedLifecycleEvents];
       if (Number.isInteger(targetCaptureTabId)) {
         await chrome.tabs.remove(targetCaptureTabId).catch(() => undefined);
         targetCaptureTabId = null;
       }
       if (managed) await managed.verifyFocus().catch(() => undefined);
       if (!targetUrl) {
-        await managedCaptureWindow.releaseSource(source, captureLeaseId).catch(() => undefined);
+        lifecycleEvents.push(captureSurfaceEvent("release_requested", source, {
+          outcome: "surface_prepare_failed",
+          causeCode: error?.code ?? "bridge_failure",
+        }));
+        const releaseOutcome = await managedCaptureWindow.releaseSource(
+          source,
+          captureLeaseId,
+        ).catch(() => null);
+        lifecycleEvents.push(...(releaseOutcome?.events ?? []));
       }
+      error.captureSurfaceLifecycle = lifecycleEvents;
       if (["visible_recovery_required", "source_unavailable", "login_required"].includes(error?.code)) {
         throw error;
       }
@@ -1309,13 +1378,29 @@ async function collectFromTabWithDeadline(tabId, payload) {
   }
 }
 
-async function waitForTabComplete(tabId, timeoutMs) {
+async function waitForTabComplete(tabId, timeoutMs, options = {}) {
+  const startedAt = Date.now();
   const existing = await chrome.tabs.get(tabId);
   if (existing.status === "complete") return;
   await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
+    const timeout = setTimeout(async () => {
       chrome.tabs.onUpdated.removeListener(listener);
-      reject(new Error("Source tab did not finish loading in time."));
+      const latest = await chrome.tabs.get(tabId).catch(() => null);
+      reject(new AkuBridgeError(
+        "tab_load_timeout",
+        "navigation",
+        "Source tab did not finish loading in time.",
+        {
+          source: sourceIds().includes(options.source) ? options.source : null,
+          phase: String(options.phase ?? "source_navigation").slice(0, 80),
+          elapsedMs: Date.now() - startedAt,
+          status: latest?.status ?? "closed",
+          canonicalFeed: latest
+            ? isCanonicalFeedUrl(latest.url, options.source)
+            : false,
+          observedSource: latest ? sourceForUrl(latest.url) : null,
+        },
+      ));
     }, timeoutMs);
     function listener(updatedTabId, changeInfo) {
       if (updatedTabId !== tabId || changeInfo.status !== "complete") return;
