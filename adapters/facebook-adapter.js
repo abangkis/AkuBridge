@@ -19,7 +19,7 @@
 
   registry.register({
     source: "facebook",
-    version: "facebook-dom-v14",
+    version: "facebook-dom-v15",
     mediaHosts: Object.freeze(["fbcdn.net", "fbsbx.com"]),
     platformIdFromCandidates: (values) => {
       for (const value of Array.isArray(values) ? values : []) {
@@ -119,6 +119,12 @@
         counts[key] = (counts[key] || 0) + 1;
         return counts;
       }, {});
+      const admittedReasons = {};
+      const rejectedReasons = {};
+      for (const entry of admission) {
+        const target = entry.accepted ? admittedReasons : rejectedReasons;
+        target[entry.reason] = (target[entry.reason] || 0) + 1;
+      }
       return {
         candidates,
         readinessCandidates,
@@ -131,6 +137,13 @@
           ...selectorCounts,
           [postActionSelector]: actionAnchoredCandidates.length,
           ...admissionCounts,
+        },
+        candidateDiagnostics: {
+          structuralCandidates: readinessCandidates.length,
+          eligibleCandidates: candidates.length,
+          actionAnchoredCandidates: actionAnchoredCandidates.length,
+          admittedReasons,
+          rejectedReasons,
         },
       };
     },

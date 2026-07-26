@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v81";
+  const runtimeRevision = "source-adapters-v82";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -713,11 +713,48 @@
       selectorCandidateCount: selectorCandidates.length,
       structuralCandidateCount: structuralCandidates.length,
       visibleContainerCount: containers.length,
+      candidateDiagnostics: normalizeCandidateDiagnostics(
+        discovery.candidateDiagnostics,
+        structuralCandidates.length,
+        selectorCandidates.length,
+        containers.length,
+      ),
       capturedAt,
       scrollY: Math.round(readScrollPosition(scrollContext).y),
       viewportHeight: Math.round(viewportHeight(scrollContext)),
       blocks,
       qualityReports,
+    };
+  }
+
+  function normalizeCandidateDiagnostics(
+    value,
+    structuralCandidates,
+    eligibleCandidates,
+    visibleEligibleCandidates,
+  ) {
+    if (!value || typeof value !== "object") return null;
+    const normalizeCount = (count) => Math.max(
+      0,
+      Math.min(1_000, Math.trunc(Number(count) || 0)),
+    );
+    const normalizeReasons = (reasons) => Object.fromEntries(
+      Object.entries(reasons && typeof reasons === "object" ? reasons : {})
+        .filter(([reason]) => /^[a-z0-9_:-]{1,64}$/i.test(reason))
+        .slice(0, 12)
+        .map(([reason, count]) => [reason, normalizeCount(count)]),
+    );
+    return {
+      structuralCandidates: normalizeCount(
+        value.structuralCandidates ?? structuralCandidates,
+      ),
+      eligibleCandidates: normalizeCount(
+        value.eligibleCandidates ?? eligibleCandidates,
+      ),
+      visibleEligibleCandidates: normalizeCount(visibleEligibleCandidates),
+      actionAnchoredCandidates: normalizeCount(value.actionAnchoredCandidates),
+      admittedReasons: normalizeReasons(value.admittedReasons),
+      rejectedReasons: normalizeReasons(value.rejectedReasons),
     };
   }
 

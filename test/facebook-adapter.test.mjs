@@ -19,7 +19,7 @@ test("source catalog exposes Facebook without changing the X media capability", 
   assert.deepEqual(sourceAdapterVersions(), {
     x: "x-dom-v21",
     linkedin: "linkedin-dom-v18",
-    facebook: "facebook-dom-v14",
+    facebook: "facebook-dom-v15",
   });
   assert.equal(sourceForUrl("https://www.facebook.com/"), "facebook");
   assert.equal(isCanonicalFeed("https://www.facebook.com/", "facebook"), true);
@@ -55,10 +55,17 @@ test("Facebook adapter passes synthetic Home Feed conformance", () => {
   const discovery = adapter.discoverCandidates({ uniqueElements: (items) => [...new Set(items)] });
   const helpers = { compactText, normalizeHttpUrl, structuredText: (element) => element?.innerText ?? "" };
 
-  assert.equal(adapter.version, "facebook-dom-v14");
+  assert.equal(adapter.version, "facebook-dom-v15");
   assert.equal(adapter.captureTuning.scrollStepMultiplier, 2);
   assert.deepEqual([...adapter.evidenceProfile.modalities], ["text", "image", "video", "attachment", "quoted_post"]);
   assert.equal(discovery.candidates.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(discovery.candidateDiagnostics)), {
+    structuralCandidates: 1,
+    eligibleCandidates: 1,
+    actionAnchoredCandidates: 0,
+    admittedReasons: { post_action_cluster: 1 },
+    rejectedReasons: {},
+  });
   assert.equal(adapter.findAuthor(candidate, helpers), "Aku Example");
   assert.equal(adapter.findAvatar(candidate, helpers), "https://scontent.fcgk1-2.fna.fbcdn.net/avatar.jpg");
   assert.equal(adapter.extractText(candidate, helpers), "A bounded Facebook Home Feed post with useful source evidence.");
