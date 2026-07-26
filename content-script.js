@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v83";
+  const runtimeRevision = "source-adapters-v84";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -252,23 +252,28 @@
         }
 
         const beforeScrollY = readScrollPosition(scrollContext).y;
-        const captureTuning = sourceAdapters.get(source).captureTuning ?? {};
+        const adapter = sourceAdapters.get(source);
+        const captureTuning = adapter.captureTuning ?? {};
         const scrollStepMultiplier = captureTuning.scrollStepMultiplier ?? 1;
-        const scrollSettleMs = captureTuning.scrollSettleMs ?? plan.scrollSettleMs;
         updateCaptureProgress("scrolling", { source, afterSnapshotIndex: index });
-        scrollByContext(
-          scrollContext,
-          Math.max(
-            320,
-            viewportHeight(scrollContext) * plan.scrollFraction * scrollStepMultiplier,
-          ),
-        );
+        const advancedToNextCandidate = captureTuning.scrollStrategy === "next_candidate"
+          && scrollNextEligibleCandidateIntoView(adapter, scrollContext);
+        if (!advancedToNextCandidate) {
+          scrollByContext(
+            scrollContext,
+            Math.max(
+              320,
+              viewportHeight(scrollContext) * plan.scrollFraction * scrollStepMultiplier,
+            ),
+          );
+        }
         updateCaptureProgress("scroll_settling", {
           source,
           afterSnapshotIndex: index,
-          milliseconds: scrollSettleMs,
+          milliseconds: plan.scrollSettleMs,
+          strategy: advancedToNextCandidate ? "next_candidate" : "viewport",
         });
-        await delay(scrollSettleMs);
+        await delay(plan.scrollSettleMs);
         const delta = Math.round(readScrollPosition(scrollContext).y - beforeScrollY);
         if (Math.abs(delta) < 2) {
           scrollStopReason = "no_movement";
@@ -1272,6 +1277,22 @@
       return;
     }
     scrollContext.scrollTop += top;
+  }
+
+  function scrollNextEligibleCandidateIntoView(adapter, scrollContext) {
+    const discovery = adapter.discoverCandidates({ uniqueElements });
+    const candidates = uniqueElements(discovery.candidates ?? []);
+    const viewport = scrollContext === window
+      ? { top: 0, bottom: window.innerHeight }
+      : scrollContext.getBoundingClientRect();
+    const target = candidates.find((candidate) => {
+      const rect = candidate.getBoundingClientRect();
+      return rect.top >= viewport.bottom - 2 && rect.height > 0 && rect.width > 0;
+    });
+    if (!target) return false;
+    const rect = target.getBoundingClientRect();
+    scrollByContext(scrollContext, Math.max(0, rect.top - viewport.top - 24));
+    return true;
   }
 
   function scrollToContext(scrollContext, position) {

@@ -19,7 +19,7 @@
 
   registry.register({
     source: "facebook",
-    version: "facebook-dom-v16",
+    version: "facebook-dom-v17",
     mediaHosts: Object.freeze(["fbcdn.net", "fbsbx.com"]),
     platformIdFromCandidates: (values) => {
       for (const value of Array.isArray(values) ? values : []) {
@@ -71,9 +71,9 @@
       // step can remain inside a single tall gallery post, so advance farther without
       // changing the bounded scroll count or the behavior of any other adapter.
       scrollStepMultiplier: 2,
-      // Facebook may append the next virtualized card only after the scroll has
-      // reached the current document bottom.
-      scrollSettleMs: 2_500,
+      // Prefer the next already-admitted Home Feed card over landing inside one
+      // tall gallery post. The generic bounded scroll remains the fallback.
+      scrollStrategy: "next_candidate",
     }),
     matchesPage: () => ["facebook.com", "www.facebook.com"].includes(window.location.hostname),
     availability: () => {

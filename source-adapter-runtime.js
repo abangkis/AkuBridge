@@ -79,11 +79,10 @@
         `AkuBridge ${adapter.source} adapter scroll-step multiplier must be between 1 and 2.`,
       );
     }
-    const scrollSettleMs = adapter.captureTuning?.scrollSettleMs;
-    if (scrollSettleMs !== undefined &&
-        (!Number.isInteger(scrollSettleMs) || scrollSettleMs < 100 || scrollSettleMs > 5_000)) {
+    const scrollStrategy = adapter.captureTuning?.scrollStrategy;
+    if (scrollStrategy !== undefined && !["viewport", "next_candidate"].includes(scrollStrategy)) {
       throw new Error(
-        `AkuBridge ${adapter.source} adapter scroll-settle time must be between 100 and 5000 ms.`,
+        `AkuBridge ${adapter.source} adapter has an unsupported scroll strategy.`,
       );
     }
     adapters.set(adapter.source, Object.freeze({ ...adapter }));
@@ -105,7 +104,7 @@
       freshnessVersion: adapter.freshness.version,
       mediaAcquisitionVersion: adapter.mediaAcquisition.version,
       scrollStepMultiplier: adapter.captureTuning?.scrollStepMultiplier ?? 1,
-      scrollSettleMs: adapter.captureTuning?.scrollSettleMs ?? null,
+      scrollStrategy: adapter.captureTuning?.scrollStrategy ?? "viewport",
       actions: [
         "probe_readiness",
         ...(typeof adapter.availability === "function" ? ["report_source_availability"] : []),
