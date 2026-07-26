@@ -20,7 +20,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v17",
+    version: "linkedin-dom-v18",
     maxBlocksPerSnapshot: 8,
     scrollContext: "nearest_scrollable",
     scrollRootSelectors: Object.freeze(['[data-testid="mainFeed"]', "main", "#workspace"]),
@@ -277,10 +277,13 @@
 
   async function recoverLinkedInPermalinks(containers, operationDeadlineAtMs, helpers) {
     const recovered = new WeakMap();
-    const deadlineAtMs = Math.min(Date.now() + 2_000, operationDeadlineAtMs);
+    const snapshotDeadlineAtMs = Math.min(
+      Date.now() + 5_000,
+      Number.isFinite(operationDeadlineAtMs) ? operationDeadlineAtMs : Date.now() + 5_000,
+    );
     for (const container of containers) {
       if (helpers.findPermalinkDetails(container, "linkedin", container.querySelector("time"))) continue;
-      const remainingMs = deadlineAtMs - Date.now();
+      const remainingMs = snapshotDeadlineAtMs - Date.now();
       if (remainingMs <= 0) {
         recovered.set(container, {
           url: null,
@@ -289,6 +292,10 @@
         });
         continue;
       }
+      // A slow or stale menu must not consume the complete snapshot budget
+      // and starve every later candidate. DOM/URN evidence is always attempted
+      // first; menu recovery receives a small independent slice.
+      const candidateBudgetMs = Math.min(1_200, remainingMs);
       const menuButton = container.querySelector('button[aria-label^="Open control menu for post by"]');
       if (!menuButton) {
         recovered.set(container, { url: null, source: "unavailable", reason: "Post control menu was not exposed." });
@@ -313,7 +320,7 @@
           () => visibleEvidence().find((entry) => !previouslyVisible.has(entry.href))
             ?? visibleEvidence()[0]
             ?? null,
-          Math.max(1, Math.ceil(remainingMs / 50)),
+          Math.max(1, Math.ceil(candidateBudgetMs / 50)),
           50,
         );
         recovered.set(container, evidence?.url

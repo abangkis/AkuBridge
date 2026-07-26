@@ -1,7 +1,7 @@
 # AkuBridge
 
 Current preview identity: **`0.7.3`** / Chrome manifest
-**`0.7.3.0`** / runtime **`source-adapters-v79`**.
+**`0.7.3.0`** / runtime **`source-adapters-v80`**.
 
 Runtime v73 adds bounded background command dispatch for AkuBrowser Auto
 Update. After a trusted local AkuBrowser page configures the loopback endpoint
@@ -44,8 +44,8 @@ or validate the complete bridge observation by themselves.
 flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
     DOM --> XA["X adapter<br/>x-dom-v21<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
-    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v17<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
-    DOM --> FA["Facebook adapter<br/>facebook-dom-v12<br/>feed posts only"]
+    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v18<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
+    DOM --> FA["Facebook adapter<br/>facebook-dom-v13<br/>feed posts only"]
     XA --> R["Source-adapter registry"]
     LA --> R
     FA --> R
@@ -225,14 +225,19 @@ The fresh Standard 1x plan permits two native scrolls and three snapshots;
 explicit bounded profiles may raise the contract to at most six scrolls and
 seven snapshots. Computer Use is not part of this native path.
 
-Every managed surface is owned through a bounded capture lease. Standalone
-runs use the run ID; all source children of a unified check share the
-session ID so the window remains available across that source's bounded
-follow-up acquisition. Each source surface is released as soon as Acquisition
-Planning can no longer request follow-up capture and Candidate Evaluation
-begins; terminal source and session cleanup remain idempotent fallbacks.
-Release is idempotent and survives UI or
-service-worker restart through the stored binding. AkuBridge closes the whole
+Every Bridge-created capture surface is owned through a bounded capture lease.
+Standalone runs use the run ID; all source children of a unified check share
+the session ID so the window remains available across that source's bounded
+follow-up acquisition. The version-two surface ledger retains every managed
+window and Bridge-created Adaptive tab until it has a cleanup receipt; it is
+reconciled on extension start or reload and before a different lease may take
+ownership. Each source surface is released as soon as Acquisition Planning can
+no longer request follow-up capture and Candidate Evaluation begins. Page
+dispatch requests this cleanup directly. Background Auto Update pumps the
+session briefly after each observation so it can issue the same per-source
+cleanup without waiting for the one-minute alarm; terminal source/session
+cleanup and that alarm remain idempotent fallbacks.
+Release survives UI or service-worker restart through the ledger. AkuBridge closes the whole
 window only when every remaining tab is one of its recorded source surfaces.
 An internal same-source redirect, including Facebook feed routing, remains
 Bridge-owned and is reset to the canonical feed on reuse. If the user adds
@@ -240,6 +245,9 @@ another tab, navigates a managed tab outside its registered source, or otherwise
 takes control of the surface, Bridge closes only the still-provable owned source
 tabs and preserves the user's tab and window. Pre-existing source tabs and
 working windows are never registered as owned cleanup targets.
+Created or reused surfaces, cleanup requests and receipts, user-owned
+preservation, reconciliation, and any focus intervention are forwarded as
+bounded lifecycle telemetry to the corresponding Update Inbox source run.
 
 Each captured evidence block may include up to four content images or video
 posters for Source layout. Generic DOM candidates retain the minimum-geometry
@@ -256,6 +264,15 @@ thumbnail. Attachments remain separate from post media so a logo or external
 artifact is not misreported as an authored image. Destination and thumbnail
 URLs must be HTTPS; a non-HTTPS presentation card is omitted without rejecting
 the otherwise valid post.
+
+Facebook feed-post admission is adapter-owned and layered rather than tied to
+caption length. An explicit post action anchor is strongest; otherwise a
+stable post permalink plus author evidence and at least one post modality
+(text, media, or timestamp) is sufficient. A hydrated two-action cluster is
+also accepted. Stories, Reels, nested article cards, identity-less blocks, and
+author-less blocks are rejected before the generic evidence contract. This
+keeps media-heavy feed posts admissible without teaching the shared runtime
+Facebook DOM structure.
 
 LinkedIn `presentation.socialContext` preserves the source-native reason a post
 entered the feed, including compact forms such as `Mohamad Ramzy commented` as
@@ -306,6 +323,11 @@ UTC-bucket estimate plus explicit source, estimated, and precision metadata.
 Promoted posts with no exposed time remain `publishedAt: null`. LinkedIn also
 uses a stricter eight-block-per-snapshot runtime ceiling inside the global
 20-block capture contract.
+
+LinkedIn permalink recovery remains DOM/URN-first. Menu recovery is a bounded
+fallback with a five-second snapshot budget and a 1.2-second ceiling per menu
+candidate, so one slow virtualized card cannot consume the entire recovery
+window or starve later candidates.
 
 Capture settling uses a bounded service-worker delay so tabs left in the
 background are not dependent on Chrome's throttled page timers. A timeout may

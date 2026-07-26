@@ -18,8 +18,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 test("source catalog exposes Facebook without changing the X media capability", () => {
   assert.deepEqual(sourceAdapterVersions(), {
     x: "x-dom-v21",
-    linkedin: "linkedin-dom-v17",
-    facebook: "facebook-dom-v12",
+    linkedin: "linkedin-dom-v18",
+    facebook: "facebook-dom-v13",
   });
   assert.equal(sourceForUrl("https://www.facebook.com/"), "facebook");
   assert.equal(isCanonicalFeed("https://www.facebook.com/", "facebook"), true);
@@ -55,7 +55,7 @@ test("Facebook adapter passes synthetic Home Feed conformance", () => {
   const discovery = adapter.discoverCandidates({ uniqueElements: (items) => [...new Set(items)] });
   const helpers = { compactText, normalizeHttpUrl, structuredText: (element) => element?.innerText ?? "" };
 
-  assert.equal(adapter.version, "facebook-dom-v12");
+  assert.equal(adapter.version, "facebook-dom-v13");
   assert.equal(adapter.captureTuning.scrollStepMultiplier, 2);
   assert.deepEqual([...adapter.evidenceProfile.modalities], ["text", "image", "video", "attachment", "quoted_post"]);
   assert.equal(discovery.candidates.length, 1);
@@ -183,6 +183,59 @@ test("Facebook adapter distinguishes structural feed cards from eligible posts",
 
   assert.equal(discovery.readinessCandidates.length, 1);
   assert.equal(discovery.candidates.length, 0);
+});
+
+test("Facebook admits a stable media or text post without requiring two action buttons", () => {
+  const permalink = {
+    href: "https://www.facebook.com/photo/?fbid=987654321&set=pcb.1234567890",
+    target: "_blank",
+    innerText: "2h",
+    getAttribute: () => null,
+  };
+  const author = {};
+  const message = { innerText: "A stable post whose action row has not fully hydrated yet." };
+  const candidate = {
+    parentElement: { closest: () => null },
+    closest: () => null,
+    querySelector(selector) {
+      if (selector === '[aria-label^="Actions for this reel by "]') return null;
+      if (selector === '[aria-label^="Actions for this post by "]') return null;
+      if (selector.includes('h2 a[role="link"]')) return author;
+      if (selector.includes('[data-ad-preview="message"]')) return message;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === '[role="button"], button') {
+        return [{
+          innerText: "",
+          getAttribute: (name) => name === "aria-label" ? "Like" : null,
+        }];
+      }
+      if (selector === 'a[href]') return [permalink];
+      return [];
+    },
+  };
+  const liveSelector = 'div[aria-posinset]';
+  const document = {
+    body: {},
+    querySelector: () => candidate,
+    querySelectorAll(value) { return value === liveSelector ? [candidate] : []; },
+  };
+  const context = vm.createContext({
+    document,
+    window: { document, location: { hostname: "www.facebook.com", pathname: "/" } },
+    URL,
+  });
+  context.globalThis = context;
+  run(context, "source-adapter-runtime.js");
+  run(context, "adapters/facebook-adapter.js");
+
+  const discovery = context.AkuSourceAdapters.get("facebook").discoverCandidates({
+    uniqueElements: (items) => [...new Set(items)],
+  });
+
+  assert.equal(discovery.candidates.length, 1);
+  assert.equal(discovery.selectorCounts["admitted:stable_identity_evidence"], 1);
 });
 
 test("Facebook adapter reads the current profile-link header and rendered relative time", () => {

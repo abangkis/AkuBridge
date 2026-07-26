@@ -2,6 +2,8 @@ import { expectedFeedUrl, isCanonicalFeedUrl } from "./source-tab-policy.js";
 import { sourceForUrl, sourceIds } from "./source-catalog.js";
 
 export const CAPTURE_WINDOW_STORAGE_KEY = "akuBridgeManagedCaptureWindowV1";
+export const CAPTURE_SURFACE_LEDGER_STORAGE_KEY = "akuBridgeManagedCaptureSurfaceLedgerV2";
+const MAX_LEDGER_RECEIPTS = 100;
 
 export function createManagedCaptureWindowRuntime(chromeApi) {
   return Object.freeze({
@@ -12,6 +14,11 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
       const focusSnapshot = await captureWorkingFocus(chromeApi);
       const state = await loadState(chromeApi);
       const isolation = normalizeWindowIsolation(windowIsolation);
+      const reconciliationEvents = await reconcileLedger(
+        chromeApi,
+        state,
+        normalizeLeaseId(leaseId),
+      );
       let binding = await validateBinding(chromeApi, state, source, isolation);
       let opened = false;
       let reset = binding?.reset === true;
@@ -41,40 +48,87 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
       claimedState.ownedByBridge = true;
       claimedState.leaseId = normalizeLeaseId(leaseId);
       await saveState(chromeApi, claimedState);
+      await recordLedgerSurface(chromeApi, {
+        windowId: binding.windowId,
+        isolation,
+        bindings: isolation === "per_source"
+          ? { [source]: binding.tabId }
+          : claimedState.tabs,
+        leaseId: claimedState.leaseId,
+        created: opened,
+      });
 
       const current = await chromeApi.tabs.get(binding.tabId);
       if (current.active !== true) await chromeApi.tabs.update(binding.tabId, { active: true });
-      await requirePreservedFocus(chromeApi, focusSnapshot, binding.windowId, {
+      const focusOutcome = await requirePreservedFocus(chromeApi, focusSnapshot, binding.windowId, {
         source,
         reason: "managed_window_took_focus",
         phase: "prepare",
       });
+      const lifecycleEvents = [
+        ...reconciliationEvents,
+        lifecycleEvent(opened ? "created" : "reused", source, {
+          isolation,
+          reset,
+          focusIntervention: focusOutcome.changed === true,
+          focusRestored: focusOutcome.restored === true,
+        }),
+      ];
+      if (focusOutcome.changed === true) {
+        lifecycleEvents.push(lifecycleEvent("focus_intervention", source, {
+          phase: "prepare",
+          restored: focusOutcome.restored === true,
+        }));
+      }
 
       return {
         tab: await chromeApi.tabs.get(binding.tabId),
         opened,
         reset,
         focusSnapshot,
+        lifecycleEvents,
         openTargetTab: (url) => openManagedTargetTab(
           chromeApi,
           url,
           focusSnapshot,
           binding.windowId,
           source,
+          lifecycleEvents,
         ),
-        showForeground: () => chromeApi.windows.update(binding.windowId, { focused: true }),
+        showForeground: async () => {
+          const result = await chromeApi.windows.update(binding.windowId, { focused: true });
+          lifecycleEvents.push(lifecycleEvent("focus_intervention", source, {
+            phase: "foreground_authorized",
+            restored: false,
+            userAuthorized: true,
+          }));
+          return result;
+        },
         verifyFocus: () => preserveWorkingFocus(
           chromeApi,
           focusSnapshot,
           binding.windowId,
         ),
-        requireFocus: (phase) => requirePreservedFocus(
-          chromeApi,
-          focusSnapshot,
-          binding.windowId,
-          { source, reason: "managed_window_took_focus", phase },
-        ),
+        requireFocus: async (phase) => {
+          const outcome = await requirePreservedFocus(
+            chromeApi,
+            focusSnapshot,
+            binding.windowId,
+            { source, reason: "managed_window_took_focus", phase },
+          );
+          if (outcome.changed === true) {
+            lifecycleEvents.push(lifecycleEvent("focus_intervention", source, {
+              phase,
+              restored: outcome.restored === true,
+            }));
+          }
+          return outcome;
+        },
       };
+    },
+    async reconcile() {
+      const state = await loadState(chromeApi);
+      return { events: await reconcileLedger(chromeApi, state) };
     },
     async trackOpenedTab(source, tabId, leaseId) {
       if (!Number.isInteger(tabId) || !sourceIds().includes(source)) {
@@ -102,6 +156,15 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
       state.ownedByBridge = true;
       state.leaseId = requestedLeaseId;
       await saveState(chromeApi, state);
+      await recordLedgerSurface(chromeApi, {
+        surfaceId: `transient-tab:${tabId}`,
+        windowId: tab.windowId,
+        kind: "transient_tab",
+        isolation: "shared",
+        bindings: { [source]: tabId },
+        leaseId: requestedLeaseId,
+        created: true,
+      });
       return { tracked: true, source };
     },
     async isTrackedTab(source, tabId, leaseId) {
@@ -118,6 +181,55 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
       if (state.leaseId && state.leaseId !== requestedLeaseId) {
         return { released: false, reason: "lease_mismatch" };
       }
+      const transientTabId = state.transientTabs[source];
+      if (Number.isInteger(transientTabId)) {
+        let transientTab = null;
+        try {
+          transientTab = await chromeApi.tabs.get(transientTabId);
+        } catch {
+          // The tab was already closed by Chrome or by the user.
+        }
+        delete state.transientTabs[source];
+        await persistRemainingState(chromeApi, state);
+        const stillBridgeOwned = Boolean(transientTab && (
+          isCanonicalFeedUrl(transientTab.url, source) ||
+          sourceForUrl(transientTab.url) === source
+        ));
+        if (stillBridgeOwned) {
+          await chromeApi.tabs.remove(transientTabId);
+        }
+        const outcome = stillBridgeOwned
+          ? "owned_transient_tab_closed"
+          : transientTab
+            ? "transient_tab_adopted_by_user"
+            : "transient_tab_already_closed";
+        const events = [];
+        if (transientTab && !stillBridgeOwned) {
+          events.push(lifecycleEvent("preserved_user_owned", source, {
+            outcome,
+            preservedUserTabs: 1,
+          }));
+        }
+        events.push(lifecycleEvent("released", source, {
+          outcome,
+          closedTabs: stillBridgeOwned ? 1 : 0,
+          preservedUserTabs: transientTab && !stillBridgeOwned ? 1 : 0,
+        }));
+        await recordLedgerRelease(
+          chromeApi,
+          transientTab?.windowId ?? null,
+          source,
+          outcome,
+          transientTabId,
+        );
+        return {
+          released: stillBridgeOwned,
+          mode: outcome,
+          closedTabs: stillBridgeOwned ? 1 : 0,
+          preservedUserTabs: transientTab && !stillBridgeOwned ? 1 : 0,
+          events,
+        };
+      }
       const isolatedBinding = state.sourceWindows[source] ?? null;
       const surfaceWindowId = isolatedBinding?.windowId ?? state.windowId;
       const tabId = isolatedBinding?.tabId ?? state.tabs[source];
@@ -131,7 +243,9 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
       } catch {
         removeSourceBinding(state, source, isolatedBinding !== null);
         await persistRemainingState(chromeApi, state);
-        return { released: false, reason: "surface_already_closed" };
+        const events = [lifecycleEvent("released", source, { outcome: "surface_already_closed" })];
+        await recordLedgerRelease(chromeApi, surfaceWindowId, source, "surface_already_closed");
+        return { released: false, reason: "surface_already_closed", events };
       }
       const bindings = isolatedBinding
         ? { [source]: isolatedBinding.tabId }
@@ -153,12 +267,30 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
         await chromeApi.tabs.remove(tabId);
       }
       await persistRemainingState(chromeApi, state);
+      const events = [];
+      if (userTabs.length > 0) {
+        events.push(lifecycleEvent("preserved_user_owned", source, {
+          preservedUserTabs: userTabs.length,
+        }));
+      }
+      events.push(lifecycleEvent("released", source, {
+        outcome: targetOwned ? "owned_source_surface_closed" : "source_surface_already_closed",
+        closedTabs: targetOwned ? 1 : 0,
+        preservedUserTabs: userTabs.length,
+      }));
+      await recordLedgerRelease(
+        chromeApi,
+        surfaceWindowId,
+        source,
+        targetOwned ? "owned_source_surface_closed" : "source_surface_already_closed",
+      );
       return {
         released: targetOwned,
         mode: targetOwned ? "owned_source_surface_closed" : "source_surface_already_closed",
         closedTabs: targetOwned ? 1 : 0,
         remainingManagedTabs,
         preservedUserTabs: userTabs.length,
+        events,
       };
     },
     async release(leaseId) {
@@ -173,7 +305,33 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
       if (state.leaseId && state.leaseId !== requestedLeaseId) {
         return { released: false, reason: "lease_mismatch" };
       }
-      const transient = await closeTrackedTabs(chromeApi, state.transientTabs);
+      const transientBindings = { ...state.transientTabs };
+      const transient = await closeTrackedTabs(chromeApi, transientBindings);
+      for (const [source, tabId] of Object.entries(transientBindings)) {
+        await recordLedgerRelease(
+          chromeApi,
+          null,
+          source,
+          transient.closedBySource[source]
+            ? "owned_transient_tab_closed"
+            : "transient_tab_preserved",
+          tabId,
+        );
+      }
+      const transientEvents = Object.keys(transientBindings).flatMap((source) => {
+        const closed = transient.closedBySource[source] === true;
+        return [
+          ...(!closed ? [lifecycleEvent("preserved_user_owned", source, {
+            outcome: "transient_tab_preserved",
+            preservedUserTabs: 1,
+          })] : []),
+          lifecycleEvent("released", source, {
+            outcome: closed ? "owned_transient_tab_closed" : "transient_tab_preserved",
+            closedTabs: closed ? 1 : 0,
+            preservedUserTabs: closed ? 0 : 1,
+          }),
+        ];
+      });
       if (!hasManagedWindows) {
         await clearState(chromeApi);
         return {
@@ -181,6 +339,7 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
           mode: "owned_transient_tabs_closed",
           closedTabs: transient.closedTabs,
           preservedUserTabs: transient.preservedTabs,
+          events: transientEvents,
         };
       }
       const surfaces = managedSurfaces(state);
@@ -205,6 +364,11 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
           await chromeApi.tabs.remove(ownedTabs.map((tab) => tab.id));
         }
         closedManagedTabs += ownedTabs.length;
+        for (const source of Object.keys(surface.bindings)) {
+          await recordLedgerRelease(chromeApi, surface.windowId, source, userTabs.length > 0
+            ? "owned_tabs_closed_user_window_preserved"
+            : "owned_window_closed");
+        }
       }
       await clearState(chromeApi);
       const released = closedManagedTabs > 0 || transient.closedTabs > 0;
@@ -218,12 +382,27 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
         closedManagedTabs,
         closedTransientTabs: transient.closedTabs,
         preservedUserTabs,
+        events: [
+          ...transientEvents,
+          ...surfaces.flatMap((surface) => Object.keys(surface.bindings).map((source) =>
+            lifecycleEvent("released", source, {
+              outcome: mode,
+              preservedUserTabs,
+            }))),
+        ],
       };
     },
   });
 }
 
-async function openManagedTargetTab(chromeApi, url, focusSnapshot, managedWindowId, source) {
+async function openManagedTargetTab(
+  chromeApi,
+  url,
+  focusSnapshot,
+  managedWindowId,
+  source,
+  lifecycleEvents = [],
+) {
   let targetTab = null;
   try {
     // Creating the target inactive avoids the most common Chrome foreground
@@ -234,17 +413,29 @@ async function openManagedTargetTab(chromeApi, url, focusSnapshot, managedWindow
       url,
       active: false,
     });
-    await requirePreservedFocus(chromeApi, focusSnapshot, managedWindowId, {
+    const createdFocus = await requirePreservedFocus(chromeApi, focusSnapshot, managedWindowId, {
       source,
       reason: "managed_target_creation_took_focus",
       phase: "target_created",
     });
+    if (createdFocus.changed === true) {
+      lifecycleEvents.push(lifecycleEvent("focus_intervention", source, {
+        phase: "target_created",
+        restored: createdFocus.restored === true,
+      }));
+    }
     await chromeApi.tabs.update(targetTab.id, { active: true });
-    await requirePreservedFocus(chromeApi, focusSnapshot, managedWindowId, {
+    const activatedFocus = await requirePreservedFocus(chromeApi, focusSnapshot, managedWindowId, {
       source,
       reason: "managed_target_activation_took_focus",
       phase: "target_activated",
     });
+    if (activatedFocus.changed === true) {
+      lifecycleEvents.push(lifecycleEvent("focus_intervention", source, {
+        phase: "target_activated",
+        restored: activatedFocus.restored === true,
+      }));
+    }
     return chromeApi.tabs.get(targetTab.id);
   } catch (error) {
     if (Number.isInteger(targetTab?.id)) {
@@ -304,6 +495,282 @@ async function saveState(chromeApi, state) {
 
 async function clearState(chromeApi) {
   await chromeApi.storage.local.remove(CAPTURE_WINDOW_STORAGE_KEY);
+}
+
+async function loadLedger(chromeApi) {
+  const stored = await chromeApi.storage.local.get(CAPTURE_SURFACE_LEDGER_STORAGE_KEY);
+  return normalizeSurfaceLedger(stored[CAPTURE_SURFACE_LEDGER_STORAGE_KEY]);
+}
+
+async function saveLedger(chromeApi, ledger) {
+  await chromeApi.storage.local.set({
+    [CAPTURE_SURFACE_LEDGER_STORAGE_KEY]: normalizeSurfaceLedger(ledger),
+  });
+}
+
+export function normalizeSurfaceLedger(value) {
+  const surfaces = Array.isArray(value?.surfaces)
+    ? value.surfaces.flatMap((surface) => {
+        const kind = surface?.kind === "transient_tab"
+          ? "transient_tab"
+          : "managed_window";
+        if (!Number.isInteger(surface?.windowId)) return [];
+        const bindings = Object.fromEntries(sourceIds().flatMap((source) =>
+          Number.isInteger(surface?.bindings?.[source])
+            ? [[source, surface.bindings[source]]]
+            : [],
+        ));
+        if (Object.keys(bindings).length === 0) return [];
+        const fallbackSurfaceId = kind === "transient_tab"
+          ? `transient-tab:${Object.values(bindings)[0]}`
+          : `managed-window:${surface.windowId}`;
+        const storedSurfaceId = typeof surface.surfaceId === "string"
+          ? surface.surfaceId
+          : "";
+        return [{
+          surfaceId: storedSurfaceId && !storedSurfaceId.startsWith("window:")
+            ? storedSurfaceId
+            : fallbackSurfaceId,
+          windowId: surface.windowId,
+          kind,
+          isolation: surface.isolation === "per_source" ? "per_source" : "shared",
+          bindings,
+          leaseId: normalizeLeaseId(surface.leaseId),
+          createdAt: normalizeLedgerTimestamp(surface.createdAt),
+          updatedAt: normalizeLedgerTimestamp(surface.updatedAt),
+        }];
+      })
+    : [];
+  const receipts = Array.isArray(value?.receipts)
+    ? value.receipts.slice(-MAX_LEDGER_RECEIPTS).flatMap((receipt) =>
+        typeof receipt?.event === "string" && typeof receipt?.occurredAt === "string"
+          ? [{
+              event: receipt.event,
+              source: sourceIds().includes(receipt.source) ? receipt.source : null,
+              outcome: String(receipt.outcome ?? "").slice(0, 120),
+              occurredAt: receipt.occurredAt,
+            }]
+          : [],
+      )
+    : [];
+  return { version: 2, surfaces, receipts };
+}
+
+async function recordLedgerSurface(chromeApi, value) {
+  const ledger = await loadLedger(chromeApi);
+  const surfaceId = typeof value.surfaceId === "string" && value.surfaceId
+    ? value.surfaceId
+    : `managed-window:${value.windowId}`;
+  const existing = ledger.surfaces.find((surface) => surface.surfaceId === surfaceId);
+  const timestamp = new Date().toISOString();
+  if (existing) {
+    existing.bindings = { ...existing.bindings, ...value.bindings };
+    existing.isolation = value.isolation;
+    existing.leaseId = normalizeLeaseId(value.leaseId);
+    existing.updatedAt = timestamp;
+  } else {
+    ledger.surfaces.push({
+      surfaceId,
+      windowId: value.windowId,
+      kind: value.kind === "transient_tab" ? "transient_tab" : "managed_window",
+      isolation: value.isolation,
+      bindings: { ...value.bindings },
+      leaseId: normalizeLeaseId(value.leaseId),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+  }
+  await saveLedger(chromeApi, ledger);
+}
+
+async function recordLedgerRelease(chromeApi, windowId, source, outcome, tabId = null) {
+  const ledger = await loadLedger(chromeApi);
+  const surface = ledger.surfaces.find((candidate) =>
+    candidate.bindings[source] === tabId ||
+    (tabId === null && candidate.windowId === windowId && candidate.kind !== "transient_tab")
+  );
+  if (surface) {
+    delete surface.bindings[source];
+    surface.updatedAt = new Date().toISOString();
+    if (Object.keys(surface.bindings).length === 0) {
+      ledger.surfaces = ledger.surfaces.filter((candidate) => candidate !== surface);
+    }
+  }
+  appendLedgerReceipt(ledger, "released", source, outcome);
+  await saveLedger(chromeApi, ledger);
+}
+
+async function reconcileLedger(chromeApi, state, incomingLeaseId = null) {
+  const ledger = await loadLedger(chromeApi);
+  await migrateStateIntoLedger(chromeApi, ledger, state);
+  const priorLeaseMustRelease = Boolean(
+    incomingLeaseId &&
+    state.leaseId &&
+    state.leaseId !== incomingLeaseId,
+  );
+  const currentSurfaceIds = priorLeaseMustRelease
+    ? new Set()
+    : new Set([
+        ...managedSurfaces(state).map((surface) => `managed-window:${surface.windowId}`),
+        ...Object.values(state.transientTabs).map((tabId) => `transient-tab:${tabId}`),
+      ]);
+  const events = [];
+  for (const surface of [...ledger.surfaces]) {
+    let window;
+    try {
+      window = await chromeApi.windows.get(surface.windowId, { populate: true });
+    } catch {
+      for (const source of Object.keys(surface.bindings)) {
+        appendLedgerReceipt(ledger, "released", source, "surface_already_closed");
+        events.push(lifecycleEvent("reconciled", source, { outcome: "surface_already_closed" }));
+      }
+      ledger.surfaces = ledger.surfaces.filter((candidate) => candidate !== surface);
+      continue;
+    }
+
+    const ownedTabs = [];
+    for (const [source, tabId] of Object.entries({ ...surface.bindings })) {
+      const tab = (window.tabs ?? []).find((candidate) => candidate.id === tabId);
+      if (!tab) {
+        delete surface.bindings[source];
+        appendLedgerReceipt(ledger, "released", source, "owned_tab_already_closed");
+        events.push(lifecycleEvent("reconciled", source, { outcome: "owned_tab_already_closed" }));
+        continue;
+      }
+      if (!isCanonicalFeedUrl(tab.url, source) && sourceForUrl(tab.url) !== source) {
+        delete surface.bindings[source];
+        appendLedgerReceipt(ledger, "preserved_user_owned", source, "navigation_adopted_by_user");
+        events.push(lifecycleEvent("preserved_user_owned", source, {
+          outcome: "navigation_adopted_by_user",
+        }));
+        continue;
+      }
+      ownedTabs.push(tab);
+    }
+
+    if (!currentSurfaceIds.has(surface.surfaceId) && ownedTabs.length > 0) {
+      const ownedIds = new Set(ownedTabs.map((tab) => tab.id));
+      const userTabs = (window.tabs ?? []).filter((tab) => !ownedIds.has(tab.id));
+      if (userTabs.length === 0) {
+        await chromeApi.windows.remove(surface.windowId);
+      } else {
+        await chromeApi.tabs.remove(ownedTabs.map((tab) => tab.id));
+      }
+      for (const source of Object.keys(surface.bindings)) {
+        appendLedgerReceipt(
+          ledger,
+          "released",
+          source,
+          userTabs.length === 0 ? "orphan_window_reconciled" : "orphan_tabs_reconciled",
+        );
+        events.push(lifecycleEvent("reconciled", source, {
+          outcome: userTabs.length === 0 ? "orphan_window_reconciled" : "orphan_tabs_reconciled",
+          preservedUserTabs: userTabs.length,
+        }));
+        if (userTabs.length > 0) {
+          events.push(lifecycleEvent("preserved_user_owned", source, {
+            outcome: "orphan_user_tabs_preserved",
+            preservedUserTabs: userTabs.length,
+          }));
+        }
+      }
+      ledger.surfaces = ledger.surfaces.filter((candidate) => candidate !== surface);
+      continue;
+    }
+
+    if (Object.keys(surface.bindings).length === 0) {
+      ledger.surfaces = ledger.surfaces.filter((candidate) => candidate !== surface);
+    } else {
+      surface.updatedAt = new Date().toISOString();
+    }
+  }
+  await saveLedger(chromeApi, ledger);
+  if (priorLeaseMustRelease) {
+    state.windowId = null;
+    state.tabs = {};
+    state.sourceWindows = {};
+    state.transientTabs = {};
+    state.ownedByBridge = false;
+    state.leaseId = null;
+    await clearState(chromeApi);
+  }
+  return events;
+}
+
+async function migrateStateIntoLedger(chromeApi, ledger, state) {
+  const now = new Date().toISOString();
+  for (const surface of managedSurfaces(state)) {
+    const existing = ledger.surfaces.find((candidate) => candidate.windowId === surface.windowId);
+    if (existing) {
+      existing.bindings = { ...existing.bindings, ...surface.bindings };
+      existing.leaseId = state.leaseId;
+      existing.updatedAt = now;
+      continue;
+    }
+    ledger.surfaces.push({
+      surfaceId: `managed-window:${surface.windowId}`,
+      windowId: surface.windowId,
+      kind: "managed_window",
+      isolation: Object.keys(surface.bindings).length === 1 &&
+        Object.values(state.sourceWindows).some((binding) => binding.windowId === surface.windowId)
+        ? "per_source"
+        : "shared",
+      bindings: { ...surface.bindings },
+      leaseId: state.leaseId,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+  for (const [source, tabId] of Object.entries(state.transientTabs)) {
+    const surfaceId = `transient-tab:${tabId}`;
+    const existing = ledger.surfaces.find((candidate) => candidate.surfaceId === surfaceId);
+    if (existing) {
+      existing.bindings = { ...existing.bindings, [source]: tabId };
+      existing.leaseId = state.leaseId;
+      existing.updatedAt = now;
+      continue;
+    }
+    let tab;
+    try {
+      tab = await chromeApi.tabs.get(tabId);
+    } catch {
+      continue;
+    }
+    ledger.surfaces.push({
+      surfaceId,
+      windowId: tab.windowId,
+      kind: "transient_tab",
+      isolation: "shared",
+      bindings: { [source]: tabId },
+      leaseId: state.leaseId,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+}
+
+function appendLedgerReceipt(ledger, event, source, outcome) {
+  ledger.receipts.push({
+    event,
+    source: sourceIds().includes(source) ? source : null,
+    outcome: String(outcome ?? "").slice(0, 120),
+    occurredAt: new Date().toISOString(),
+  });
+  ledger.receipts = ledger.receipts.slice(-MAX_LEDGER_RECEIPTS);
+}
+
+function lifecycleEvent(event, source, detail = {}) {
+  return {
+    event,
+    source: sourceIds().includes(source) ? source : null,
+    outcome: String(detail.outcome ?? "").slice(0, 120),
+    detail: { ...detail },
+    occurredAt: new Date().toISOString(),
+  };
+}
+
+function normalizeLedgerTimestamp(value) {
+  return typeof value === "string" && value ? value : new Date().toISOString();
 }
 
 async function persistRemainingState(chromeApi, state) {
@@ -438,6 +905,7 @@ function normalizeWindowIsolation(value) {
 
 async function closeTrackedTabs(chromeApi, bindings) {
   const closeIds = [];
+  const closedBySource = {};
   let preservedTabs = 0;
   for (const [source, id] of Object.entries(bindings)) {
     let tab;
@@ -448,13 +916,14 @@ async function closeTrackedTabs(chromeApi, bindings) {
     }
     if (isCanonicalFeedUrl(tab.url, source)) {
       closeIds.push(id);
+      closedBySource[source] = true;
     } else {
       // Navigation is treated as user adoption. Never close an adopted tab.
       preservedTabs += 1;
     }
   }
   if (closeIds.length > 0) await chromeApi.tabs.remove(closeIds);
-  return { closedTabs: closeIds.length, preservedTabs };
+  return { closedTabs: closeIds.length, preservedTabs, closedBySource };
 }
 
 function normalizeLeaseId(value) {

@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  CAPTURE_SURFACE_LEDGER_STORAGE_KEY,
+  CAPTURE_WINDOW_STORAGE_KEY,
   createManagedCaptureWindowRuntime,
   normalizeManagedCaptureState,
 } from "../capture-window-runtime.js";
@@ -66,7 +68,7 @@ test("managed capture accepts a transient focus change that it successfully rest
   assert.equal(prepared.tab.url, "https://www.linkedin.com/feed/");
   assert.equal(chrome.focusedWindowId, 1);
   assert.equal(chrome.activeByWindow.get(1), 11);
-  assert.deepEqual(await runtime.release("session-1"), {
+  assert.deepEqual(withoutLifecycleEvents(await runtime.release("session-1")), {
     released: true,
     mode: "owned_window_closed",
     closedTabs: 2,
@@ -93,7 +95,7 @@ test("multi-window Quiet creates one non-focused managed window per source", asy
   assert.equal(chrome.createdWindowOptionsList.every((entry) => entry.focused === false), true);
   assert.equal(chrome.createdTabOptions.length, 0);
   assert.equal(chrome.focusedWindowId, 1);
-  assert.deepEqual(await runtime.release("session-1"), {
+  assert.deepEqual(withoutLifecycleEvents(await runtime.release("session-1")), {
     released: true,
     mode: "owned_windows_closed",
     closedTabs: 2,
@@ -196,7 +198,7 @@ test("session release closes a canonical tab created by Adaptive capture", async
   });
   assert.equal(await runtime.isTrackedTab("x", 31, "session-1"), true);
   assert.equal(await runtime.isTrackedTab("x", 31, "another-session"), false);
-  assert.deepEqual(await runtime.release("session-1"), {
+  assert.deepEqual(withoutLifecycleEvents(await runtime.release("session-1")), {
     released: true,
     mode: "owned_transient_tabs_closed",
     closedTabs: 1,
@@ -211,7 +213,7 @@ test("release closes a fully Bridge-owned managed window", async () => {
   const runtime = createManagedCaptureWindowRuntime(chrome);
   await runtime.prepare("x", { leaseId: "session-1" });
 
-  assert.deepEqual(await runtime.release("session-1"), {
+  assert.deepEqual(withoutLifecycleEvents(await runtime.release("session-1")), {
     released: true,
     mode: "owned_window_closed",
     closedTabs: 1,
@@ -229,7 +231,7 @@ test("release preserves user tabs added to a Bridge-owned window", async () => {
   await runtime.prepare("x", { leaseId: "session-1" });
   chrome.addTab(2, "https://example.com/user-work", 31);
 
-  assert.deepEqual(await runtime.release("session-1"), {
+  assert.deepEqual(withoutLifecycleEvents(await runtime.release("session-1")), {
     released: true,
     mode: "owned_tabs_closed_user_window_preserved",
     closedTabs: 1,
@@ -248,7 +250,7 @@ test("source failure closes only its Bridge-owned managed tab", async () => {
   await runtime.prepare("x", { leaseId: "session-1" });
   const facebook = await runtime.prepare("facebook", { leaseId: "session-1" });
 
-  assert.deepEqual(await runtime.releaseSource("facebook", "session-1"), {
+  assert.deepEqual(withoutLifecycleEvents(await runtime.releaseSource("facebook", "session-1")), {
     released: true,
     mode: "owned_source_surface_closed",
     closedTabs: 1,
@@ -259,7 +261,7 @@ test("source failure closes only its Bridge-owned managed tab", async () => {
   assert.equal(chrome.windowsById.has(2), true);
   assert.equal(chrome.windowsById.get(2).tabs.length, 1);
 
-  assert.deepEqual(await runtime.release("session-1"), {
+  assert.deepEqual(withoutLifecycleEvents(await runtime.release("session-1")), {
     released: true,
     mode: "owned_window_closed",
     closedTabs: 1,
@@ -294,7 +296,7 @@ test("source cleanup closes a Bridge-owned Facebook tab after an internal redire
     url: "https://www.facebook.com/home.php",
   });
 
-  assert.deepEqual(await runtime.releaseSource("facebook", "session-1"), {
+  assert.deepEqual(withoutLifecycleEvents(await runtime.releaseSource("facebook", "session-1")), {
     released: true,
     mode: "owned_source_surface_closed",
     closedTabs: 1,
@@ -329,6 +331,98 @@ test("release does not close a newer leased surface", async () => {
   assert.equal(chrome.windowsById.has(2), true);
   assert.deepEqual(chrome.removedWindowIds, []);
 });
+
+test("ledger reconciliation closes an orphaned managed surface after runtime state is lost", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  await runtime.prepare("x", { leaseId: "session-1" });
+  await chrome.storage.local.remove(CAPTURE_WINDOW_STORAGE_KEY);
+
+  const outcome = await createManagedCaptureWindowRuntime(chrome).reconcile();
+  const stored = await chrome.storage.local.get(CAPTURE_SURFACE_LEDGER_STORAGE_KEY);
+
+  assert.equal(outcome.events.some((event) =>
+    event.event === "reconciled" &&
+    event.source === "x" &&
+    event.outcome === "orphan_window_reconciled"
+  ), true);
+  assert.deepEqual(chrome.removedWindowIds, [2]);
+  assert.deepEqual(stored[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].surfaces, []);
+  assert.equal(
+    stored[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].receipts.at(-1).outcome,
+    "orphan_window_reconciled",
+  );
+});
+
+test("ledger reconciliation migrates a legacy Adaptive tab before release", async () => {
+  const chrome = fakeChrome();
+  chrome.addTab(1, "https://x.com/home", 31);
+  await chrome.storage.local.set({
+    [CAPTURE_WINDOW_STORAGE_KEY]: {
+      transientTabs: { x: 31 },
+      leaseId: "session-1",
+      ownedByBridge: true,
+    },
+  });
+
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const outcome = await runtime.reconcile();
+  const stored = await chrome.storage.local.get(CAPTURE_SURFACE_LEDGER_STORAGE_KEY);
+
+  assert.deepEqual(outcome.events, []);
+  assert.deepEqual(stored[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].surfaces, [{
+    surfaceId: "transient-tab:31",
+    windowId: 1,
+    kind: "transient_tab",
+    isolation: "shared",
+    bindings: { x: 31 },
+    leaseId: "session-1",
+    createdAt: stored[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].surfaces[0].createdAt,
+    updatedAt: stored[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].surfaces[0].updatedAt,
+  }]);
+
+  await runtime.release("session-1");
+
+  assert.deepEqual(chrome.removedTabIds, [31]);
+});
+
+test("a new lease reconciles the prior lease before taking ownership", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const first = await runtime.prepare("x", { leaseId: "session-1" });
+  const second = await runtime.prepare("linkedin", { leaseId: "session-2" });
+
+  assert.deepEqual(chrome.removedWindowIds, [first.tab.windowId]);
+  assert.equal(chrome.createdWindowOptionsList.length, 2);
+  assert.equal(chrome.windowsById.has(second.tab.windowId), true);
+  assert.equal(second.lifecycleEvents.some((event) =>
+    event.event === "reconciled" && event.source === "x"
+  ), true);
+});
+
+test("per-source cleanup closes an Adaptive tab and records its ledger receipt", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  chrome.addTab(1, "https://x.com/home", 31);
+  await runtime.trackOpenedTab("x", 31, "session-1");
+
+  const outcome = await runtime.releaseSource("x", "session-1");
+  const stored = await chrome.storage.local.get(CAPTURE_SURFACE_LEDGER_STORAGE_KEY);
+
+  assert.equal(outcome.mode, "owned_transient_tab_closed");
+  assert.deepEqual(chrome.removedTabIds, [31]);
+  assert.deepEqual(stored[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].surfaces, []);
+  assert.equal(
+    stored[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].receipts.at(-1).outcome,
+    "owned_transient_tab_closed",
+  );
+});
+
+function withoutLifecycleEvents(value) {
+  const result = { ...value };
+  delete result.events;
+  return result;
+}
 
 function fakeChrome() {
   const storage = {};

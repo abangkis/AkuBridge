@@ -53,6 +53,8 @@ const PENDING_SELF_RELOAD_KEY = "akuBridgePendingSelfReload";
 const PENDING_SELF_RELOAD_MAX_AGE_MS = 30_000;
 const BACKGROUND_DISPATCH_CONFIG_KEY = "akuBridgeBackgroundDispatch";
 const BACKGROUND_DISPATCH_ALARM = "akuBridgeBackgroundDispatch";
+const BACKGROUND_RELEASE_PUMP_MS = 55_000;
+const BACKGROUND_RELEASE_POLL_MS = 650;
 let backgroundDispatching = false;
 const commandGuard = createCommandGuard();
 const managedCaptureWindow = createManagedCaptureWindowRuntime(chrome);
@@ -163,10 +165,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, message: "Capture-surface release rejected: invalid AkuBrowser origin." });
       return false;
     }
-    const release = typeof message.source === "string"
-      ? managedCaptureWindow.releaseSource(message.source, message.leaseId)
-      : managedCaptureWindow.release(message.leaseId);
-    release
+    releaseCaptureSurfaceWithTelemetry(message)
       .then((outcome) => sendResponse({ ok: true, outcome }))
       .catch((error) => sendResponse({
         ok: false,
@@ -299,8 +298,24 @@ async function dispatchRun(message) {
       "observation",
       { runId: message.runId, observation },
     );
+    await postCaptureSurfaceEvents(
+      message.endpoint,
+      message.token,
+      command.payload.captureLeaseId,
+      message.runId,
+      command.payload.source,
+      observation.coverage?.captureSurfaceLifecycle ?? [],
+    ).catch(() => undefined);
     commandGuard.finish(command.id);
   } catch (error) {
+    await postCaptureSurfaceEvents(
+      message.endpoint,
+      message.token,
+      command.payload.captureLeaseId,
+      message.runId,
+      command.payload.source,
+      error?.captureSurfaceLifecycle ?? [],
+    ).catch(() => undefined);
     await postBridgeResult(
       message.endpoint,
       message.token,
@@ -345,7 +360,25 @@ async function releaseTerminalBackgroundLease(config) {
   if (session?.runs && typeof config.activeLeaseId === "string") {
     for (const run of session.runs) {
       if (!sourceIds().includes(run?.source) || !sourceCaptureSurfaceReleasable(run) || releasedSources.has(run.source)) continue;
+      await postCaptureSurfaceEvents(
+        config.endpoint,
+        config.token,
+        config.activeLeaseId,
+        run.id,
+        run.source,
+        [captureSurfaceEvent("release_requested", run.source, {
+          outcome: "source_acquisition_closed",
+        })],
+      ).catch(() => undefined);
       const outcome = await managedCaptureWindow.releaseSource(run.source, config.activeLeaseId).catch(() => null);
+      await postCaptureSurfaceEvents(
+        config.endpoint,
+        config.token,
+        config.activeLeaseId,
+        run.id,
+        run.source,
+        outcome?.events ?? [],
+      ).catch(() => undefined);
       if (outcome && outcome.reason !== "lease_mismatch") releasedSources.add(run.source);
     }
   }
@@ -354,7 +387,15 @@ async function releaseTerminalBackgroundLease(config) {
     await chrome.storage.local.set({ [BACKGROUND_DISPATCH_CONFIG_KEY]: next });
     return next;
   }
-  await managedCaptureWindow.release(config.activeLeaseId).catch(() => undefined);
+  const terminalOutcome = await managedCaptureWindow.release(config.activeLeaseId).catch(() => null);
+  await postCaptureSurfaceEvents(
+    config.endpoint,
+    config.token,
+    config.activeLeaseId,
+    "",
+    null,
+    terminalOutcome?.events ?? [],
+  ).catch(() => undefined);
   const next = { ...config };
   delete next.activeLeaseId;
   delete next.releasedSources;
@@ -385,6 +426,9 @@ async function configureBackgroundDispatch(endpoint, token) {
   const next = { endpoint, token };
   if (current?.endpoint === endpoint && current?.token === token && typeof current.activeLeaseId === "string") {
     next.activeLeaseId = current.activeLeaseId;
+    next.releasedSources = Array.isArray(current.releasedSources)
+      ? current.releasedSources
+      : [];
   }
   await chrome.storage.local.set({ [BACKGROUND_DISPATCH_CONFIG_KEY]: next });
   await chrome.alarms.create(BACKGROUND_DISPATCH_ALARM, { periodInMinutes: 1 });
@@ -401,6 +445,17 @@ async function restoreBackgroundDispatch() {
   } catch {
     await chrome.storage.local.remove(BACKGROUND_DISPATCH_CONFIG_KEY);
     return;
+  }
+  const reconciliation = await managedCaptureWindow.reconcile();
+  if (typeof config.activeLeaseId === "string") {
+    await postCaptureSurfaceEvents(
+      config.endpoint,
+      config.token,
+      config.activeLeaseId,
+      "",
+      null,
+      reconciliation.events ?? [],
+    ).catch(() => undefined);
   }
   await chrome.alarms.create(BACKGROUND_DISPATCH_ALARM, { periodInMinutes: 1 });
   await pollBackgroundDispatch();
@@ -428,12 +483,150 @@ async function pollBackgroundDispatch() {
     if (typeof runId !== "string" || !runId) return;
     try {
       await dispatchRun({ endpoint: config.endpoint, token: config.token, runId, background: true });
+      await pumpBackgroundSession(config.endpoint, config.token);
     } catch (error) {
       if (error?.message !== "No queued browser command was available for this run.") throw error;
     }
   } finally {
     backgroundDispatching = false;
   }
+}
+
+async function pumpBackgroundSession(endpoint, token) {
+  const deadline = Date.now() + BACKGROUND_RELEASE_PUMP_MS;
+  while (Date.now() < deadline) {
+    const stored = await chrome.storage.local.get(BACKGROUND_DISPATCH_CONFIG_KEY);
+    let config = stored?.[BACKGROUND_DISPATCH_CONFIG_KEY];
+    if (!config || config.endpoint !== endpoint || config.token !== token) return;
+    config = await releaseTerminalBackgroundLease(config);
+    if (!config?.activeLeaseId) return;
+    const response = await fetch(
+      `${config.endpoint}/api/bridge/commands/pending`,
+      { headers: bridgeHeaders(config.token), cache: "no-store" },
+    );
+    if (response.status === 204) {
+      await delay(BACKGROUND_RELEASE_POLL_MS);
+      continue;
+    }
+    if (!response.ok) return;
+    const runId = (await response.json()).runId;
+    if (typeof runId === "string" && runId) {
+      await dispatchRun({
+        endpoint: config.endpoint,
+        token: config.token,
+        runId,
+        background: true,
+      });
+    }
+  }
+}
+
+async function releaseCaptureSurfaceWithTelemetry(message) {
+  const stored = await chrome.storage.local.get(BACKGROUND_DISPATCH_CONFIG_KEY);
+  const config = stored?.[BACKGROUND_DISPATCH_CONFIG_KEY];
+  const leaseId = typeof message?.leaseId === "string" ? message.leaseId : "";
+  const source = sourceIds().includes(message?.source) ? message.source : null;
+  const canReport = Boolean(
+    config &&
+    typeof config.endpoint === "string" &&
+    typeof config.token === "string" &&
+    leaseId,
+  );
+  if (canReport && source) {
+    await postCaptureSurfaceEvents(
+      config.endpoint,
+      config.token,
+      leaseId,
+      "",
+      source,
+      [captureSurfaceEvent("release_requested", source, {
+        outcome: "timeline_source_acquisition_closed",
+      })],
+    ).catch(() => undefined);
+  }
+  const outcome = source
+    ? await managedCaptureWindow.releaseSource(source, leaseId)
+    : await managedCaptureWindow.release(leaseId);
+  if (canReport) {
+    await postCaptureSurfaceEvents(
+      config.endpoint,
+      config.token,
+      leaseId,
+      "",
+      source,
+      outcome?.events ?? [],
+    ).catch(() => undefined);
+  }
+  return outcome;
+}
+
+async function postCaptureSurfaceEvents(
+  endpoint,
+  token,
+  sessionId,
+  runId,
+  fallbackSource,
+  events,
+) {
+  if (
+    typeof endpoint !== "string" ||
+    typeof token !== "string" ||
+    typeof sessionId !== "string" ||
+    !sessionId ||
+    !Array.isArray(events) ||
+    events.length === 0
+  ) return;
+  const payload = events.flatMap((event) => {
+    const source = sourceIds().includes(event?.source)
+      ? event.source
+      : sourceIds().includes(fallbackSource)
+        ? fallbackSource
+        : null;
+    if (typeof event?.event !== "string") return [];
+    return [{
+      id: createCaptureSurfaceEventId(),
+      sessionId,
+      runId: typeof runId === "string" ? runId : "",
+      source,
+      event: event.event,
+      outcome: String(event.outcome ?? event.detail?.outcome ?? "").slice(0, 120),
+      detail: event.detail && typeof event.detail === "object"
+        ? event.detail
+        : {},
+      occurredAt: typeof event.occurredAt === "string"
+        ? event.occurredAt
+        : new Date().toISOString(),
+    }];
+  });
+  if (payload.length === 0) return;
+  const response = await fetch(`${endpoint}/api/bridge/capture-surfaces/events`, {
+    method: "POST",
+    headers: {
+      ...bridgeHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ events: payload }),
+  });
+  if (!response.ok) {
+    throw new Error(await responseError(response, "Could not record capture-surface telemetry"));
+  }
+}
+
+function captureSurfaceEvent(event, source, detail = {}) {
+  return {
+    event,
+    source: sourceIds().includes(source) ? source : null,
+    outcome: String(detail.outcome ?? "").slice(0, 120),
+    detail: { ...detail },
+    occurredAt: new Date().toISOString(),
+  };
+}
+
+function createCaptureSurfaceEventId() {
+  if (typeof crypto?.randomUUID === "function") {
+    return `capture_surface_${crypto.randomUUID()}`;
+  }
+  return `capture_surface_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
 }
 
 async function dispatchMediaRecapture(message) {
@@ -522,6 +715,7 @@ async function captureWithSourceTabRecovery(command) {
       // event means that AkuBridge navigated or closed the user's working tab.
       observation.coverage.workingTabPreserved = prepared.workingTabPreserved === true;
       observation.coverage.workingFocusRestored = focusOutcome.restored === true;
+      observation.coverage.captureSurfaceLifecycle = prepared.lifecycleEvents ?? [];
       return observation;
     } catch (error) {
       const sourcePolicy = sourceDefinition(command.payload.source);
@@ -533,6 +727,9 @@ async function captureWithSourceTabRecovery(command) {
         emptyObservationRecovery: sourcePolicy?.captureRecovery?.emptyObservation ?? null,
       });
       if (!retry) {
+        if (prepared?.lifecycleEvents?.length) {
+          error.captureSurfaceLifecycle = prepared.lifecycleEvents;
+        }
         throw error;
       }
       if (error?.code === "capture_empty" && prepared?.ownership === "managed") {
@@ -726,10 +923,14 @@ async function findOrOpenSourceTab(
         requireVisualHydration: !targetUrl || visibilityPlan.foregroundAuthorized,
         restoreFocus: managed.verifyFocus,
         hydrationTimeoutMs: requestedHydrationTimeoutMs,
+        lifecycleEvents: managed.lifecycleEvents,
       });
       prepared.closeOnExit = Boolean(targetUrl);
       return prepared;
     } catch (error) {
+      if (managed?.lifecycleEvents?.length) {
+        error.captureSurfaceLifecycle = managed.lifecycleEvents;
+      }
       if (Number.isInteger(targetCaptureTabId)) {
         await chrome.tabs.remove(targetCaptureTabId).catch(() => undefined);
         targetCaptureTabId = null;
@@ -755,6 +956,7 @@ async function findOrOpenSourceTab(
   const selected = chooseSourceTab(tabs, { source, mode });
   let tab = selected;
   let opened = false;
+  const lifecycleEvents = [];
   if (!openIfMissing) {
     if (!tab) {
       const expectation = mode === "catch_up" ? ` feed tab (${expectedFeedUrl(source)})` : " tab";
@@ -767,18 +969,27 @@ async function findOrOpenSourceTab(
     await waitForTabComplete(tab.id, 20_000);
     tab = await chrome.tabs.get(tab.id);
     await managedCaptureWindow.trackOpenedTab(source, tab.id, captureLeaseId);
+    lifecycleEvents.push(captureSurfaceEvent("created", source, {
+      isolation: "shared_adaptive",
+    }));
   }
   const bridgeOwned = opened || await managedCaptureWindow.isTrackedTab(
     source,
     tab.id,
     captureLeaseId,
   );
+  if (!opened && bridgeOwned) {
+    lifecycleEvents.push(captureSurfaceEvent("reused", source, {
+      isolation: "shared_adaptive",
+    }));
+  }
   return prepareSourceTab(tab, source, opened, {
     ownership: bridgeOwned ? "managed" : "shared",
     captureVisibilityPolicy: visibilityPlan.policy,
     captureVisibilityMode: "same_window",
     openedTabDisposition: bridgeOwned ? "close_after_session" : "preserve",
     hydrationTimeoutMs: requestedHydrationTimeoutMs,
+    lifecycleEvents,
   });
 }
 
@@ -890,6 +1101,7 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
     captureVisibilityMode: options.captureVisibilityMode ?? "same_window",
     workingTabPreserved: options.workingTabPreserved === true,
     restoreFocus: options.restoreFocus ?? (() => restoreTabFocus(previousActiveTabId, tab.id)),
+    lifecycleEvents: Array.isArray(options.lifecycleEvents) ? options.lifecycleEvents : [],
   };
 }
 

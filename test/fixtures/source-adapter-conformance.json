@@ -29,7 +29,7 @@
     }
   },
   "linkedin": {
-    "version": "linkedin-dom-v17",
+    "version": "linkedin-dom-v18",
     "selector": "[data-view-name=\"feed-full-update\"]",
     "strategy": "[data-view-name=\"feed-full-update\"]",
     "contentKind": "document",

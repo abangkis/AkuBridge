@@ -19,7 +19,7 @@
 
   registry.register({
     source: "facebook",
-    version: "facebook-dom-v12",
+    version: "facebook-dom-v13",
     mediaHosts: Object.freeze(["fbcdn.net", "fbsbx.com"]),
     platformIdFromCandidates: (values) => {
       for (const value of Array.isArray(values) ? values : []) {
@@ -108,7 +108,17 @@
         ...actionAnchoredCandidates,
         ...candidateSelectors.flatMap((selector) => [...document.querySelectorAll(selector)]),
       ]);
-      const candidates = readinessCandidates.filter(isTopLevelFeedPost);
+      const admission = readinessCandidates.map((candidate) => ({
+        candidate,
+        ...facebookPostAdmission(candidate),
+      }));
+      const candidates = admission.filter((entry) => entry.accepted)
+        .map((entry) => entry.candidate);
+      const admissionCounts = admission.reduce((counts, entry) => {
+        const key = entry.accepted ? `admitted:${entry.reason}` : `rejected:${entry.reason}`;
+        counts[key] = (counts[key] || 0) + 1;
+        return counts;
+      }, {});
       return {
         candidates,
         readinessCandidates,
@@ -117,7 +127,11 @@
         strategy: actionAnchoredCandidates.length > 0
           ? "post_action_anchor"
           : candidateSelectors.find((selector) => selectorCounts[selector] > 0) ?? "none",
-        selectorCounts: { ...selectorCounts, [postActionSelector]: actionAnchoredCandidates.length },
+        selectorCounts: {
+          ...selectorCounts,
+          [postActionSelector]: actionAnchoredCandidates.length,
+          ...admissionCounts,
+        },
       };
     },
     findAuthor: (container, { compactText }) => {
@@ -221,15 +235,70 @@
     },
   });
 
-  function isTopLevelFeedPost(candidate) {
-    if (candidate.closest?.('[aria-label="Stories"], [aria-label="Reels"]')) return false;
-    if (candidate.querySelector?.('[aria-label^="Actions for this reel by "]')) return false;
+  function facebookPostAdmission(candidate) {
+    if (candidate.closest?.('[aria-label="Stories"], [aria-label="Reels"]')) {
+      return { accepted: false, reason: "non_feed_surface" };
+    }
+    if (candidate.querySelector?.('[aria-label^="Actions for this reel by "]')) {
+      return { accepted: false, reason: "reel_surface" };
+    }
+    if (candidate.parentElement?.closest?.('[role="article"]')) {
+      return { accepted: false, reason: "nested_article" };
+    }
+    if (candidate.querySelector?.(postActionSelector)) {
+      return { accepted: true, reason: "post_action_anchor" };
+    }
     const actions = [...candidate.querySelectorAll('[role="button"], button')]
       .map((button) => String(button.getAttribute?.("aria-label") || button.innerText || "").trim())
       .map(facebookActionKind)
       .filter(Boolean);
-    if (new Set(actions).size < 2) return false;
-    return !candidate.parentElement?.closest?.('[role="article"]');
+    if (new Set(actions).size >= 2) {
+      return { accepted: true, reason: "post_action_cluster" };
+    }
+    const anchors = [...candidate.querySelectorAll('a[href]')];
+    const stablePermalink = anchors.some((anchor) => isFacebookPostHref(anchor.href));
+    if (!stablePermalink) {
+      return { accepted: false, reason: "no_stable_post_identity" };
+    }
+    const authorEvidence = Boolean(candidate.querySelector?.(
+      'h2 a[role="link"], h3 a[role="link"], h4 a[role="link"], strong a[role="link"], a[role="link"][aria-label]',
+    ));
+    if (!authorEvidence) {
+      return { accepted: false, reason: "no_author_evidence" };
+    }
+    const explicitText = String(candidate.querySelector?.(
+      '[data-ad-preview="message"], [data-ad-comet-preview="message"]',
+    )?.innerText ?? "").trim();
+    const mediaEvidence = Boolean(candidate.querySelector?.(postMediaSelector));
+    const timestampEvidence = anchors.some((anchor) =>
+      anchor.target === "_blank" || /\b\d{1,3}\s*(?:m|h|d|w|y)\b/i.test(
+        String(anchor.innerText ?? anchor.getAttribute?.("aria-label") ?? ""),
+      )
+    );
+    if (!explicitText && !mediaEvidence && !timestampEvidence) {
+      return { accepted: false, reason: "no_post_evidence" };
+    }
+    return { accepted: true, reason: "stable_identity_evidence" };
+  }
+
+  function isFacebookPostHref(value) {
+    try {
+      const url = new URL(String(value ?? ""), "https://www.facebook.com/");
+      if (!["facebook.com", "www.facebook.com"].includes(url.hostname)) return false;
+      return /\/(?:posts|videos)\/(?:pfbid[A-Za-z0-9]+|\d+)/i.test(url.pathname)
+        || /^\/(?:story|permalink)\.php$/i.test(url.pathname)
+          && Boolean(url.searchParams.get("story_fbid"))
+        || /^\/(?:watch\/|video\.php)$/i.test(url.pathname)
+          && Boolean(url.searchParams.get("v"))
+        || /^\/(?:photo\/|photo\.php)$/i.test(url.pathname)
+          && Boolean(
+            url.searchParams.get("fbid") ||
+            url.searchParams.get("photo_id") ||
+            url.searchParams.get("set")?.match(/^pcb\.\d+$/i),
+          );
+    } catch {
+      return false;
+    }
   }
 
   function facebookActionAuthor(container, compactText) {
