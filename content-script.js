@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v82";
+  const runtimeRevision = "source-adapters-v83";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -252,7 +252,9 @@
         }
 
         const beforeScrollY = readScrollPosition(scrollContext).y;
-        const scrollStepMultiplier = sourceAdapters.get(source).captureTuning?.scrollStepMultiplier ?? 1;
+        const captureTuning = sourceAdapters.get(source).captureTuning ?? {};
+        const scrollStepMultiplier = captureTuning.scrollStepMultiplier ?? 1;
+        const scrollSettleMs = captureTuning.scrollSettleMs ?? plan.scrollSettleMs;
         updateCaptureProgress("scrolling", { source, afterSnapshotIndex: index });
         scrollByContext(
           scrollContext,
@@ -264,9 +266,9 @@
         updateCaptureProgress("scroll_settling", {
           source,
           afterSnapshotIndex: index,
-          milliseconds: plan.scrollSettleMs,
+          milliseconds: scrollSettleMs,
         });
-        await delay(plan.scrollSettleMs);
+        await delay(scrollSettleMs);
         const delta = Math.round(readScrollPosition(scrollContext).y - beforeScrollY);
         if (Math.abs(delta) < 2) {
           scrollStopReason = "no_movement";

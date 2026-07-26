@@ -19,7 +19,7 @@ test("source adapters register independently behind one contract", () => {
     [
       { source: "x", version: "x-dom-v21" },
       { source: "linkedin", version: "linkedin-dom-v18" },
-      { source: "facebook", version: "facebook-dom-v15" },
+      { source: "facebook", version: "facebook-dom-v16" },
     ],
   );
   assert.equal(context.AkuSourceAdapters.get("x").matchesPage(), true);
@@ -32,6 +32,8 @@ test("source adapters register independently behind one contract", () => {
   );
   assert.equal(context.AkuSourceAdapters.capabilities()[0].scrollStepMultiplier, 1);
   assert.equal(context.AkuSourceAdapters.capabilities()[2].scrollStepMultiplier, 2);
+  assert.equal(context.AkuSourceAdapters.capabilities()[0].scrollSettleMs, null);
+  assert.equal(context.AkuSourceAdapters.capabilities()[2].scrollSettleMs, 2500);
   assert.equal(context.AkuSourceAdapters.capabilities()[0].contentFamily, "feed_post");
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()[2].evidenceModalities],
@@ -163,7 +165,7 @@ test("the complete adapter bundle can replace its current registry generation", 
     [
       { source: "x", version: "x-dom-v21" },
       { source: "linkedin", version: "linkedin-dom-v18" },
-      { source: "facebook", version: "facebook-dom-v15" },
+      { source: "facebook", version: "facebook-dom-v16" },
     ],
   );
 });
