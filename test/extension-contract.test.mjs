@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createBridgeCapabilities } from "../bridge-capabilities.js";
+import { registeredScriptsForSources } from "../source-access-policy.js";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -17,16 +18,18 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   assert.equal(manifest.version_name, packageJson.version);
   assert.equal(manifest.version, "0.7.4.0");
   assert.equal(manifest.version_name, "0.7.4");
+  assert.equal(manifest.name, "AkuBrowser");
   assert.deepEqual(manifest.permissions.sort(), [
     "alarms",
     "nativeMessaging",
     "scripting",
     "storage",
-    "tabs",
   ]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:11122/*",
     "http://localhost:11122/*",
+  ]);
+  assert.deepEqual(manifest.optional_host_permissions.sort(), [
     "https://facebook.com/*",
     "https://www.facebook.com/*",
     "https://www.linkedin.com/*",
@@ -39,6 +42,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     "http://127.0.0.1:11122/*",
     "http://localhost:11122/*",
   ]);
+  assert.equal(manifest.content_scripts.length, 1);
 
   const source = [
     "service-worker.js",
@@ -114,6 +118,11 @@ test("AkuBrowser setup page packages one fixed user-initiated installer URL", ()
     1,
   );
   assert.doesNotMatch(setupScript, /downloads?\.(?:download|open)/);
+  assert.match(setupHtml, /Privasi &amp; persetujuan|Privasi & persetujuan/);
+  assert.match(setupHtml, /OpenAI melalui Codex App/);
+  assert.match(setupHtml, /Saya setuju &amp; aktifkan|Saya setuju & aktifkan/);
+  assert.match(setupScript, /chrome\.permissions\.request/);
+  assert.match(setupScript, /chrome\.permissions\.remove/);
 });
 
 test("AkuBridge recognizes the current LinkedIn feed container", () => {
@@ -329,20 +338,20 @@ test("background X capture activates for the full bounded capture so scrolled me
 });
 
 test("X media enrichment stays passive, bounded, and media-only", () => {
-  const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"));
   const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
   const contentScript = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
   const tabBridge = fs.readFileSync(path.join(projectRoot, "aku-browser-tab-bridge.js"), "utf8");
   const evidenceRuntime = fs.readFileSync(path.join(projectRoot, "x-media-evidence-runtime.js"), "utf8");
   const responseAdapter = fs.readFileSync(path.join(projectRoot, "x-response-evidence-adapter.js"), "utf8");
-  const responseEntry = manifest.content_scripts.find((entry) =>
-    entry.run_at === "document_start" && entry.js?.includes("x-response-evidence-adapter.js"),
+  const registeredScripts = registeredScriptsForSources(["x"]);
+  const responseEntry = registeredScripts.find((entry) =>
+    entry.runAt === "document_start" && entry.js?.includes("x-response-evidence-adapter.js"),
   );
-  const earlyEntry = manifest.content_scripts.find((entry) =>
-    entry.run_at === "document_start" && entry.js?.includes("x-media-evidence-runtime.js"),
+  const earlyEntry = registeredScripts.find((entry) =>
+    entry.runAt === "document_start" && entry.js?.includes("x-media-evidence-runtime.js"),
   );
-  assert.deepEqual(earlyEntry?.matches, ["https://x.com/*"]);
-  assert.deepEqual(responseEntry?.matches, ["https://x.com/*"]);
+  assert.deepEqual(earlyEntry?.matches, ["https://x.com/home*", "https://x.com/*/status/*"]);
+  assert.deepEqual(responseEntry?.matches, ["https://x.com/home*", "https://x.com/*/status/*"]);
   assert.equal(responseEntry?.world, "MAIN");
   assert.match(worker, /world: "MAIN"/);
   assert.match(worker, /createXMediaEvidenceStore/);

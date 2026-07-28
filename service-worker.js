@@ -39,6 +39,10 @@ import {
   probeCompatibleLoopbackRuntime,
 } from "./native-runtime-client.js";
 import { planNativeRuntimeLifecycle } from "./native-runtime-lifecycle.js";
+import {
+  reconcileRegisteredSourceScripts,
+  sourceAccessGranted,
+} from "./source-access-policy.js";
 import { resolveXStructuredMediaInMainWorld } from "./x-main-world-media-resolver.js";
 import { createXMediaEvidenceStore } from "./x-media-evidence-store.js";
 import { createXAvatarEvidenceStore } from "./x-avatar-evidence-store.js";
@@ -66,6 +70,7 @@ const BACKGROUND_DISPATCH_ALARM = "akuBridgeBackgroundDispatch";
 const BACKGROUND_RELEASE_PUMP_MS = 55_000;
 const BACKGROUND_RELEASE_POLL_MS = 650;
 let backgroundDispatching = false;
+let sourceAccessReconciliation = Promise.resolve();
 const commandGuard = createCommandGuard();
 const nativeRuntimeClient = createChromeNativeRuntimeClient(chrome);
 const managedCaptureWindow = createManagedCaptureWindowRuntime(chrome);
@@ -104,12 +109,26 @@ chrome.runtime.onInstalled.addListener((details) => {
   void executeNativeRuntimeLifecycle(plan).catch(() => {
     console.warn("AkuBrowser could not record native runtime installation state.");
   });
+  void scheduleSourceAccessReconciliation().catch(() => {
+    console.warn("AkuBrowser could not reconcile approved source access.");
+  });
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void executeNativeRuntimeLifecycle(planNativeRuntimeLifecycle("startup")).catch(() => {
     console.warn("AkuBrowser could not record native runtime startup state.");
   });
+  void scheduleSourceAccessReconciliation().catch(() => {
+    console.warn("AkuBrowser could not reconcile approved source access.");
+  });
+});
+
+chrome.permissions.onAdded.addListener(() => {
+  void scheduleSourceAccessReconciliation().catch(() => undefined);
+});
+
+chrome.permissions.onRemoved.addListener(() => {
+  void scheduleSourceAccessReconciliation().catch(() => undefined);
 });
 
 chrome.action.onClicked.addListener(() => {
@@ -119,6 +138,16 @@ chrome.action.onClicked.addListener(() => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "AKU_BROWSER_RECONCILE_SOURCE_ACCESS") {
+    if (!isTrustedExtensionPage(sender)) {
+      sendResponse({ ok: false, message: "Source access reconciliation rejected." });
+      return false;
+    }
+    scheduleSourceAccessReconciliation()
+      .then((state) => sendResponse({ ok: true, state }))
+      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+    return true;
+  }
   if (message?.type === "AKU_X_AVATAR_EVIDENCE_OBSERVED") {
     if (!isTrustedXSourceContentSender(sender)) {
       sendResponse({ ok: false, message: "X avatar evidence rejected: invalid source tab." });
@@ -374,6 +403,20 @@ async function executeNativeRuntimeLifecycle(plan) {
     return inspectNativeRuntime(plan.trigger);
   }
   return observeNativeRuntime(plan.trigger);
+}
+
+function scheduleSourceAccessReconciliation() {
+  sourceAccessReconciliation = sourceAccessReconciliation
+    .catch(() => undefined)
+    .then(() => reconcileRegisteredSourceScripts(chrome));
+  return sourceAccessReconciliation;
+}
+
+function isTrustedExtensionPage(sender) {
+  const extensionOrigin = chrome.runtime.getURL("");
+  return sender?.id === chrome.runtime.id
+    && typeof sender.url === "string"
+    && sender.url.startsWith(extensionOrigin);
 }
 
 async function openAkuBrowserOrSetup() {
@@ -737,6 +780,14 @@ async function dispatchMediaRecapture(message) {
 }
 
 async function captureWithSourceTabRecovery(command) {
+  if (!await sourceAccessGranted(chrome, command.payload.source)) {
+    throw new AkuBridgeError(
+      "source_permission_required",
+      "source_access",
+      `AkuBrowser source access is not enabled for ${command.payload.source}.`,
+      { source: command.payload.source },
+    );
+  }
   for (let attempt = 0; ; attempt += 1) {
     let prepared = null;
     try {

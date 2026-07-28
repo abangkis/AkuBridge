@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import { registeredScriptsForSources } from "../source-access-policy.js";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -306,19 +307,14 @@ test("X video playback remains inline only for an allowlisted stable CDN URL", (
 });
 
 test("the policy is loaded before the source content script", () => {
-  const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"));
-  const sourceEntry = manifest.content_scripts.find((entry) =>
-    entry.matches.includes("https://x.com/*") && entry.js.includes("content-script.js"),
+  const sourceEntry = registeredScriptsForSources(["x"]).find((entry) =>
+    entry.js.includes("content-script.js"),
   );
   assert.deepEqual(sourceEntry.js, [
     "bounded-capture-policy.js",
     "capture-quality-policy.js",
-    "linkedin-permalink-policy.js",
-    "linkedin-timestamp-policy.js",
     "source-adapter-runtime.js",
     "adapters/x-adapter.js",
-    "adapters/linkedin-adapter.js",
-    "adapters/facebook-adapter.js",
     "source-freshness-runtime.js",
     "media-acquisition-engine.js",
     "content-script.js",

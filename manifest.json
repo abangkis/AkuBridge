@@ -1,11 +1,18 @@
 {
   "manifest_version": 3,
-  "name": "AkuBridge",
+  "name": "AkuBrowser",
+  "short_name": "AkuBrowser",
   "version": "0.7.4.0",
   "version_name": "0.7.4",
-  "description": "Read-only, bounded browser observation bridge for AkuBrowser.",
+  "description": "Build a private AI feed from the X, LinkedIn, and Facebook sources you explicitly enable.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "homepage_url": "https://github.com/abangkis/AkuBrowser",
   "permissions": [
-    "tabs",
     "scripting",
     "storage",
     "alarms",
@@ -13,7 +20,9 @@
   ],
   "host_permissions": [
     "http://127.0.0.1:11122/*",
-    "http://localhost:11122/*",
+    "http://localhost:11122/*"
+  ],
+  "optional_host_permissions": [
     "https://x.com/*",
     "https://www.linkedin.com/*",
     "https://www.facebook.com/*",
@@ -37,50 +46,15 @@
         "aku-browser-tab-bridge.js"
       ],
       "run_at": "document_start"
-    },
-    {
-      "matches": [
-        "https://x.com/*"
-      ],
-      "js": [
-        "x-response-evidence-adapter.js"
-      ],
-      "run_at": "document_start",
-      "world": "MAIN"
-    },
-    {
-      "matches": [
-        "https://x.com/*"
-      ],
-      "js": [
-        "x-media-evidence-runtime.js"
-      ],
-      "run_at": "document_start"
-    },
-    {
-      "matches": [
-        "https://x.com/*",
-        "https://www.linkedin.com/*",
-        "https://www.facebook.com/*",
-        "https://facebook.com/*"
-      ],
-      "js": [
-        "bounded-capture-policy.js",
-        "capture-quality-policy.js",
-        "linkedin-permalink-policy.js",
-        "linkedin-timestamp-policy.js",
-        "source-adapter-runtime.js",
-        "adapters/x-adapter.js",
-        "adapters/linkedin-adapter.js",
-        "adapters/facebook-adapter.js",
-        "source-freshness-runtime.js",
-        "media-acquisition-engine.js",
-        "content-script.js"
-      ],
-      "run_at": "document_idle"
     }
   ],
   "action": {
-    "default_title": "Open AkuBrowser"
+    "default_title": "Open AkuBrowser",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
   }
 }

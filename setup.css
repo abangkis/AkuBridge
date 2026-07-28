@@ -8,12 +8,20 @@
 body {
   min-height: 100vh;
   margin: 0;
+  padding: 48px 24px;
+  box-sizing: border-box;
+}
+
+.layout {
+  width: min(1120px, 100%);
+  margin: 0 auto;
   display: grid;
-  place-items: center;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 24px;
+  align-items: start;
 }
 
 .card {
-  width: min(560px, calc(100vw - 48px));
   padding: 40px;
   border: 1px solid #d9e1ef;
   border-radius: 20px;
@@ -36,6 +44,12 @@ h1 {
   line-height: 1.1;
 }
 
+h2 {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.2;
+}
+
 .summary {
   margin: 24px 0 8px;
   font-size: 18px;
@@ -43,13 +57,51 @@ h1 {
 }
 
 .detail,
-.note {
+.note,
+.disclosure,
+.consent-copy {
   color: #5b6577;
   line-height: 1.6;
 }
 
+.disclosure {
+  margin: 18px 0 0;
+}
+
+.consent-copy {
+  font-size: 14px;
+}
+
+fieldset {
+  margin: 22px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+legend {
+  margin-bottom: 10px;
+  color: #253044;
+  font-weight: 700;
+}
+
+fieldset label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 18px 10px 0;
+  font-weight: 650;
+}
+
+input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #3558d4;
+}
+
 .actions {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin-top: 28px;
 }
@@ -72,10 +124,30 @@ button.primary {
 }
 
 button:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.65;
+}
+
+.text-link {
+  color: #3558d4;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.text-link:hover {
+  text-decoration: underline;
 }
 
 [hidden] {
   display: none !important;
+}
+
+@media (max-width: 860px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .card {
+    padding: 30px;
+  }
 }

@@ -12,6 +12,7 @@ import {
   sourceMatchPatterns,
   sourceRuntimeScripts,
 } from "../source-catalog.js";
+import { registeredScriptsForSources } from "../source-access-policy.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -27,15 +28,16 @@ test("source catalog exposes Facebook without changing the X media capability", 
   assert.equal(isNativePostUrl("https://evil.example/posts/123456/", "facebook"), false);
 });
 
-test("static MV3 manifest stays synchronized with the generic source catalog", () => {
+test("optional MV3 source authority stays synchronized with the generic source catalog", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
-  const contentMatches = new Set(manifest.content_scripts.flatMap((entry) => entry.matches ?? []));
-  const contentFiles = new Set(manifest.content_scripts.flatMap((entry) => entry.js ?? []));
+  const optionalHosts = new Set(manifest.optional_host_permissions);
   for (const pattern of sourceMatchPatterns()) {
-    assert.equal(contentMatches.has(pattern), true, `manifest is missing ${pattern}`);
+    assert.equal(optionalHosts.has(pattern), true, `optional authority is missing ${pattern}`);
   }
+  const contentFiles = new Set(registeredScriptsForSources(["x", "linkedin", "facebook"])
+    .flatMap((entry) => entry.js ?? []));
   for (const file of sourceRuntimeScripts()) {
-    assert.equal(contentFiles.has(file), true, `manifest is missing ${file}`);
+    assert.equal(contentFiles.has(file), true, `registered source logic is missing ${file}`);
   }
 });
 

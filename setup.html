@@ -7,23 +7,62 @@
     <link rel="stylesheet" href="setup.css">
   </head>
   <body>
-    <main class="card">
-      <p class="eyebrow">AkuBrowser</p>
-      <h1>Siapkan runtime lokal</h1>
-      <p id="summary" class="summary">Memeriksa komponen AkuBrowser di komputer ini…</p>
-      <p id="detail" class="detail">
-        Extension Chrome sudah terpasang. Runtime lokal diperlukan agar AkuBrowser
-        dapat berjalan di komputer Anda.
-      </p>
-      <div class="actions">
-        <button id="retry" type="button">Periksa lagi</button>
-        <button id="install" class="primary" type="button" hidden>Install AkuBrowser Runtime</button>
-        <button id="open" class="primary" type="button" hidden>Buka AkuBrowser</button>
-      </div>
-      <p id="installer-note" class="note" hidden>
-        Installer Windows berjalan untuk pengguna saat ini dan tidak menghapus
-        data AkuBrowser ketika diperbaiki atau dihapus.
-      </p>
+    <main class="layout">
+      <section class="card hero-card">
+        <p class="eyebrow">AkuBrowser</p>
+        <h1>Siapkan feed AI pribadi Anda</h1>
+        <p id="summary" class="summary">Memeriksa komponen AkuBrowser di komputer ini...</p>
+        <p id="detail" class="detail">
+          Extension Chrome sudah terpasang. Runtime lokal diperlukan agar AkuBrowser
+          dapat berjalan di komputer Anda.
+        </p>
+        <div class="actions">
+          <button id="retry" type="button">Periksa lagi</button>
+          <button id="install" class="primary" type="button" hidden>Install AkuBrowser Runtime</button>
+          <button id="open" class="primary" type="button" hidden>Buka AkuBrowser</button>
+        </div>
+        <p id="installer-note" class="note" hidden>
+          Installer Windows berjalan untuk pengguna saat ini dan tidak menghapus
+          data AkuBrowser ketika diperbaiki atau dihapus.
+        </p>
+      </section>
+
+      <section class="card consent-card" aria-labelledby="source-access-title">
+        <p class="eyebrow">Privasi & persetujuan</p>
+        <h2 id="source-access-title">Pilih sumber yang boleh dibaca</h2>
+        <p class="disclosure">
+          AkuBrowser membaca konten feed yang dirender, nama akun, URL posting,
+          waktu, dan media hanya dari sumber yang Anda aktifkan. Data dipakai
+          untuk membuat dan mempersonalisasi feed AkuBrowser. Data disimpan oleh
+          runtime di perangkat ini dan tidak dijual atau dipakai untuk iklan.
+        </p>
+        <p class="disclosure">
+          Saat fitur AI dijalankan, runtime dapat mengirim konten terpilih ke
+          OpenAI melalui Codex App yang Anda gunakan. AkuBrowser tidak meminta
+          password atau cookie akun sosial Anda.
+        </p>
+        <fieldset id="source-options">
+          <legend>Sumber opsional</legend>
+          <label><input type="checkbox" value="x"> X</label>
+          <label><input type="checkbox" value="linkedin"> LinkedIn</label>
+          <label><input type="checkbox" value="facebook"> Facebook</label>
+        </fieldset>
+        <p class="consent-copy">
+          Dengan menekan tombol di bawah, saya memberi izin untuk membaca sumber
+          yang saya pilih sesuai penjelasan di atas. Izin dapat dicabut kapan saja.
+        </p>
+        <div class="actions">
+          <button id="save-source-access" class="primary" type="button" disabled>
+            Saya setuju & aktifkan
+          </button>
+          <a class="text-link" href="https://github.com/abangkis/AkuBrowser/blob/main/PRIVACY.md" target="_blank" rel="noreferrer">
+            Kebijakan privasi
+          </a>
+        </div>
+        <p id="source-access-status" class="note" role="status">
+          Belum ada sumber sosial yang diizinkan.
+        </p>
+      </section>
     </main>
     <script type="module" src="setup.js"></script>
   </body>
