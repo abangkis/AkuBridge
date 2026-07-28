@@ -20,7 +20,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v18",
+    version: "linkedin-dom-v19",
     maxBlocksPerSnapshot: 8,
     scrollContext: "nearest_scrollable",
     scrollRootSelectors: Object.freeze(['[data-testid="mainFeed"]', "main", "#workspace"]),
@@ -301,7 +301,7 @@
         recovered.set(container, { url: null, source: "unavailable", reason: "Post control menu was not exposed." });
         continue;
       }
-      const visibleEvidence = () => [...document.querySelectorAll(
+      const visibleMenuEvidence = () => [...document.querySelectorAll(
         '[role="menu"] a[href], [role="menu"] [role="menuitem"][href]',
       )]
         .filter((link) => helpers.isVisibleInViewport(link))
@@ -311,29 +311,131 @@
           source: /\/preload\/embed-modal\//i.test(link.pathname) ? "embed_urn" : "menu_urn",
         }))
         .filter((entry) => entry.url);
-      const previouslyVisible = new Set(visibleEvidence().map((entry) => entry.href));
+      const visibleEmbedAction = () => [...document.querySelectorAll(
+        '[role="menu"] [role="menuitem"], [role="menu"] button',
+      )].find((element) => (
+        helpers.isVisibleInViewport(element)
+        && /\bembed this post\b/i.test(elementLabel(element))
+      )) ?? null;
+      const visibleDialogs = () => [...document.querySelectorAll(
+        '[role="dialog"], [data-test-modal], .artdeco-modal',
+      )].filter((dialog) => helpers.isVisibleInViewport(dialog));
+      const visibleEmbedEvidence = () => {
+        for (const dialog of visibleDialogs()) {
+          const nodes = [
+            dialog,
+            ...dialog.querySelectorAll(
+              '[href], [src], [value], [data-urn], [data-id], input, textarea, code',
+            ),
+          ];
+          for (const node of nodes) {
+            const evidence = permalinkEvidenceFromNode(node);
+            if (evidence) return evidence;
+          }
+        }
+        return null;
+      };
+      const closeVisibleDialog = async () => {
+        const dialog = visibleDialogs()[0];
+        if (!dialog) return;
+        const close = [...dialog.querySelectorAll('button, [role="button"]')].find((element) =>
+          /\b(?:close|dismiss)\b/i.test(elementLabel(element)),
+        );
+        close?.click();
+        await helpers.waitForValue(() => visibleDialogs().length === 0 ? true : null, 4, 25);
+      };
+      const previouslyVisible = new Set(visibleMenuEvidence().map((entry) => entry.href));
       let opened = false;
+      let embedOpened = false;
       try {
         menuButton.click();
         opened = true;
-        const evidence = await helpers.waitForValue(
-          () => visibleEvidence().find((entry) => !previouslyVisible.has(entry.href))
-            ?? visibleEvidence()[0]
-            ?? null,
+        const observation = await helpers.waitForValue(
+          () => {
+            const evidence = visibleMenuEvidence().find((entry) => !previouslyVisible.has(entry.href))
+              ?? visibleMenuEvidence()[0]
+              ?? null;
+            if (evidence) return { kind: "evidence", evidence };
+            const action = visibleEmbedAction();
+            return action ? { kind: "embed_action", action } : null;
+          },
           Math.max(1, Math.ceil(candidateBudgetMs / 50)),
           50,
         );
+        let evidence = observation?.kind === "evidence" ? observation.evidence : null;
+        if (!evidence && observation?.kind === "embed_action") {
+          observation.action.click();
+          embedOpened = true;
+          const modalBudgetMs = Math.max(100, snapshotDeadlineAtMs - Date.now());
+          evidence = await helpers.waitForValue(
+            visibleEmbedEvidence,
+            Math.max(1, Math.ceil(Math.min(800, modalBudgetMs) / 50)),
+            50,
+          );
+        }
         recovered.set(container, evidence?.url
-          ? { url: evidence.url, source: evidence.source, reason: "" }
-          : { url: null, source: "unavailable", reason: "No stable post URN was exposed after opening the post menu." });
+          ? { url: evidence.url, source: evidence.source ?? "embed_urn", reason: "" }
+          : {
+              url: null,
+              source: "unavailable",
+              reason: observation?.kind === "embed_action"
+                ? "The post embed dialog exposed no stable native URN."
+                : "No stable post URN or embed action was exposed after opening the post menu.",
+            });
       } finally {
-        if (opened) {
+        if (embedOpened) await closeVisibleDialog();
+        if (opened && [...document.querySelectorAll('[role="menu"]')]
+          .some((menu) => helpers.isVisibleInViewport(menu))) {
           menuButton.click();
-          await helpers.waitForValue(() => visibleEvidence().length === 0 ? true : null, 4, 25);
+          await helpers.waitForValue(
+            () => [...document.querySelectorAll('[role="menu"]')]
+              .some((menu) => helpers.isVisibleInViewport(menu)) ? null : true,
+            4,
+            25,
+          );
         }
       }
     }
     return recovered;
+  }
+
+  function permalinkEvidenceFromNode(node) {
+    const values = [
+      node?.href,
+      node?.src,
+      node?.value,
+      ...["href", "src", "value", "data-urn", "data-id", "data-target-urn"]
+        .map((name) => node?.getAttribute?.(name)),
+      node?.textContent,
+      node?.innerText,
+    ].filter(Boolean);
+    for (const value of values) {
+      const policy = globalThis.AkuLinkedInPermalinkPolicy;
+      let candidate = String(value);
+      let url = policy?.canonicalFromEvidence(candidate);
+      for (let attempt = 0; !url && attempt < 2; attempt += 1) {
+        try {
+          const decoded = decodeURIComponent(candidate);
+          if (decoded === candidate) break;
+          candidate = decoded;
+          const urn = candidate.match(/urn:li:(?:activity|share|ugcPost):\d+/i)?.[0];
+          url = urn ? policy?.canonicalFromEvidence(urn) : null;
+        } catch {
+          break;
+        }
+      }
+      if (url) return { url, source: "embed_urn" };
+    }
+    return null;
+  }
+
+  function elementLabel(element) {
+    return [
+      element?.getAttribute?.("aria-label"),
+      element?.getAttribute?.("title"),
+      element?.innerText,
+      element?.textContent,
+    ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
   }
 
   function extractLinkedInRecoveryCandidates(container, {

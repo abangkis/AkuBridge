@@ -44,7 +44,7 @@ or validate the complete bridge observation by themselves.
 flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
     DOM --> XA["X adapter<br/>x-dom-v21<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
-    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v18<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
+    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v19<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
     DOM --> FA["Facebook adapter<br/>facebook-dom-v17<br/>feed posts only"]
     XA --> R["Source-adapter registry"]
     LA --> R
@@ -327,7 +327,10 @@ uses a stricter eight-block-per-snapshot runtime ceiling inside the global
 LinkedIn permalink recovery remains DOM/URN-first. Menu recovery is a bounded
 fallback with a five-second snapshot budget and a 1.2-second ceiling per menu
 candidate, so one slow virtualized card cannot consume the entire recovery
-window or starve later candidates.
+window or starve later candidates. If the current menu exposes only an
+`Embed this post` action, the adapter opens its dialog, reads a source-owned URN
+from bounded modal evidence, and closes the dialog again. It never invokes
+`Copy link to post` or reads/writes the user's clipboard.
 
 Capture settling uses a bounded service-worker delay so tabs left in the
 background are not dependent on Chrome's throttled page timers. A timeout may
