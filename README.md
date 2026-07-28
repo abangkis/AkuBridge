@@ -20,6 +20,17 @@ window; AkuBridge clamps the value again before using it.
 
 AkuBridge is the read-only Chrome extension used by AkuBrowser to collect a bounded set of visible observations from X, LinkedIn, or Facebook.
 
+## Chrome Store runtime bootstrap
+
+The extension-side Native Messaging client lives in
+`native-runtime-client.js`. The separate Stage 3 Go host lives under
+`native-host/` and builds as `AkuBrowserRuntimeHost.exe`; it is not included in
+the Chrome extension package.
+
+The host accepts only the bounded Native Messaging v1 actions and derives all
+runtime paths from installer-owned local metadata. See
+`native-host/README.md` for its build and filesystem contract.
+
 ## OpenAI Build Week role
 
 During OpenAI Build Week, AkuBridge expanded from the early X/LinkedIn
