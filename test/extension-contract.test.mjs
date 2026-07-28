@@ -93,7 +93,7 @@ test("AkuBridge checks the bounded native runtime lifecycle without gating captu
   assert.doesNotMatch(nativeClient, /(?:command|executablePath|downloadUrl):/);
 });
 
-test("AkuBrowser setup page is packaged and contains no remote executable URL", () => {
+test("AkuBrowser setup page packages one fixed user-initiated installer URL", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"));
   const setupHtml = fs.readFileSync(path.join(projectRoot, "setup.html"), "utf8");
   const setupScript = fs.readFileSync(path.join(projectRoot, "setup.js"), "utf8");
@@ -104,7 +104,16 @@ test("AkuBrowser setup page is packaged and contains no remote executable URL", 
   assert.match(setupHtml, /setup\.js/);
   assert.match(setupScript, /client\.status/);
   assert.match(setupScript, /client\.ensureRuntime/);
-  assert.doesNotMatch(`${setupHtml}\n${setupScript}`, /https?:\/\/(?!127\.0\.0\.1)/);
+  assert.match(setupHtml, /Install AkuBrowser Runtime/);
+  assert.match(
+    setupScript,
+    /https:\/\/github\.com\/abangkis\/AkuBrowser\/releases\/latest\/download\/AkuBrowserRuntimeSetup\.exe/,
+  );
+  assert.equal(
+    setupScript.match(/https:\/\/github\.com\/abangkis\/AkuBrowser\/releases\/latest\/download\/AkuBrowserRuntimeSetup\.exe/g)?.length,
+    1,
+  );
+  assert.doesNotMatch(setupScript, /downloads?\.(?:download|open)/);
 });
 
 test("AkuBridge recognizes the current LinkedIn feed container", () => {

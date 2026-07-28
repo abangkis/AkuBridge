@@ -4,16 +4,22 @@ import {
   probeCompatibleLoopbackRuntime,
 } from "./native-runtime-client.js";
 
+const RUNTIME_INSTALLER_URL =
+  "https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuBrowserRuntimeSetup.exe";
 const client = createChromeNativeRuntimeClient(chrome);
 const manifest = chrome.runtime.getManifest();
 const productVersion = manifest.version_name || manifest.version;
 const summary = document.querySelector("#summary");
 const detail = document.querySelector("#detail");
 const retry = document.querySelector("#retry");
+const install = document.querySelector("#install");
 const open = document.querySelector("#open");
 const installerNote = document.querySelector("#installer-note");
 
 retry.addEventListener("click", () => void reconcile());
+install.addEventListener("click", () => {
+  chrome.tabs.create({ url: RUNTIME_INSTALLER_URL, active: true });
+});
 open.addEventListener("click", () => {
   chrome.tabs.create({ url: `${AKU_BROWSER_LOOPBACK_ORIGIN}/`, active: true });
 });
@@ -38,6 +44,7 @@ async function reconcile({ statusOnly = false } = {}) {
 
 function setChecking() {
   retry.disabled = true;
+  install.hidden = true;
   open.hidden = true;
   installerNote.hidden = true;
   summary.textContent = "Memeriksa runtime AkuBrowser…";
@@ -79,13 +86,16 @@ function renderOutcome(outcome) {
   const [title, explanation] = views[outcome.state] ?? views.runtime_failed;
   summary.textContent = title;
   detail.textContent = explanation;
-  installerNote.hidden = outcome.state !== "runtime_install_required";
+  const installRequired = outcome.state === "runtime_install_required";
+  install.hidden = !installRequired;
+  installerNote.hidden = !installRequired;
 }
 
 function renderReady(message) {
   retry.disabled = false;
   summary.textContent = "AkuBrowser siap.";
   detail.textContent = message;
+  install.hidden = true;
   open.hidden = false;
   installerNote.hidden = true;
 }
