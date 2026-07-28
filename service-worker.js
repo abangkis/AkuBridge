@@ -38,6 +38,7 @@ import {
   createChromeNativeRuntimeClient,
   probeCompatibleLoopbackRuntime,
 } from "./native-runtime-client.js";
+import { planNativeRuntimeLifecycle } from "./native-runtime-lifecycle.js";
 import { resolveXStructuredMediaInMainWorld } from "./x-main-world-media-resolver.js";
 import { createXMediaEvidenceStore } from "./x-media-evidence-store.js";
 import { createXAvatarEvidenceStore } from "./x-avatar-evidence-store.js";
@@ -96,20 +97,17 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.runtime.onInstalled.addListener((details) => {
-  if (details.reason === "install") {
+  const plan = planNativeRuntimeLifecycle("installed", details);
+  if (plan.openSetup) {
     chrome.tabs.create({ url: chrome.runtime.getURL("setup.html"), active: true });
-    void inspectNativeRuntime("installed_install").catch(() => {
-      console.warn("AkuBrowser could not record native runtime installation state.");
-    });
-    return;
   }
-  void observeNativeRuntime(`installed_${details.reason}`).catch(() => {
+  void executeNativeRuntimeLifecycle(plan).catch(() => {
     console.warn("AkuBrowser could not record native runtime installation state.");
   });
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  void observeNativeRuntime("startup").catch(() => {
+  void executeNativeRuntimeLifecycle(planNativeRuntimeLifecycle("startup")).catch(() => {
     console.warn("AkuBrowser could not record native runtime startup state.");
   });
 });
@@ -371,8 +369,16 @@ async function inspectNativeRuntime(trigger) {
   return nativeRuntimeClient.status({ trigger });
 }
 
+async function executeNativeRuntimeLifecycle(plan) {
+  if (plan.action === "status") {
+    return inspectNativeRuntime(plan.trigger);
+  }
+  return observeNativeRuntime(plan.trigger);
+}
+
 async function openAkuBrowserOrSetup() {
-  const outcome = await observeNativeRuntime("action");
+  const plan = planNativeRuntimeLifecycle("action");
+  const outcome = await executeNativeRuntimeLifecycle(plan);
   const manifest = chrome.runtime.getManifest();
   const portableRuntimeReady = outcome.state !== "runtime_ready"
     && await probeCompatibleLoopbackRuntime({

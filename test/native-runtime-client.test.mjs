@@ -169,6 +169,40 @@ test("host error details are reduced to bounded state before storage", async () 
   assert.equal("runtime" in persisted, false);
 });
 
+test("staging, candidate, and rollback failures remain visibly typed", async () => {
+  const cases = [
+    ["checksum_invalid", "reinstall_runtime", false],
+    ["candidate_health_failed", "retry", true],
+    ["rollback_failed", "contact_support", false],
+  ];
+  for (const [code, remediation, retryable] of cases) {
+    const { client, storageWrites } = clientWithResponder((_host, request, callback) => {
+      callback(readyResponse(request, {
+        status: "error",
+        runtime: null,
+        update: {
+          phase: code === "rollback_failed" ? "rolling_back" : "health_check",
+          currentVersion: "0.7.4",
+          targetVersion: "0.7.5",
+          rollbackAvailable: true,
+        },
+        error: {
+          code,
+          message: "Bounded lifecycle failure.",
+          retryable,
+          remediation,
+        },
+      }));
+    });
+    const outcome = await client.ensureRuntime({ trigger: "lifecycle_acceptance" });
+    assert.equal(outcome.state, "runtime_failed");
+    assert.equal(outcome.errorCode, code);
+    assert.equal(outcome.remediation, remediation);
+    assert.equal(outcome.retryable, retryable);
+    assert.equal(storageWrites.at(-1)[NATIVE_RUNTIME_STATE_KEY].errorCode, code);
+  }
+});
+
 test("portable fallback probes only the fixed loopback health contract", async () => {
   let requestedUrl;
   const ready = await probeCompatibleLoopbackRuntime({

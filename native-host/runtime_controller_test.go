@@ -103,6 +103,62 @@ func TestEnsureRejectsOccupiedIncompatibleEndpointWithoutLaunching(t *testing.T)
 	}
 }
 
+func TestEnsureRecoversAfterCrashedRuntimeStartFailure(t *testing.T) {
+	root := writeActiveRuntime(t, activeFixture())
+	failedLauncher := &recordingLauncher{err: os.ErrPermission}
+	failed := testController(
+		root,
+		&sequenceProber{results: []probeStep{{result: ProbeResult{Reachable: false}}}},
+		failedLauncher,
+	).Ensure(context.Background(), validRequest("ensure_runtime").Extension)
+	if failed.Status != "error" || failed.Error == nil ||
+		failed.Error.Code != "runtime_start_failed" || !failed.Error.Retryable {
+		t.Fatalf("crashed runtime failure was not recoverable and typed: %#v", failed)
+	}
+
+	recoveredLauncher := &recordingLauncher{}
+	recovered := testController(
+		root,
+		&sequenceProber{results: []probeStep{
+			{result: ProbeResult{Reachable: false}},
+			{result: readyProbe()},
+		}},
+		recoveredLauncher,
+	).Ensure(context.Background(), validRequest("ensure_runtime").Extension)
+	if recovered.Status != "ready" || recoveredLauncher.calls != 1 {
+		t.Fatalf("runtime did not recover on the next lifecycle event: %#v", recovered)
+	}
+}
+
+func TestFailedCandidateDirectoryCannotReplaceKnownGoodActiveRuntime(t *testing.T) {
+	active := activeFixture()
+	root := writeActiveRuntime(t, active)
+	candidatePath := filepath.Join(root, "versions", "0.7.5", "AkuSidecar.exe")
+	if err := os.MkdirAll(filepath.Dir(candidatePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(candidatePath, []byte("failed-candidate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	launcher := &recordingLauncher{}
+	outcome := testController(
+		root,
+		&sequenceProber{results: []probeStep{
+			{result: ProbeResult{Reachable: false}},
+			{result: readyProbe()},
+		}},
+		launcher,
+	).Ensure(context.Background(), validRequest("ensure_runtime").Extension)
+
+	if outcome.Status != "ready" {
+		t.Fatalf("known-good runtime was not recovered: %#v", outcome)
+	}
+	expected := filepath.Join(root, "versions", active.Version, "AkuSidecar.exe")
+	if launcher.executable != expected {
+		t.Fatalf("unactivated candidate gained process authority: %s", launcher.executable)
+	}
+}
+
 func TestRuntimeMetadataRejectsUnknownExecutableAuthority(t *testing.T) {
 	root := t.TempDir()
 	value := map[string]any{
