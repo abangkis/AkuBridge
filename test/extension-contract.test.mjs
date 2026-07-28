@@ -17,7 +17,13 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   assert.equal(manifest.version_name, packageJson.version);
   assert.equal(manifest.version, "0.7.4.0");
   assert.equal(manifest.version_name, "0.7.4");
-  assert.deepEqual(manifest.permissions.sort(), ["alarms", "scripting", "storage", "tabs"]);
+  assert.deepEqual(manifest.permissions.sort(), [
+    "alarms",
+    "nativeMessaging",
+    "scripting",
+    "storage",
+    "tabs",
+  ]);
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:11122/*",
     "http://localhost:11122/*",
@@ -66,6 +72,39 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   assert.match(source, /const AKU_BROWSER_ORIGINS = new Set\(/);
   assert.match(source, /new URL\(value\)\.origin/);
   assert.match(source, /const allowedOrigin = window\.location\.origin/);
+});
+
+test("AkuBridge checks the bounded native runtime lifecycle without gating capture", () => {
+  const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
+  const nativeClient = fs.readFileSync(
+    path.join(projectRoot, "native-runtime-client.js"),
+    "utf8",
+  );
+
+  assert.match(worker, /chrome\.runtime\.onInstalled\.addListener/);
+  assert.match(worker, /chrome\.runtime\.onStartup\.addListener/);
+  assert.match(worker, /nativeRuntimeClient\.ensureRuntime/);
+  assert.match(worker, /nativeRuntimeClient\.status/);
+  assert.match(worker, /chrome\.runtime\.getURL\("setup\.html"\)/);
+  assert.match(worker, /probeCompatibleLoopbackRuntime/);
+  assert.match(nativeClient, /com\.akubrowser\.runtime/);
+  assert.match(nativeClient, /runtime\.sendNativeMessage/);
+  assert.doesNotMatch(nativeClient, /runtime\.connectNative/);
+  assert.doesNotMatch(nativeClient, /(?:command|executablePath|downloadUrl):/);
+});
+
+test("AkuBrowser setup page is packaged and contains no remote executable URL", () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"));
+  const setupHtml = fs.readFileSync(path.join(projectRoot, "setup.html"), "utf8");
+  const setupScript = fs.readFileSync(path.join(projectRoot, "setup.js"), "utf8");
+
+  assert.equal(manifest.options_ui.page, "setup.html");
+  assert.equal(manifest.options_ui.open_in_tab, true);
+  assert.match(setupHtml, /setup\.css/);
+  assert.match(setupHtml, /setup\.js/);
+  assert.match(setupScript, /client\.status/);
+  assert.match(setupScript, /client\.ensureRuntime/);
+  assert.doesNotMatch(`${setupHtml}\n${setupScript}`, /https?:\/\/(?!127\.0\.0\.1)/);
 });
 
 test("AkuBridge recognizes the current LinkedIn feed container", () => {

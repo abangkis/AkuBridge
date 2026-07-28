@@ -13,11 +13,18 @@ if (manifest.version_name !== packageJson.version) {
 
 const referenced = new Set(["manifest.json"]);
 referenced.add(manifest.background.service_worker);
+if (manifest.options_ui?.page) referenced.add(manifest.options_ui.page);
 for (const entry of manifest.content_scripts ?? []) {
   for (const file of entry.js ?? []) referenced.add(file);
 }
 for (const file of [...referenced]) {
   if (!fs.existsSync(path.join(projectRoot, file))) throw new Error(`missing extension file: ${file}`);
+  if (file.endsWith(".html")) {
+    const html = fs.readFileSync(path.join(projectRoot, file), "utf8");
+    for (const match of html.matchAll(/(?:src|href)=["'](.+?)["']/g)) {
+      if (!/^(?:https?:|data:|#)/.test(match[1])) referenced.add(match[1]);
+    }
+  }
   if (!file.endsWith(".js")) continue;
   const source = fs.readFileSync(path.join(projectRoot, file), "utf8");
   for (const match of source.matchAll(/from\s+["']\.\/(.+?)["']/g)) referenced.add(match[1]);

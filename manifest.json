@@ -8,7 +8,8 @@
     "tabs",
     "scripting",
     "storage",
-    "alarms"
+    "alarms",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "http://127.0.0.1:11122/*",
@@ -21,6 +22,10 @@
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"
+  },
+  "options_ui": {
+    "page": "setup.html",
+    "open_in_tab": true
   },
   "content_scripts": [
     {

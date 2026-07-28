@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Siapkan AkuBrowser</title>
+    <link rel="stylesheet" href="setup.css">
+  </head>
+  <body>
+    <main class="card">
+      <p class="eyebrow">AkuBrowser</p>
+      <h1>Siapkan runtime lokal</h1>
+      <p id="summary" class="summary">Memeriksa komponen AkuBrowser di komputer ini…</p>
+      <p id="detail" class="detail">
+        Extension Chrome sudah terpasang. Runtime lokal diperlukan agar AkuBrowser
+        dapat berjalan di komputer Anda.
+      </p>
+      <div class="actions">
+        <button id="retry" type="button">Periksa lagi</button>
+        <button id="open" class="primary" type="button" hidden>Buka AkuBrowser</button>
+      </div>
+      <p id="installer-note" class="note" hidden>
+        Installer runtime bertanda tangan akan ditambahkan pada tahap installer.
+        Untuk saat ini, distribusi ZIP teknis tetap dapat digunakan.
+      </p>
+    </main>
+    <script type="module" src="setup.js"></script>
+  </body>
+</html>

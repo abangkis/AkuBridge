@@ -33,6 +33,11 @@ import {
   BRIDGE_ID,
   createBridgeCapabilities,
 } from "./bridge-capabilities.js";
+import {
+  AKU_BROWSER_LOOPBACK_ORIGIN,
+  createChromeNativeRuntimeClient,
+  probeCompatibleLoopbackRuntime,
+} from "./native-runtime-client.js";
 import { resolveXStructuredMediaInMainWorld } from "./x-main-world-media-resolver.js";
 import { createXMediaEvidenceStore } from "./x-media-evidence-store.js";
 import { createXAvatarEvidenceStore } from "./x-avatar-evidence-store.js";
@@ -47,7 +52,7 @@ import {
   sourceHydrationTimeout,
 } from "./source-catalog.js";
 
-const AKU_BROWSER_ORIGIN = "http://127.0.0.1:11122";
+const AKU_BROWSER_ORIGIN = AKU_BROWSER_LOOPBACK_ORIGIN;
 const AKU_BROWSER_ORIGINS = new Set([
   AKU_BROWSER_ORIGIN,
   "http://localhost:11122",
@@ -61,6 +66,7 @@ const BACKGROUND_RELEASE_PUMP_MS = 55_000;
 const BACKGROUND_RELEASE_POLL_MS = 650;
 let backgroundDispatching = false;
 const commandGuard = createCommandGuard();
+const nativeRuntimeClient = createChromeNativeRuntimeClient(chrome);
 const managedCaptureWindow = createManagedCaptureWindowRuntime(chrome);
 const xMediaEvidenceStore = createXMediaEvidenceStore(chrome.storage.local);
 const xAvatarEvidenceStore = createXAvatarEvidenceStore(chrome.storage.local);
@@ -89,8 +95,29 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   void pollBackgroundDispatch().catch((error) => console.warn("AkuBridge background dispatch deferred.", error));
 });
 
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === "install") {
+    chrome.tabs.create({ url: chrome.runtime.getURL("setup.html"), active: true });
+    void inspectNativeRuntime("installed_install").catch(() => {
+      console.warn("AkuBrowser could not record native runtime installation state.");
+    });
+    return;
+  }
+  void observeNativeRuntime(`installed_${details.reason}`).catch(() => {
+    console.warn("AkuBrowser could not record native runtime installation state.");
+  });
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  void observeNativeRuntime("startup").catch(() => {
+    console.warn("AkuBrowser could not record native runtime startup state.");
+  });
+});
+
 chrome.action.onClicked.addListener(() => {
-  chrome.tabs.create({ url: `${AKU_BROWSER_ORIGIN}/`, active: true });
+  void openAkuBrowserOrSetup().catch(() => {
+    chrome.tabs.create({ url: chrome.runtime.getURL("setup.html"), active: true });
+  });
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -330,6 +357,31 @@ async function dispatchRun(message) {
     commandGuard.finish(command.id);
     throw error;
   }
+}
+
+async function observeNativeRuntime(trigger) {
+  const outcome = await nativeRuntimeClient.ensureRuntime({ trigger });
+  if (outcome.state === "runtime_failed") {
+    console.warn("AkuBrowser native runtime check failed.", outcome.errorCode);
+  }
+  return outcome;
+}
+
+async function inspectNativeRuntime(trigger) {
+  return nativeRuntimeClient.status({ trigger });
+}
+
+async function openAkuBrowserOrSetup() {
+  const outcome = await observeNativeRuntime("action");
+  const manifest = chrome.runtime.getManifest();
+  const portableRuntimeReady = outcome.state !== "runtime_ready"
+    && await probeCompatibleLoopbackRuntime({
+      productVersion: manifest.version_name || manifest.version,
+    });
+  const url = outcome.state === "runtime_ready" || portableRuntimeReady
+    ? `${AKU_BROWSER_ORIGIN}/`
+    : chrome.runtime.getURL("setup.html");
+  await chrome.tabs.create({ url, active: true });
 }
 
 async function rememberBackgroundLease(endpoint, token, leaseId) {
