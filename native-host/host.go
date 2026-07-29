@@ -30,16 +30,7 @@ func (host Host) Handle(ctx context.Context, request Request) Response {
 	case "ensure_runtime":
 		outcome = host.Controller.Ensure(ctx, request.Extension)
 	case "shutdown_if_idle":
-		outcome = Outcome{
-			Status: "error",
-			Update: UpdateState{Phase: "idle"},
-			Error: protocolError(
-				"invalid_request",
-				"Cooperative runtime shutdown is not available in Stage 3.",
-				false,
-				"none",
-			),
-		}
+		outcome = host.Controller.ShutdownIfIdle(ctx, request.Extension)
 	}
 	fields := map[string]any{
 		"action": request.Action,

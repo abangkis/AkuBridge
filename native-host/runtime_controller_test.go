@@ -77,6 +77,36 @@ func TestEnsureRejectsIncompatibleTupleWithoutLaunching(t *testing.T) {
 	}
 }
 
+func TestEnsureDelegatesExactIncompatibleTupleToSignedUpdater(t *testing.T) {
+	root := writeActiveRuntime(t, activeFixture())
+	updated := ActiveRuntime{
+		SchemaVersion: 1, Channel: "stable", Version: "0.7.5",
+		RuntimeRevision: "source-adapters-v85", BridgeContractVersion: bridgeContract,
+		RollbackVersion: stringPointer("0.7.4"),
+	}
+	updater := &recordingRuntimeUpdater{
+		attempt: RuntimeUpdateAttempt{Active: updated, Phase: "idle"},
+	}
+	prober := &sequenceProber{results: []probeStep{{result: ProbeResult{
+		Reachable: true,
+		Health: Health{
+			Status: "ok", Version: "0.7.5", Runtime: "go",
+			BridgeContractVersion: bridgeContract, InstanceEpoch: "updated-runtime",
+		},
+	}}}}
+	controller := testController(root, prober, &recordingLauncher{})
+	controller.Updater = updater
+	identity := validRequest("ensure_runtime").Extension
+	identity.ProductVersion = "0.7.5"
+	identity.RuntimeRevision = "source-adapters-v85"
+
+	outcome := controller.Ensure(context.Background(), identity)
+
+	if outcome.Status != "ready" || outcome.Runtime.Version != "0.7.5" || updater.updateCalls != 1 {
+		t.Fatalf("updated outcome=%+v calls=%d", outcome, updater.updateCalls)
+	}
+}
+
 func TestEnsureRejectsOccupiedIncompatibleEndpointWithoutLaunching(t *testing.T) {
 	root := writeActiveRuntime(t, activeFixture())
 	prober := &sequenceProber{results: []probeStep{{
@@ -180,6 +210,55 @@ func TestRuntimeMetadataRejectsUnknownExecutableAuthority(t *testing.T) {
 	}
 }
 
+func TestRuntimeControlTokenCreationConvergesAcrossConcurrentHosts(t *testing.T) {
+	root := t.TempDir()
+	controller := RuntimeController{RuntimeRoot: root}
+	results := make(chan string, 2)
+	errorsChannel := make(chan error, 2)
+	for index := 0; index < 2; index++ {
+		go func() {
+			token, err := controller.runtimeControlToken()
+			results <- token
+			errorsChannel <- err
+		}()
+	}
+	first, second := <-results, <-results
+	for index := 0; index < 2; index++ {
+		if err := <-errorsChannel; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(first) != 64 || first != second {
+		t.Fatalf("runtime control tokens did not converge: %q %q", first, second)
+	}
+}
+
+func TestEnsureRollsBackAnUnconfirmedRuntimeAfterHealthFailure(t *testing.T) {
+	active := activeFixture()
+	active.Version = "0.7.5"
+	active.RuntimeRevision = "source-adapters-v85"
+	active.RollbackVersion = stringPointer("0.7.4")
+	root := writeActiveRuntime(t, active)
+	updater := &recordingRuntimeUpdater{pending: true}
+	controller := testController(root, &sequenceProber{results: []probeStep{{
+		result: ProbeResult{Reachable: true, Health: Health{
+			Status: "ok", Version: "9.9.9", Runtime: "go",
+			BridgeContractVersion: bridgeContract, InstanceEpoch: "wrong-candidate",
+		}},
+	}}}, &recordingLauncher{})
+	controller.Updater = updater
+	identity := validRequest("ensure_runtime").Extension
+	identity.ProductVersion = "0.7.5"
+	identity.RuntimeRevision = "source-adapters-v85"
+
+	outcome := controller.Ensure(context.Background(), identity)
+
+	if outcome.Error == nil || outcome.Error.Code != "candidate_health_failed" ||
+		outcome.Update.Phase != "rolling_back" || updater.rollbackCalls != 1 {
+		t.Fatalf("rollback outcome=%+v calls=%d", outcome, updater.rollbackCalls)
+	}
+}
+
 func activeFixture() ActiveRuntime {
 	return ActiveRuntime{
 		SchemaVersion:         1,
@@ -224,20 +303,46 @@ func (prober *sequenceProber) Probe(context.Context) (ProbeResult, error) {
 }
 
 type recordingLauncher struct {
-	calls            int
-	executable       string
-	workingDirectory string
-	config           string
-	database         string
-	err              error
+	calls               int
+	executable          string
+	workingDirectory    string
+	config              string
+	database            string
+	runtimeControlToken string
+	err                 error
 }
 
-func (launcher *recordingLauncher) Start(executable, workingDirectory, config, database string) error {
+type recordingRuntimeUpdater struct {
+	attempt       RuntimeUpdateAttempt
+	updateCalls   int
+	pending       bool
+	confirmCalls  int
+	rollbackCalls int
+}
+
+func (updater *recordingRuntimeUpdater) Update(context.Context, ActiveRuntime, ExtensionIdentity) RuntimeUpdateAttempt {
+	updater.updateCalls++
+	return updater.attempt
+}
+func (updater *recordingRuntimeUpdater) ActivationPending(ActiveRuntime) bool {
+	return updater.pending
+}
+func (updater *recordingRuntimeUpdater) ConfirmActivation(ActiveRuntime) error {
+	updater.confirmCalls++
+	return nil
+}
+func (updater *recordingRuntimeUpdater) RollbackPending(context.Context, ActiveRuntime) error {
+	updater.rollbackCalls++
+	return nil
+}
+
+func (launcher *recordingLauncher) Start(executable, workingDirectory, config, database, runtimeControlToken string) error {
 	launcher.calls++
 	launcher.executable = executable
 	launcher.workingDirectory = workingDirectory
 	launcher.config = config
 	launcher.database = database
+	launcher.runtimeControlToken = runtimeControlToken
 	return launcher.err
 }
 

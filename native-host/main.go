@@ -58,7 +58,28 @@ func run(stdin *os.File, stdout *os.File, stderr *os.File, arguments []string) i
 		Prober:      HTTPHealthProber{},
 		Launcher:    OSProcessLauncher{},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	if token, tokenErr := controller.runtimeControlToken(); tokenErr == nil {
+		updateControl := HTTPRuntimeUpdateControl{}
+		controller.UpdateControl = updateControl
+		controller.Updater = SignedRuntimeUpdater{
+			RuntimeRoot:  controller.RuntimeRoot,
+			DataRoot:     controller.DataRoot,
+			PublicKey:    pinnedUpdatePublicKey,
+			Transport:    HTTPUpdateTransport{},
+			Control:      updateControl,
+			Probe:        OSCandidateProbe{},
+			Launcher:     controller.Launcher,
+			Health:       controller.Prober,
+			ControlToken: token,
+		}
+	} else {
+		diagnostic.Log("error", "runtime_control_initialization_failed", nil)
+	}
+	timeout := 15 * time.Second
+	if request.Action == "ensure_runtime" {
+		timeout = 3 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	response := (Host{Controller: controller, Diagnostic: diagnostic}).Handle(ctx, request)
 	if err := writeResponse(stdout, response); err != nil {

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,17 +47,54 @@ type HealthProber interface {
 }
 
 type ProcessLauncher interface {
-	Start(executablePath, workingDirectory, configPath, databasePath string) error
+	Start(executablePath, workingDirectory, configPath, databasePath, runtimeControlToken string) error
 }
 
 type RuntimeController struct {
-	RuntimeRoot  string
-	DataRoot     string
-	Prober       HealthProber
-	Launcher     ProcessLauncher
-	StartupWait  time.Duration
-	PollInterval time.Duration
-	Sleep        func(context.Context, time.Duration) error
+	RuntimeRoot   string
+	DataRoot      string
+	Prober        HealthProber
+	Launcher      ProcessLauncher
+	Updater       RuntimeUpdater
+	UpdateControl RuntimeUpdateControl
+	StartupWait   time.Duration
+	PollInterval  time.Duration
+	Sleep         func(context.Context, time.Duration) error
+}
+
+func (controller RuntimeController) ShutdownIfIdle(ctx context.Context, identity ExtensionIdentity) Outcome {
+	active, err := controller.loadActiveRuntime()
+	if err != nil {
+		return controller.metadataFailure(err)
+	}
+	if incompatible := compatibilityError(active, identity); incompatible != nil {
+		return incompatibleOutcome(active, incompatible)
+	}
+	if controller.UpdateControl == nil {
+		return updateFailureOutcome(active, active.Version, RuntimeUpdateAttempt{
+			Phase: "waiting_for_idle", Code: "runtime_busy",
+			Message: "Runtime update control is unavailable.", Retryable: true, Remediation: "wait",
+		})
+	}
+	ready, _, err := controller.UpdateControl.Readiness(ctx)
+	if err != nil || !ready {
+		return updateFailureOutcome(active, active.Version, RuntimeUpdateAttempt{
+			Phase: "waiting_for_idle", Code: "runtime_busy",
+			Message: "Active AkuBrowser work is blocking shutdown.", Retryable: true, Remediation: "wait",
+		})
+	}
+	token, err := controller.runtimeControlToken()
+	if err != nil || controller.UpdateControl.ShutdownIfIdle(ctx, token) != nil ||
+		controller.UpdateControl.WaitStopped(ctx) != nil {
+		return updateFailureOutcome(active, active.Version, RuntimeUpdateAttempt{
+			Phase: "waiting_for_idle", Code: "runtime_busy",
+			Message: "AkuBrowser did not complete the idle shutdown handoff.", Retryable: true, Remediation: "wait",
+		})
+	}
+	return Outcome{
+		Status: "ready", Runtime: runtimeState(active, "shutdown-complete", "stopped"),
+		Update: updateState(active),
+	}
 }
 
 type Outcome struct {
@@ -102,10 +141,24 @@ func (controller RuntimeController) Ensure(ctx context.Context, identity Extensi
 		return controller.metadataFailure(err)
 	}
 	if incompatible := compatibilityError(active, identity); incompatible != nil {
-		return incompatibleOutcome(active, incompatible)
+		if controller.Updater == nil {
+			return incompatibleOutcome(active, incompatible)
+		}
+		attempt := controller.Updater.Update(ctx, active, identity)
+		if !attempt.Succeeded() {
+			return updateFailureOutcome(active, identity.ProductVersion, attempt)
+		}
+		active = attempt.Active
+		if stillIncompatible := compatibilityError(active, identity); stillIncompatible != nil {
+			return incompatibleOutcome(active, stillIncompatible)
+		}
 	}
+	activationPending := controller.Updater != nil && controller.Updater.ActivationPending(active)
 	probe, err := controller.Prober.Probe(ctx)
 	if err != nil {
+		if activationPending {
+			return controller.rollbackPendingOutcome(ctx, active, identity.ProductVersion)
+		}
 		return incompatibleOutcome(active, protocolError(
 			"runtime_incompatible",
 			"Loopback endpoint is occupied by an incompatible runtime.",
@@ -115,6 +168,9 @@ func (controller RuntimeController) Ensure(ctx context.Context, identity Extensi
 	}
 	if probe.Reachable {
 		if err := validateHealth(probe.Health, active); err != nil {
+			if activationPending {
+				return controller.rollbackPendingOutcome(ctx, active, identity.ProductVersion)
+			}
 			return incompatibleOutcome(active, protocolError(
 				"runtime_incompatible",
 				"Running AkuBrowser runtime is incompatible.",
@@ -122,11 +178,27 @@ func (controller RuntimeController) Ensure(ctx context.Context, identity Extensi
 				"reinstall_runtime",
 			))
 		}
+		if activationPending {
+			if err := controller.Updater.ConfirmActivation(active); err != nil {
+				return updateFailureOutcome(active, identity.ProductVersion, RuntimeUpdateAttempt{
+					Phase: "health_check", Code: "internal_error",
+					Message:   "Runtime activation confirmation could not be persisted.",
+					Retryable: true, Remediation: "retry",
+				})
+			}
+		}
 		return readyOutcome(active, probe.Health)
 	}
 
 	executablePath, workingDirectory, configPath, databasePath := controller.runtimePaths(active)
-	if err := controller.Launcher.Start(executablePath, workingDirectory, configPath, databasePath); err != nil {
+	controlToken, err := controller.runtimeControlToken()
+	if err != nil {
+		return startFailureOutcome(active)
+	}
+	if err := controller.Launcher.Start(executablePath, workingDirectory, configPath, databasePath, controlToken); err != nil {
+		if activationPending {
+			return controller.rollbackPendingOutcome(ctx, active, identity.ProductVersion)
+		}
 		return startFailureOutcome(active)
 	}
 	deadline := time.Now().Add(controller.startupWait())
@@ -134,6 +206,9 @@ func (controller RuntimeController) Ensure(ctx context.Context, identity Extensi
 		probe, err = controller.Prober.Probe(ctx)
 		if err == nil && probe.Reachable {
 			if healthErr := validateHealth(probe.Health, active); healthErr != nil {
+				if activationPending {
+					return controller.rollbackPendingOutcome(ctx, active, identity.ProductVersion)
+				}
 				return incompatibleOutcome(active, protocolError(
 					"runtime_incompatible",
 					"Started AkuBrowser runtime returned an incompatible health contract.",
@@ -141,9 +216,21 @@ func (controller RuntimeController) Ensure(ctx context.Context, identity Extensi
 					"reinstall_runtime",
 				))
 			}
+			if activationPending {
+				if err := controller.Updater.ConfirmActivation(active); err != nil {
+					return updateFailureOutcome(active, identity.ProductVersion, RuntimeUpdateAttempt{
+						Phase: "health_check", Code: "internal_error",
+						Message:   "Runtime activation confirmation could not be persisted.",
+						Retryable: true, Remediation: "retry",
+					})
+				}
+			}
 			return readyOutcome(active, probe.Health)
 		}
 		if time.Now().After(deadline) {
+			if activationPending {
+				return controller.rollbackPendingOutcome(ctx, active, identity.ProductVersion)
+			}
 			return startFailureOutcome(active)
 		}
 		if sleepErr := controller.sleep(ctx, controller.pollInterval()); sleepErr != nil {
@@ -152,8 +239,131 @@ func (controller RuntimeController) Ensure(ctx context.Context, identity Extensi
 	}
 }
 
+func (controller RuntimeController) rollbackPendingOutcome(ctx context.Context, failed ActiveRuntime, target string) Outcome {
+	if err := controller.Updater.RollbackPending(ctx, failed); err != nil {
+		return updateFailureOutcome(failed, target, RuntimeUpdateAttempt{
+			Phase: "rolling_back", Code: "rollback_failed",
+			Message:   "An unconfirmed runtime failed and the known-good runtime could not be restored.",
+			Retryable: false, Remediation: "reinstall_runtime",
+		})
+	}
+	rollback, err := controller.loadActiveRuntime()
+	if err != nil {
+		rollback = failed
+	}
+	return updateFailureOutcome(rollback, target, RuntimeUpdateAttempt{
+		Phase: "rolling_back", Code: "candidate_health_failed",
+		Message:   "An unconfirmed runtime failed; the known-good runtime was restored.",
+		Retryable: true, Remediation: "retry",
+	})
+}
+
+func updateFailureOutcome(active ActiveRuntime, target string, attempt RuntimeUpdateAttempt) Outcome {
+	current := active.Version
+	status := "error"
+	if attempt.Code == "runtime_busy" {
+		status = "busy"
+	}
+	return Outcome{
+		Status:  status,
+		Runtime: runtimeState(active, "update-pending", "stopped"),
+		Update: UpdateState{
+			Phase: attempt.Phase, CurrentVersion: &current, TargetVersion: &target,
+			RollbackAvailable: active.RollbackVersion != nil,
+		},
+		Error: protocolError(attempt.Code, attempt.Message, attempt.Retryable, attempt.Remediation),
+	}
+}
+
+func (controller RuntimeController) runtimeControlToken() (string, error) {
+	tokenPath := filepath.Join(controller.RuntimeRoot, "control-token")
+	readToken := func() (string, error) {
+		data, err := readBoundedFile(tokenPath, 256)
+		if err != nil {
+			return "", err
+		}
+		token := string(bytes.TrimSpace(data))
+		if len(token) != 64 {
+			return "", errors.New("runtime control token is invalid")
+		}
+		if _, decodeErr := hex.DecodeString(token); decodeErr != nil {
+			return "", errors.New("runtime control token is invalid")
+		}
+		return token, nil
+	}
+	if token, err := readToken(); err == nil {
+		return token, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	token := hex.EncodeToString(raw[:])
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o700); err != nil {
+		return "", err
+	}
+	file, err := os.OpenFile(tokenPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		for attempt := 0; attempt < 20; attempt++ {
+			if existing, readErr := readToken(); readErr == nil {
+				return existing, nil
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return "", errors.New("runtime control token creation did not settle")
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, err := file.WriteString(token); err != nil {
+		file.Close()
+		return "", err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func writePrivateFileAtomic(destination string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(filepath.Dir(destination), ".aku-control-*")
+	if err != nil {
+		return err
+	}
+	temporary := file.Name()
+	defer os.Remove(temporary)
+	if err := file.Chmod(0o600); err != nil {
+		file.Close()
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return replaceFileAtomic(temporary, destination)
+}
+
 func (controller RuntimeController) loadActiveRuntime() (ActiveRuntime, error) {
-	path := filepath.Join(controller.RuntimeRoot, "current.json")
+	return loadActiveRuntimeFile(filepath.Join(controller.RuntimeRoot, "current.json"))
+}
+
+func loadActiveRuntimeFile(path string) (ActiveRuntime, error) {
 	data, err := readBoundedFile(path, 16*1024)
 	if err != nil {
 		return ActiveRuntime{}, fmt.Errorf("read active runtime metadata: %w", err)
@@ -384,7 +594,7 @@ func readBoundedFile(path string, maximum int64) ([]byte, error) {
 
 type OSProcessLauncher struct{}
 
-func (OSProcessLauncher) Start(executablePath, workingDirectory, configPath, databasePath string) error {
+func (OSProcessLauncher) Start(executablePath, workingDirectory, configPath, databasePath, runtimeControlToken string) error {
 	for _, required := range []string{executablePath, configPath} {
 		info, err := os.Stat(required)
 		if err != nil {
@@ -404,5 +614,7 @@ func (OSProcessLauncher) Start(executablePath, workingDirectory, configPath, dat
 		configPath,
 		"-database",
 		databasePath,
+		"-runtime-control-token",
+		runtimeControlToken,
 	)
 }

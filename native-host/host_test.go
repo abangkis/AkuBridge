@@ -59,17 +59,20 @@ func TestHostRejectsUnknownActionWithoutRuntimeAuthority(t *testing.T) {
 	}
 }
 
-func TestStageThreeShutdownIsExplicitlyNonMutating(t *testing.T) {
+func TestStageSevenShutdownRequiresExplicitIdleHandoff(t *testing.T) {
 	prober := &sequenceProber{}
 	launcher := &recordingLauncher{}
-	host := Host{Controller: testController(t.TempDir(), prober, launcher)}
+	controller := testController(writeActiveRuntime(t, activeFixture()), prober, launcher)
+	control := &fakeRuntimeUpdateControl{ready: true}
+	controller.UpdateControl = control
+	host := Host{Controller: controller}
 
 	response := host.Handle(context.Background(), validRequest("shutdown_if_idle"))
 
-	if response.Status != "error" || response.Error == nil || response.Error.Code != "invalid_request" {
+	if response.Status != "ready" || response.Error != nil || response.Runtime.ProcessState != "stopped" {
 		t.Fatalf("shutdown boundary is unclear: %#v", response)
 	}
-	if prober.calls != 0 || launcher.calls != 0 {
-		t.Fatal("Stage 3 shutdown performed runtime work")
+	if control.shutdownCalls != 1 || prober.calls != 0 || launcher.calls != 0 {
+		t.Fatal("shutdown escaped the idle handoff boundary")
 	}
 }
