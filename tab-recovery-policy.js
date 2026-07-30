@@ -22,7 +22,16 @@ export function shouldRetrySourceTab({
 }) {
   if (acquisitionRound !== 1 || attempt !== 0) return false;
   if (isStaleTabError(error)) return true;
-  return isEmptyCaptureError(error) &&
-    ownership === "managed" &&
-    emptyObservationRecovery === "reload_managed_once";
+  if (!isEmptyCaptureError(error) || ownership !== "managed") return false;
+  if (emptyObservationRecovery === "reload_managed_once") return true;
+  if (emptyObservationRecovery !== "reload_managed_once_if_unready") return false;
+  return !isStableEmptyCapture(error?.details);
+}
+
+function isStableEmptyCapture(details = {}) {
+  const readiness = String(details?.readinessState ?? "");
+  if (readiness === "feed_empty") return true;
+  return readiness === "feed_ready" &&
+    Number(details?.selectorCandidateCount ?? 0) > 0 &&
+    Number(details?.visibleSelectorCandidateCount ?? 0) > 0;
 }

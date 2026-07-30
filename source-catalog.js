@@ -45,7 +45,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
     hydration: Object.freeze({ defaultTimeoutMs: 25_000, minTimeoutMs: 20_000, maxTimeoutMs: 30_000 }),
     readiness: Object.freeze({ initialTimeoutMs: 25_000 }),
     captureRecovery: Object.freeze({
-      emptyObservation: "reload_managed_once",
+      emptyObservation: "reload_managed_once_if_unready",
       managedLoad: "recreate_managed_once",
     }),
   }),

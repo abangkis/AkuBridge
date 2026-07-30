@@ -285,6 +285,14 @@ author-less blocks are rejected before the generic evidence contract. This
 keeps media-heavy feed posts admissible without teaching the shared runtime
 Facebook DOM structure.
 
+An empty Facebook observation receives at most one managed-tab reload only
+while readiness evidence is still incomplete—for example, selectors exist but
+none are visible yet. If the feed explicitly reports `feed_empty`, or it is
+`feed_ready` with visible structural candidates but none satisfy the adapter's
+evidence contract, the command fails immediately with bounded diagnostics.
+Reloading the same stable DOM in that state adds latency without improving
+admission accuracy.
+
 LinkedIn `presentation.socialContext` preserves the source-native reason a post
 entered the feed, including compact forms such as `Mohamad Ramzy commented` as
 well as `Reza Lesmana likes this`. The optional small context avatar is kept

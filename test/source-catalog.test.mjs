@@ -22,7 +22,7 @@ test("source hydration timeout is rounded to seconds and bounded by the catalog"
 });
 
 test("empty observation recovery is explicit and does not alter established adapters", () => {
-  assert.equal(sourceDefinition("facebook").captureRecovery.emptyObservation, "reload_managed_once");
+  assert.equal(sourceDefinition("facebook").captureRecovery.emptyObservation, "reload_managed_once_if_unready");
   assert.equal(sourceDefinition("x").captureRecovery, undefined);
   assert.equal(sourceDefinition("linkedin").captureRecovery, undefined);
 });

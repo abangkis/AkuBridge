@@ -58,3 +58,63 @@ test("an initial empty capture retries only for a managed source with an explici
     emptyObservationRecovery: "reload_managed_once",
   }), false);
 });
+
+test("Facebook empty capture retries only while its managed feed is not stably ready", () => {
+  const policy = "reload_managed_once_if_unready";
+  assert.equal(shouldRetrySourceTab({
+    error: {
+      code: "capture_empty",
+      details: {
+        readinessState: "feed_ready",
+        selectorCandidateCount: 2,
+        visibleSelectorCandidateCount: 1,
+      },
+    },
+    acquisitionRound: 1,
+    attempt: 0,
+    ownership: "managed",
+    emptyObservationRecovery: policy,
+  }), false);
+  assert.equal(shouldRetrySourceTab({
+    error: {
+      code: "capture_empty",
+      details: {
+        readinessState: "feed_empty",
+        selectorCandidateCount: 0,
+        visibleSelectorCandidateCount: 0,
+      },
+    },
+    acquisitionRound: 1,
+    attempt: 0,
+    ownership: "managed",
+    emptyObservationRecovery: policy,
+  }), false);
+  assert.equal(shouldRetrySourceTab({
+    error: {
+      code: "capture_empty",
+      details: {
+        readinessState: "feed_ready",
+        selectorCandidateCount: 2,
+        visibleSelectorCandidateCount: 0,
+      },
+    },
+    acquisitionRound: 1,
+    attempt: 0,
+    ownership: "managed",
+    emptyObservationRecovery: policy,
+  }), true);
+  assert.equal(shouldRetrySourceTab({
+    error: {
+      code: "capture_empty",
+      details: {
+        readinessState: "feed_not_visible",
+        selectorCandidateCount: 0,
+        visibleSelectorCandidateCount: 0,
+      },
+    },
+    acquisitionRound: 1,
+    attempt: 0,
+    ownership: "managed",
+    emptyObservationRecovery: policy,
+  }), true);
+});
