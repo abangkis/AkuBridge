@@ -152,14 +152,38 @@ export async function reconcileRegisteredSourceScripts(chromeApi, now = () => Da
   if (scripts.length > 0) {
     await chromeApi.scripting.registerContentScripts(scripts);
   }
+  const readiness = await sourceAccessReadiness(chromeApi);
   const state = {
     schemaVersion: 1,
     disclosureVersion: SOURCE_DISCLOSURE_VERSION,
     grantedSources: sources,
+    sources: readiness,
     observedAt: new Date(now()).toISOString(),
   };
   await chromeApi.storage.local.set({ [SOURCE_ACCESS_STATE_KEY]: state });
   return state;
+}
+
+export async function sourceAccessReadiness(chromeApi) {
+  const permissions = await chromeApi.permissions.getAll();
+  const grantedSources = new Set(sourcesForGrantedOrigins(permissions.origins));
+  const registered = await chromeApi.scripting.getRegisteredContentScripts({
+    ids: allRegisteredSourceScriptIds(),
+  });
+  const registeredIds = new Set(registered.map((script) => script.id));
+  return Object.entries(SOURCE_ACCESS).map(([source, definition]) => {
+    const permissionGranted = grantedSources.has(source);
+    const scriptRegistered = definition.scripts.every((script) => registeredIds.has(script.id));
+    return {
+      source,
+      permissionGranted,
+      scriptRegistered,
+      ready: permissionGranted && scriptRegistered,
+      reason: !permissionGranted
+        ? "permission_not_granted"
+        : scriptRegistered ? "ready" : "content_script_not_registered",
+    };
+  });
 }
 
 function normalizeSources(sources) {

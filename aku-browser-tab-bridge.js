@@ -26,6 +26,7 @@
           {
             type: "AKU_BROWSER_BRIDGE_READY",
             capabilities: response.capabilities,
+            extensionOrigin: chrome.runtime.getURL("").replace(/\/$/, ""),
           },
           allowedOrigin,
         );

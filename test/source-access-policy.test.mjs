@@ -7,6 +7,7 @@ import {
   registeredScriptsForSources,
   setupSelectedSources,
   sourceAccessGranted,
+  sourceAccessReadiness,
   sourcesForGrantedOrigins,
 } from "../source-access-policy.js";
 
@@ -59,6 +60,7 @@ test("registered scripts contain packaged logic only for approved sources", () =
 test("reconciliation derives authority from Chrome grants, not message input", async () => {
   const unregistered = [];
   const registered = [];
+  const registeredIds = new Set(allRegisteredSourceScriptIds());
   const storageWrites = [];
   const chromeApi = {
     permissions: {
@@ -71,13 +73,15 @@ test("reconciliation derives authority from Chrome grants, not message input", a
     },
     scripting: {
       async getRegisteredContentScripts() {
-        return allRegisteredSourceScriptIds().map((id) => ({ id }));
+        return [...registeredIds].map((id) => ({ id }));
       },
       async unregisterContentScripts(value) {
         unregistered.push(...value.ids);
+        value.ids.forEach((id) => registeredIds.delete(id));
       },
       async registerContentScripts(value) {
         registered.push(...value);
+        value.forEach((script) => registeredIds.add(script.id));
       },
     },
     storage: {
@@ -97,7 +101,36 @@ test("reconciliation derives authority from Chrome grants, not message input", a
   assert.deepEqual(unregistered, allRegisteredSourceScriptIds());
   assert.deepEqual(registered.map((script) => script.id), ["aku-source-linkedin-feed"]);
   assert.deepEqual(state.grantedSources, ["linkedin"]);
+  assert.deepEqual(state.sources, [
+    { source: "x", permissionGranted: false, scriptRegistered: false, ready: false, reason: "permission_not_granted" },
+    { source: "linkedin", permissionGranted: true, scriptRegistered: true, ready: true, reason: "ready" },
+    { source: "facebook", permissionGranted: false, scriptRegistered: false, ready: false, reason: "permission_not_granted" },
+  ]);
   assert.equal(storageWrites.length, 1);
   assert.equal(await sourceAccessGranted(chromeApi, "linkedin"), true);
   assert.equal(await sourceAccessGranted(chromeApi, "x"), false);
+});
+
+test("readiness distinguishes granted permission from registered capture scripts", async () => {
+  const chromeApi = {
+    permissions: {
+      async getAll() {
+        return { origins: ["https://x.com/*", "https://www.linkedin.com/*"] };
+      },
+    },
+    scripting: {
+      async getRegisteredContentScripts() {
+        return registeredScriptsForSources(["linkedin"]);
+      },
+    },
+  };
+  const readiness = await sourceAccessReadiness(chromeApi);
+  assert.deepEqual(readiness.find((item) => item.source === "x"), {
+    source: "x",
+    permissionGranted: true,
+    scriptRegistered: false,
+    ready: false,
+    reason: "content_script_not_registered",
+  });
+  assert.equal(readiness.find((item) => item.source === "linkedin").ready, true);
 });

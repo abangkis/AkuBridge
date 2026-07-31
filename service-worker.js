@@ -42,6 +42,7 @@ import { planNativeRuntimeLifecycle } from "./native-runtime-lifecycle.js";
 import {
   reconcileRegisteredSourceScripts,
   sourceAccessGranted,
+  sourceAccessReadiness,
   sourcesForGrantedOrigins,
 } from "./source-access-policy.js";
 import { resolveXStructuredMediaInMainWorld } from "./x-main-world-media-resolver.js";
@@ -1560,10 +1561,12 @@ function bridgeCapabilities() {
 
 async function bridgeCapabilitiesWithSourceAccess() {
   const permissions = await chrome.permissions.getAll();
+  const sources = await sourceAccessReadiness(chrome);
   return {
     ...bridgeCapabilities(),
     sourceAccess: {
       grantedSources: sourcesForGrantedOrigins(permissions.origins),
+      sources,
       observedAt: new Date().toISOString(),
     },
   };
