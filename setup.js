@@ -10,9 +10,11 @@ import {
   sourceAccessDefinitions,
   sourcesForGrantedOrigins,
 } from "./source-access-policy.js";
+import { simulatedRuntimeOutcome } from "./setup-runtime-simulation.js";
 
 const RUNTIME_INSTALLER_URL =
   "https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuBrowserRuntimeSetup.exe";
+const simulatedOutcome = simulatedRuntimeOutcome(globalThis.location.search);
 const client = createChromeNativeRuntimeClient(chrome);
 const manifest = chrome.runtime.getManifest();
 const productVersion = manifest.version_name || manifest.version;
@@ -55,6 +57,14 @@ void renderCodexConfirmation();
 void renderSourceAccess();
 
 async function reconcile({ statusOnly = false } = {}) {
+  if (simulatedOutcome) {
+    renderOutcome(simulatedOutcome);
+    detail.textContent = [
+      "Simulation mode: this page is behaving like a new installation.",
+      "The download button opens the real AkuBrowser Runtime installer.",
+    ].join(" ");
+    return;
+  }
   setChecking();
   let outcome = await client.status({ trigger: "setup" });
   if (!statusOnly && outcome.state !== "runtime_install_required") {

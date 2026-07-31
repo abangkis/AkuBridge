@@ -108,6 +108,8 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.match(setupHtml, /setup\.js/);
   assert.match(setupScript, /client\.status/);
   assert.match(setupScript, /client\.ensureRuntime/);
+  assert.match(setupScript, /simulatedRuntimeOutcome/);
+  assert.match(setupScript, /this page is behaving like a new installation/);
   assert.match(setupHtml, /setup-timeline/);
   assert.match(setupHtml, /About AkuBrowser/);
   assert.match(setupHtml, /AkuSidecar/);

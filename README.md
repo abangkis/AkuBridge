@@ -177,6 +177,17 @@ claim silent local-CRX installation. It assumes Chrome is already signed in to
 every enabled source. This manual step is required only for the initial bootstrap or
 recovery when the installed extension cannot handle cooperative self-reload.
 
+To preview the first-run runtime download state without uninstalling a working
+local runtime, open the unpacked extension page with:
+
+```text
+chrome-extension://<extension-id>/setup.html?simulateRuntime=not-installed
+```
+
+This simulation bypasses local runtime detection for the setup page only. Its
+download button still opens the real release installer. Remove the query string
+and select **Check again** to return to live runtime detection after installation.
+
 The adapter foundation separates X, LinkedIn, and Facebook DOM knowledge into source adapters loaded behind a common registry and catalog. The content runtime owns bounded scrolling, restoration, evidence normalization, and messaging; each adapter owns source matching, candidate discovery, author discovery, media exclusions, and pending-content labels.
 
 `package:verify` validates Manifest V3 references, local module imports,
