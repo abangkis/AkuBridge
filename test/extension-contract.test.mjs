@@ -97,7 +97,7 @@ test("AkuBridge checks the bounded native runtime lifecycle without gating captu
   assert.doesNotMatch(nativeClient, /(?:command|executablePath|downloadUrl):/);
 });
 
-test("AkuBrowser setup page packages one fixed user-initiated installer URL", () => {
+test("AkuBrowser setup page presents a component and permission timeline", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"));
   const setupHtml = fs.readFileSync(path.join(projectRoot, "setup.html"), "utf8");
   const setupScript = fs.readFileSync(path.join(projectRoot, "setup.js"), "utf8");
@@ -108,7 +108,12 @@ test("AkuBrowser setup page packages one fixed user-initiated installer URL", ()
   assert.match(setupHtml, /setup\.js/);
   assert.match(setupScript, /client\.status/);
   assert.match(setupScript, /client\.ensureRuntime/);
-  assert.match(setupHtml, /Install AkuBrowser Runtime/);
+  assert.match(setupHtml, /setup-timeline/);
+  assert.match(setupHtml, /About AkuBrowser/);
+  assert.match(setupHtml, /AkuSidecar/);
+  assert.match(setupHtml, /C2PA Verification/);
+  assert.match(setupHtml, /Codex App/);
+  assert.match(setupHtml, /Download &amp; install runtime|Download & install runtime/);
   assert.match(
     setupScript,
     /https:\/\/github\.com\/abangkis\/AkuBrowser\/releases\/latest\/download\/AkuBrowserRuntimeSetup\.exe/,
@@ -117,12 +122,19 @@ test("AkuBrowser setup page packages one fixed user-initiated installer URL", ()
     setupScript.match(/https:\/\/github\.com\/abangkis\/AkuBrowser\/releases\/latest\/download\/AkuBrowserRuntimeSetup\.exe/g)?.length,
     1,
   );
+  assert.match(
+    setupHtml,
+    /https:\/\/get\.microsoft\.com\/installer\/download\/9PLM9XGG6VKS\?cid=website_cta_psi/,
+  );
   assert.doesNotMatch(setupScript, /downloads?\.(?:download|open)/);
-  assert.match(setupHtml, /Privasi &amp; persetujuan|Privasi & persetujuan/);
-  assert.match(setupHtml, /OpenAI melalui Codex App/);
-  assert.match(setupHtml, /Saya setuju &amp; aktifkan|Saya setuju & aktifkan/);
+  assert.match(setupHtml, /Privacy &amp; consent|Privacy & consent/);
+  assert.match(setupHtml, /OpenAI through your Codex App/);
+  assert.match(setupHtml, /I agree &amp; enable|I agree & enable/);
+  assert.match(setupScript, /akuBrowserCodexPrerequisiteConfirmed/);
+  assert.match(setupScript, /chrome\.storage\.local\.set/);
   assert.match(setupScript, /chrome\.permissions\.request/);
   assert.match(setupScript, /chrome\.permissions\.remove/);
+  assert.match(setupScript, /sourceSelectionRecorded/);
 });
 
 test("AkuBridge recognizes the current LinkedIn feed container", () => {
@@ -398,6 +410,9 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   const runtimePolicy = fs.readFileSync(path.join(projectRoot, "bridge-runtime-policy.js"), "utf8");
 
   assert.match(tabBridge, /AKU_BRIDGE_GET_CAPABILITIES/);
+  assert.match(tabBridge, /AKU_BROWSER_OPEN_BRIDGE_SETUP/);
+  assert.match(worker, /AKU_BRIDGE_OPEN_SETUP/);
+  assert.match(worker, /chrome\.runtime\.getURL\("setup\.html"\)/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
   assert.match(tabBridge, /AKU_BROWSER_MEDIA_RECAPTURE/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
@@ -423,6 +438,8 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(worker, /rememberBackgroundLease/);
   assert.match(worker, /releaseTerminalBackgroundLease/);
   assert.match(worker, /refreshBackgroundHeartbeat/);
+  assert.match(worker, /bridgeCapabilitiesWithSourceAccess/);
+  assert.match(worker, /grantedSources: sourcesForGrantedOrigins/);
   assert.match(worker, /activeLeaseId/);
   assert.match(worker, /dispatchMediaRecapture/);
   assert.match(worker, /assertRecaptureTarget/);

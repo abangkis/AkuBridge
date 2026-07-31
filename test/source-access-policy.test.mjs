@@ -5,9 +5,22 @@ import {
   originsForSources,
   reconcileRegisteredSourceScripts,
   registeredScriptsForSources,
+  setupSelectedSources,
   sourceAccessGranted,
   sourcesForGrantedOrigins,
 } from "../source-access-policy.js";
+
+test("setup defaults every source on until the user records an explicit choice", () => {
+  assert.deepEqual(setupSelectedSources([], undefined), ["x", "linkedin", "facebook"]);
+  assert.deepEqual(
+    setupSelectedSources(["x", "linkedin"], { schemaVersion: 1, selectedSources: ["linkedin"] }),
+    ["linkedin"],
+  );
+  assert.deepEqual(
+    setupSelectedSources([], { schemaVersion: 1, selectedSources: [] }),
+    [],
+  );
+});
 
 test("source permissions are exact, optional, and independently selectable", () => {
   assert.deepEqual(originsForSources(["x"]), ["https://x.com/*"]);

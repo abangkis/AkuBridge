@@ -42,6 +42,7 @@ import { planNativeRuntimeLifecycle } from "./native-runtime-lifecycle.js";
 import {
   reconcileRegisteredSourceScripts,
   sourceAccessGranted,
+  sourcesForGrantedOrigins,
 } from "./source-access-policy.js";
 import { resolveXStructuredMediaInMainWorld } from "./x-main-world-media-resolver.js";
 import { createXMediaEvidenceStore } from "./x-media-evidence-store.js";
@@ -124,11 +125,11 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.permissions.onAdded.addListener(() => {
-  void scheduleSourceAccessReconciliation().catch(() => undefined);
+  void reconcileSourceAccessAndRefreshHeartbeat();
 });
 
 chrome.permissions.onRemoved.addListener(() => {
-  void scheduleSourceAccessReconciliation().catch(() => undefined);
+  void reconcileSourceAccessAndRefreshHeartbeat();
 });
 
 chrome.action.onClicked.addListener(() => {
@@ -189,8 +190,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === "AKU_BRIDGE_GET_CAPABILITIES") {
-    sendResponse({ ok: true, capabilities: bridgeCapabilities() });
-    return false;
+    bridgeCapabilitiesWithSourceAccess()
+      .then((capabilities) => sendResponse({ ok: true, capabilities }))
+      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+    return true;
+  }
+  if (message?.type === "AKU_BRIDGE_OPEN_SETUP") {
+    if (!isAkuBrowserOrigin(sender.url)) {
+      sendResponse({ ok: false, message: "Open setup rejected: invalid AkuBrowser origin." });
+      return false;
+    }
+    chrome.tabs.create({ url: chrome.runtime.getURL("setup.html"), active: true })
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+    return true;
   }
   if (message?.type === "AKU_BRIDGE_CONFIGURE_BACKGROUND_DISPATCH") {
     if (!isAkuBrowserOrigin(sender.url)) {
@@ -259,7 +272,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   dispatchRun(message)
-    .then(() => sendResponse({ ok: true, capabilities: bridgeCapabilities() }))
+    .then(() => bridgeCapabilitiesWithSourceAccess())
+    .then((capabilities) => sendResponse({ ok: true, capabilities }))
     .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
   return true;
 });
@@ -412,6 +426,13 @@ function scheduleSourceAccessReconciliation() {
   return sourceAccessReconciliation;
 }
 
+async function reconcileSourceAccessAndRefreshHeartbeat() {
+  await scheduleSourceAccessReconciliation().catch(() => undefined);
+  const stored = await chrome.storage.local.get(BACKGROUND_DISPATCH_CONFIG_KEY).catch(() => ({}));
+  const config = stored?.[BACKGROUND_DISPATCH_CONFIG_KEY];
+  if (config) await refreshBackgroundHeartbeat(config).catch(() => undefined);
+}
+
 function isTrustedExtensionPage(sender) {
   const extensionOrigin = chrome.runtime.getURL("");
   return sender?.id === chrome.runtime.id
@@ -509,10 +530,11 @@ async function releaseTerminalBackgroundLease(config) {
 }
 
 async function refreshBackgroundHeartbeat(config) {
+  const capabilities = await bridgeCapabilitiesWithSourceAccess();
   const response = await fetch(`${config.endpoint}/api/bridge/heartbeat`, {
     method: "POST",
     headers: { ...bridgeHeaders(config.token), "Content-Type": "application/json" },
-    body: JSON.stringify({ capabilities: bridgeCapabilities() }),
+    body: JSON.stringify({ capabilities }),
   });
   if (response.status === 401 || response.status === 403) {
     await chrome.storage.local.remove(BACKGROUND_DISPATCH_CONFIG_KEY);
@@ -1534,4 +1556,15 @@ async function responseError(response, fallback) {
 
 function bridgeCapabilities() {
   return createBridgeCapabilities(chrome.runtime.getManifest());
+}
+
+async function bridgeCapabilitiesWithSourceAccess() {
+  const permissions = await chrome.permissions.getAll();
+  return {
+    ...bridgeCapabilities(),
+    sourceAccess: {
+      grantedSources: sourcesForGrantedOrigins(permissions.origins),
+      observedAt: new Date().toISOString(),
+    },
+  };
 }

@@ -1,68 +1,217 @@
 <!doctype html>
-<html lang="id">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Siapkan AkuBrowser</title>
+    <title>Set up AkuBrowser</title>
     <link rel="stylesheet" href="setup.css">
   </head>
   <body>
-    <main class="layout">
-      <section class="card hero-card">
+    <main class="setup-shell">
+      <header class="page-header">
         <p class="eyebrow">AkuBrowser</p>
-        <h1>Siapkan feed AI pribadi Anda</h1>
-        <p id="summary" class="summary">Memeriksa komponen AkuBrowser di komputer ini...</p>
-        <p id="detail" class="detail">
-          Extension Chrome sudah terpasang. Runtime lokal diperlukan agar AkuBrowser
-          dapat berjalan di komputer Anda.
+        <h1>Set up your private AI feed</h1>
+        <p class="page-intro">
+          Follow the steps below. You stay in control of the local components
+          and the sources AkuBrowser is allowed to read.
         </p>
-        <div class="actions">
-          <button id="retry" type="button">Periksa lagi</button>
-          <button id="install" class="primary" type="button" hidden>Install AkuBrowser Runtime</button>
-          <button id="open" class="primary" type="button" hidden>Buka AkuBrowser</button>
-        </div>
-        <p id="installer-note" class="note" hidden>
-          Installer Windows berjalan untuk pengguna saat ini dan tidak menghapus
-          data AkuBrowser ketika diperbaiki atau dihapus.
-        </p>
-      </section>
+      </header>
 
-      <section class="card consent-card" aria-labelledby="source-access-title">
-        <p class="eyebrow">Privasi & persetujuan</p>
-        <h2 id="source-access-title">Pilih sumber yang boleh dibaca</h2>
-        <p class="disclosure">
-          AkuBrowser membaca konten feed yang dirender, nama akun, URL posting,
-          waktu, dan media hanya dari sumber yang Anda aktifkan. Data dipakai
-          untuk membuat dan mempersonalisasi feed AkuBrowser. Data disimpan oleh
-          runtime di perangkat ini dan tidak dijual atau dipakai untuk iklan.
-        </p>
-        <p class="disclosure">
-          Saat fitur AI dijalankan, runtime dapat mengirim konten terpilih ke
-          OpenAI melalui Codex App yang Anda gunakan. AkuBrowser tidak meminta
-          password atau cookie akun sosial Anda.
-        </p>
-        <fieldset id="source-options">
-          <legend>Sumber opsional</legend>
-          <label><input type="checkbox" value="x"> X</label>
-          <label><input type="checkbox" value="linkedin"> LinkedIn</label>
-          <label><input type="checkbox" value="facebook"> Facebook</label>
-        </fieldset>
-        <p class="consent-copy">
-          Dengan menekan tombol di bawah, saya memberi izin untuk membaca sumber
-          yang saya pilih sesuai penjelasan di atas. Izin dapat dicabut kapan saja.
-        </p>
-        <div class="actions">
-          <button id="save-source-access" class="primary" type="button" disabled>
-            Saya setuju & aktifkan
-          </button>
-          <a class="text-link" href="https://github.com/abangkis/AkuBrowser/blob/main/PRIVACY.md" target="_blank" rel="noreferrer">
-            Kebijakan privasi
-          </a>
-        </div>
-        <p id="source-access-status" class="note" role="status">
-          Belum ada sumber sosial yang diizinkan.
-        </p>
-      </section>
+      <ol class="setup-timeline">
+        <li class="timeline-step is-complete" id="step-introduction">
+          <span class="step-marker" aria-hidden="true">1</span>
+          <section class="step-content" aria-labelledby="introduction-title">
+            <div class="step-heading">
+              <div>
+                <p class="step-label">About AkuBrowser</p>
+                <h2 id="introduction-title">A concise feed, processed on your device</h2>
+              </div>
+              <span class="status-badge is-ready">Overview</span>
+            </div>
+            <p class="step-description">
+              AkuBrowser reads bounded samples from the feeds you choose,
+              organizes them into a local timeline, and uses Codex to help
+              identify relevant updates.
+            </p>
+            <div class="component-grid" aria-label="Core AkuBrowser components">
+              <article class="component-card">
+                <span class="component-icon" aria-hidden="true">AB</span>
+                <div>
+                  <h3>AkuBrowser Extension</h3>
+                  <p>AkuBridge reads feeds in read-only mode only after you grant access.</p>
+                </div>
+              </article>
+              <article class="component-card">
+                <span class="component-icon" aria-hidden="true">AS</span>
+                <div>
+                  <h3>AkuSidecar</h3>
+                  <p>The local runtime that stores data and builds your private timeline.</p>
+                </div>
+              </article>
+              <article class="component-card">
+                <span class="component-icon" aria-hidden="true">C2</span>
+                <div>
+                  <h3>C2PA Verification</h3>
+                  <p>Checks image provenance information locally when it is available.</p>
+                </div>
+              </article>
+              <article class="component-card">
+                <span class="component-icon" aria-hidden="true">CX</span>
+                <div>
+                  <h3>Codex App</h3>
+                  <p>The AI engine you install and sign in to for reasoning features.</p>
+                </div>
+              </article>
+            </div>
+          </section>
+        </li>
+
+        <li class="timeline-step is-active" id="step-components">
+          <span class="step-marker" aria-hidden="true">2</span>
+          <section class="step-content" aria-labelledby="components-title">
+            <div class="step-heading">
+              <div>
+                <p class="step-label">Required components</p>
+                <h2 id="components-title">Set up the runtime and Codex</h2>
+              </div>
+              <span id="components-status-badge" class="status-badge">Needs checking</span>
+            </div>
+            <p class="step-description">
+              The AkuBrowser bundle installs AkuSidecar, the Native Messaging
+              Host, and the C2PA verifier together. You install and prepare
+              Codex App separately.
+            </p>
+
+            <div class="settings-card">
+              <div class="settings-row">
+                <div class="settings-copy">
+                  <div class="row-title">
+                    <strong>AkuBrowser Runtime</strong>
+                    <span id="runtime-status-badge" class="mini-status">Checking</span>
+                  </div>
+                  <small id="detail">
+                    The Chrome extension is installed. Checking the local runtime.
+                  </small>
+                  <p id="installer-note" class="inline-note" hidden>
+                    The installer runs for the current Windows user. When the
+                    download finishes, run it once and then check again.
+                  </p>
+                </div>
+                <div class="row-actions">
+                  <button id="install" class="primary" type="button" hidden>
+                    Download &amp; install runtime
+                  </button>
+                  <button id="retry" type="button">Check again</button>
+                </div>
+              </div>
+
+              <div class="settings-row">
+                <div class="settings-copy">
+                  <div class="row-title">
+                    <strong>Codex App</strong>
+                    <span id="codex-status-badge" class="mini-status">Manual confirmation</span>
+                  </div>
+                  <small>
+                    Install Codex App for Windows, sign in, and make sure Codex
+                    is ready. AkuBrowser never receives your Codex credentials.
+                  </small>
+                </div>
+                <div class="codex-control">
+                  <a
+                    class="button-link"
+                    href="https://get.microsoft.com/installer/download/9PLM9XGG6VKS?cid=website_cta_psi"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Download Codex App
+                  </a>
+                  <label class="confirmation-check">
+                    <input id="codex-confirmation" type="checkbox">
+                    <span>Installed &amp; signed in</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+            <p id="summary" class="section-status" role="status">
+              Checking AkuBrowser components on this computer...
+            </p>
+          </section>
+        </li>
+
+        <li class="timeline-step" id="step-permissions">
+          <span class="step-marker" aria-hidden="true">3</span>
+          <section class="step-content" aria-labelledby="source-access-title">
+            <div class="step-heading">
+              <div>
+                <p class="step-label">Privacy &amp; consent</p>
+                <h2 id="source-access-title">Choose which sources AkuBrowser may read</h2>
+              </div>
+              <span id="permission-status-badge" class="status-badge">None selected</span>
+            </div>
+            <p class="step-description disclosure">
+              AkuBrowser reads rendered feed content, account names, post URLs,
+              timestamps, and media only from sources you enable. The runtime
+              stores data on this device. It is not sold or used for advertising.
+            </p>
+            <p class="disclosure">
+              When you use AI features, the runtime may send selected content to
+              OpenAI through your Codex App. AkuBrowser never asks for your social
+              account passwords or cookies.
+            </p>
+            <fieldset id="source-options">
+              <legend>Choose at least one source</legend>
+              <div class="source-options-grid">
+                <label class="source-option">
+                  <input type="checkbox" value="x">
+                  <span><strong>X</strong><small>The home feed you see</small></span>
+                </label>
+                <label class="source-option">
+                  <input type="checkbox" value="linkedin">
+                  <span><strong>LinkedIn</strong><small>Your professional feed</small></span>
+                </label>
+                <label class="source-option">
+                  <input type="checkbox" value="facebook">
+                  <span><strong>Facebook</strong><small>The main feed you see</small></span>
+                </label>
+              </div>
+            </fieldset>
+            <p class="consent-copy">
+              By pressing the button below, I allow AkuBrowser to read the sources
+              I selected as described above. I can revoke access at any time.
+            </p>
+            <div class="actions">
+              <button id="save-source-access" class="primary" type="button" disabled>
+                I agree &amp; enable
+              </button>
+              <a
+                class="text-link"
+                href="https://github.com/abangkis/AkuBrowser/blob/main/PRIVACY.md"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Privacy policy
+              </a>
+            </div>
+            <p id="source-access-status" class="section-status" role="status">
+              No social sources are currently allowed.
+            </p>
+          </section>
+        </li>
+
+        <li class="timeline-step" id="step-finish">
+          <span class="step-marker" aria-hidden="true">4</span>
+          <section class="step-content finish-content" aria-labelledby="finish-title">
+            <div>
+              <p class="step-label">Ready</p>
+              <h2 id="finish-title">Open your private timeline</h2>
+              <p id="finish-detail" class="step-description">
+                Complete the required components and choose at least one source.
+              </p>
+            </div>
+            <button id="open" class="primary" type="button" disabled>Open AkuBrowser</button>
+          </section>
+        </li>
+      </ol>
     </main>
     <script type="module" src="setup.js"></script>
   </body>

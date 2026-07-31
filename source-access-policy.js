@@ -1,4 +1,5 @@
 export const SOURCE_ACCESS_STATE_KEY = "akuBrowserSourceAccess";
+export const SOURCE_ACCESS_SELECTION_KEY = "akuBrowserSourceAccessSelection";
 export const SOURCE_DISCLOSURE_VERSION = 1;
 
 const SOURCE_ACCESS = Object.freeze({
@@ -95,6 +96,15 @@ export function sourceAccessDefinitions() {
     displayName: definition.displayName,
     origins: [...definition.origins],
   }));
+}
+
+export function setupSelectedSources(grantedSources, savedSelection) {
+  const allSources = Object.keys(SOURCE_ACCESS);
+  if (!savedSelection || savedSelection.schemaVersion !== 1 || !Array.isArray(savedSelection.selectedSources)) {
+    return allSources;
+  }
+  const selected = new Set(normalizeSources(savedSelection.selectedSources));
+  return normalizeSources(grantedSources).filter((source) => selected.has(source));
 }
 
 export function originsForSources(sources) {
