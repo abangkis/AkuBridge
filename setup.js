@@ -11,19 +11,38 @@ import {
   sourcesForGrantedOrigins,
 } from "./source-access-policy.js";
 import { simulatedRuntimeOutcome } from "./setup-runtime-simulation.js";
+import {
+  detectSetupPlatform,
+  SETUP_PLATFORMS,
+} from "./setup-platform.js";
 
 const RUNTIME_INSTALLER_URL =
   "https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuBrowserRuntimeSetup.exe";
+const RUNTIME_INSTALLER_ATTEMPT_KEY = "akuBrowser.runtimeInstallerAttempted.v1";
 const simulatedOutcome = simulatedRuntimeOutcome(globalThis.location.search);
+const setupPlatform = detectSetupPlatform(globalThis.navigator);
+const windowsRuntimeInstallerAvailable = setupPlatform === SETUP_PLATFORMS.WINDOWS;
 const client = createChromeNativeRuntimeClient(chrome);
 const manifest = chrome.runtime.getManifest();
 const productVersion = manifest.version_name || manifest.version;
+const RUNTIME_PORTABLE_BUNDLE_URL =
+  `https://github.com/abangkis/AkuBrowser/releases/download/v${productVersion}/AkuBrowser-${productVersion}-windows-x64.zip`;
 const summary = document.querySelector("#summary");
 const detail = document.querySelector("#detail");
 const retry = document.querySelector("#retry");
 const install = document.querySelector("#install");
 const open = document.querySelector("#open");
 const installerNote = document.querySelector("#installer-note");
+const installerNoteTitle = document.querySelector("#installer-note-title");
+const installerStepOpen = document.querySelector("#installer-step-open");
+const installerStepRun = document.querySelector("#installer-step-run");
+const installerStepCheck = document.querySelector("#installer-step-check");
+const windowsAntivirusNote = document.querySelector("#windows-antivirus-note");
+const manualRuntimeFallback = document.querySelector("#manual-runtime-fallback");
+const manualBundleDownload = document.querySelector("#manual-bundle-download");
+const runtimePlatformDescription = document.querySelector("#runtime-platform-description");
+const codexPlatformDescription = document.querySelector("#codex-platform-description");
+const codexDownload = document.querySelector("#codex-download");
 const componentsStep = document.querySelector("#step-components");
 const componentsStatusBadge = document.querySelector("#components-status-badge");
 const runtimeStatusBadge = document.querySelector("#runtime-status-badge");
@@ -40,11 +59,12 @@ let grantedSourceIds = new Set();
 let sourceSelectionRecorded = false;
 let runtimeReady = false;
 let codexConfirmed = false;
+let runtimeInstallerAttempted = globalThis.sessionStorage.getItem(RUNTIME_INSTALLER_ATTEMPT_KEY) === "1";
+
+applyPlatformCopy();
 
 retry.addEventListener("click", () => void reconcile());
-install.addEventListener("click", () => {
-  chrome.tabs.create({ url: RUNTIME_INSTALLER_URL, active: true });
-});
+install.addEventListener("click", () => void downloadRuntimeInstaller());
 open.addEventListener("click", () => {
   chrome.tabs.create({ url: `${AKU_BROWSER_LOOPBACK_ORIGIN}/`, active: true });
 });
@@ -80,11 +100,93 @@ async function reconcile({ statusOnly = false } = {}) {
   renderOutcome(outcome);
 }
 
+async function downloadRuntimeInstaller() {
+  if (!windowsRuntimeInstallerAvailable) return;
+  install.disabled = true;
+  try {
+    manualRuntimeFallback.hidden = true;
+    await chrome.tabs.create({ url: RUNTIME_INSTALLER_URL, active: true });
+    runtimeInstallerAttempted = true;
+    globalThis.sessionStorage.setItem(RUNTIME_INSTALLER_ATTEMPT_KEY, "1");
+    install.textContent = "Download again";
+    installerNoteTitle.textContent = "Download started — run the installer next";
+    summary.textContent = "The runtime installer is downloading.";
+    detail.textContent = [
+      "Chrome cannot run downloaded applications automatically.",
+      "Open AkuBrowserRuntimeSetup.exe, finish the Windows setup, then return here.",
+    ].join(" ");
+  } catch {
+    summary.textContent = "The runtime installer could not be downloaded.";
+    detail.textContent = "Use the matching manual Windows bundle below. Your setup progress has not changed.";
+    manualRuntimeFallback.hidden = false;
+  } finally {
+    install.disabled = false;
+  }
+}
+
+function applyPlatformCopy() {
+  document.documentElement.dataset.platform = setupPlatform;
+  windowsAntivirusNote.hidden = !windowsRuntimeInstallerAvailable;
+  manualBundleDownload.href = RUNTIME_PORTABLE_BUNDLE_URL;
+  if (setupPlatform === SETUP_PLATFORMS.WINDOWS) {
+    runtimePlatformDescription.textContent = [
+      "The Windows runtime installer includes AkuSidecar, the Native Messaging Host,",
+      "and the C2PA verifier. You install and prepare Codex App separately.",
+    ].join(" ");
+    install.textContent = "Download Windows runtime installer";
+    codexPlatformDescription.textContent = [
+      "Install Codex App for Windows, sign in, and make sure Codex is ready.",
+      "AkuBrowser never receives your Codex credentials.",
+    ].join(" ");
+    return;
+  }
+
+  const platformLabel = setupPlatform === SETUP_PLATFORMS.MACOS
+    ? "macOS"
+    : setupPlatform === SETUP_PLATFORMS.LINUX
+      ? "Linux"
+      : "this platform";
+  runtimePlatformDescription.textContent = [
+    `The one-click AkuBrowser Runtime installer is not available for ${platformLabel} yet.`,
+    "This setup can still check a compatible runtime that was installed separately.",
+  ].join(" ");
+  installerNoteTitle.textContent = `Runtime installation is not available for ${platformLabel} yet`;
+  installerStepOpen.textContent = "Do not download the Windows .exe on this device.";
+  installerStepRun.textContent = "Install a compatible AkuBrowser Runtime using the platform release instructions.";
+  installerStepCheck.textContent = "Return here and select Check installation.";
+  codexPlatformDescription.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
+    ? "Install the desktop app for macOS, sign in, and make sure Codex is ready. AkuBrowser never receives your credentials."
+    : "Prepare a supported Codex installation and sign in. AkuBrowser never receives your credentials.";
+  codexDownload.href = setupPlatform === SETUP_PLATFORMS.MACOS
+    ? "https://chatgpt.com/download/"
+    : "https://openai.com/codex/";
+  codexDownload.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
+    ? "Download for macOS"
+    : "View Codex options";
+}
+
+function configureInstallerGuidance(state) {
+  if (setupPlatform !== SETUP_PLATFORMS.WINDOWS) return;
+  if (state === "runtime_incompatible") {
+    installerNoteTitle.textContent = "Stop the older portable runtime before retrying";
+    installerStepOpen.textContent = "Close the AkuBrowser portable terminal or development runtime that is still running.";
+    installerStepRun.textContent = "Keep the installed Windows Runtime; reinstall it only if the mismatch remains.";
+    installerStepCheck.textContent = "Return to this page and select Check installation.";
+    return;
+  }
+  installerNoteTitle.textContent = "Run the Windows installer after downloading it";
+  installerStepOpen.innerHTML = "Open <code>AkuBrowserRuntimeSetup.exe</code> when the download finishes.";
+  installerStepRun.textContent = "Approve the Windows prompt and complete the setup.";
+  installerStepCheck.textContent = "Return to this page and select Check installation.";
+}
+
 function setChecking() {
   runtimeReady = false;
   retry.disabled = true;
   install.hidden = true;
   installerNote.hidden = true;
+  manualRuntimeFallback.hidden = true;
+  windowsAntivirusNote.hidden = !windowsRuntimeInstallerAvailable;
   summary.textContent = "Checking AkuBrowser Runtime...";
   detail.textContent = "This check contacts only the registered host and the local AkuBrowser endpoint.";
   setRuntimeBadge("Checking");
@@ -111,12 +213,16 @@ function renderOutcome(outcome) {
       "Close every Chrome window, reopen Chrome, and then check again.",
     ],
     runtime_incompatible: [
-      "The runtime version is incompatible.",
-      "Repair or reinstall the AkuBrowser companion runtime.",
+      "The installed and running runtime versions do not match.",
+      setupPlatform === SETUP_PLATFORMS.WINDOWS
+        ? "Close any older portable AkuBrowser Runtime, then select Check installation. If the mismatch remains, run the Windows installer again."
+        : "Stop the older AkuBrowser Runtime, start the compatible platform runtime, and then check again.",
     ],
     runtime_failed: [
       "AkuBrowser Runtime could not start.",
-      "Check again. If the problem continues, repair the companion runtime.",
+      setupPlatform === SETUP_PLATFORMS.WINDOWS
+        ? "Review the Windows security notice or use the matching manual bundle below."
+        : "Check again. If the problem continues, repair the companion runtime.",
     ],
   };
   if (outcome.state === "runtime_ready") {
@@ -128,19 +234,29 @@ function renderOutcome(outcome) {
   summary.textContent = title;
   detail.textContent = explanation;
   const installRequired = outcome.state === "runtime_install_required";
-  install.hidden = !installRequired;
-  installerNote.hidden = !installRequired;
+  const incompatible = outcome.state === "runtime_incompatible";
+  const failed = outcome.state === "runtime_failed";
+  configureInstallerGuidance(outcome.state);
+  install.hidden = !installRequired || !windowsRuntimeInstallerAvailable;
+  installerNote.hidden = !(installRequired || incompatible);
+  windowsAntivirusNote.hidden = !windowsRuntimeInstallerAvailable;
+  const attemptedInstallStillMissing = installRequired && runtimeInstallerAttempted;
+  manualRuntimeFallback.hidden = !((failed || attemptedInstallStillMissing) && windowsRuntimeInstallerAvailable);
   setRuntimeBadge(installRequired ? "Not installed" : "Needs attention", "warning");
   updateTimelineState();
 }
 
 function renderReady(message) {
   runtimeReady = true;
+  runtimeInstallerAttempted = false;
+  globalThis.sessionStorage.removeItem(RUNTIME_INSTALLER_ATTEMPT_KEY);
   retry.disabled = false;
   summary.textContent = "The AkuBrowser Runtime bundle is ready.";
   detail.textContent = message;
   install.hidden = true;
   installerNote.hidden = true;
+  manualRuntimeFallback.hidden = true;
+  windowsAntivirusNote.hidden = !windowsRuntimeInstallerAvailable;
   setRuntimeBadge("Ready", "ready");
   updateTimelineState();
 }

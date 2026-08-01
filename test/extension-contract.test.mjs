@@ -16,8 +16,8 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version_name, packageJson.version);
-  assert.equal(manifest.version, "0.7.5.0");
-  assert.equal(manifest.version_name, "0.7.5");
+  assert.equal(manifest.version, "0.7.6.0");
+  assert.equal(manifest.version_name, "0.7.6");
   assert.equal(manifest.name, "AkuBrowser");
   assert.deepEqual(manifest.permissions.sort(), [
     "alarms",
@@ -115,7 +115,27 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.match(setupHtml, /AkuSidecar/);
   assert.match(setupHtml, /C2PA Verification/);
   assert.match(setupHtml, /Codex App/);
-  assert.match(setupHtml, /Download &amp; install runtime|Download & install runtime/);
+  assert.match(setupHtml, /Download runtime installer/);
+  assert.match(setupHtml, /Open <code>AkuBrowserRuntimeSetup\.exe<\/code>/);
+  assert.match(setupHtml, /Check installation/);
+  assert.match(setupScript, /Chrome cannot run downloaded applications automatically/);
+  assert.match(setupScript, /Download started — run the installer next/);
+  assert.match(setupScript, /detectSetupPlatform/);
+  assert.match(setupHtml, /Windows Security, Avast, or another\s+antivirus may warn, quarantine, block, or sandbox them/);
+  assert.match(setupHtml, /Do not disable antivirus\s+protection or exclude your Downloads folder/);
+  assert.match(setupHtml, /Access is denied/);
+  assert.match(setupHtml, /%LOCALAPPDATA%\\Programs\\AkuBrowser\\/);
+  assert.match(setupHtml, /Stop the\s+running <code>AkuSidecar\.exe<\/code>/);
+  assert.match(setupHtml, /Automatic setup could not finish/);
+  assert.match(setupHtml, /Download manual Windows bundle/);
+  assert.match(setupHtml, /Do not run installed and\s+portable runtimes at the same time/);
+  assert.match(setupScript, /AkuBrowser-\$\{productVersion\}-windows-x64\.zip/);
+  assert.match(setupScript, /windowsAntivirusNote\.hidden = !windowsRuntimeInstallerAvailable/);
+  assert.match(setupScript, /runtimeInstallerAttempted\.v1/);
+  assert.match(setupScript, /attemptedInstallStillMissing = installRequired && runtimeInstallerAttempted/);
+  assert.match(setupScript, /failed \|\| attemptedInstallStillMissing/);
+  assert.match(setupScript, /Close any older portable AkuBrowser Runtime/);
+  assert.match(setupScript, /Stop the older portable runtime before retrying/);
   assert.match(
     setupScript,
     /https:\/\/github\.com\/abangkis\/AkuBrowser\/releases\/latest\/download\/AkuBrowserRuntimeSetup\.exe/,
@@ -162,7 +182,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v85/);
+  assert.match(contentScript, /source-adapters-v86/);
   assert.match(contentScript, /candidateDiagnostics: normalizeCandidateDiagnostics/);
   assert.match(contentScript, /function normalizeCandidateDiagnostics/);
   assert.match(contentScript, /plan\.scrollFraction \* scrollStepMultiplier/);
@@ -418,10 +438,10 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
   assert.match(tabBridge, /AKU_BROWSER_MEDIA_RECAPTURE/);
   assert.match(tabBridge, /capabilities: response\.capabilities/);
-  const capabilities = createBridgeCapabilities({ version: "0.7.5.0", version_name: "0.7.5", manifest_version: 3 });
-  assert.equal(capabilities.extensionVersion, "0.7.5");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v85");
-  assert.equal(capabilities.buildId, "aku-bridge-0.7.5-source-adapters-v85");
+  const capabilities = createBridgeCapabilities({ version: "0.7.6.0", version_name: "0.7.6", manifest_version: 3 });
+  assert.equal(capabilities.extensionVersion, "0.7.6");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v86");
+  assert.equal(capabilities.buildId, "aku-bridge-0.7.6-source-adapters-v86");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v21", linkedin: "linkedin-dom-v19", facebook: "facebook-dom-v17" });
   assert.deepEqual(capabilities.mediaEvidenceAdapterVersions, { x: "x-response-evidence-v2" });

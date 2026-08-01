@@ -16,8 +16,8 @@ func TestSignedUpdateManifestAuthenticatesExactUpgrade(t *testing.T) {
 		RuntimeRevision: "source-adapters-v84", BridgeContractVersion: bridgeContract,
 	}
 	expected := ExtensionIdentity{
-		Product: "AkuBrowser", ProductVersion: "0.7.5",
-		RuntimeRevision: "source-adapters-v85", BridgeContractVersion: bridgeContract,
+		Product: "AkuBrowser", ProductVersion: "0.7.6",
+		RuntimeRevision: "source-adapters-v86", BridgeContractVersion: bridgeContract,
 	}
 	data := signedUpdateManifestForTest(t, privateKey, expected)
 	manifest, err := decodeAndVerifyUpdateManifest(
@@ -39,8 +39,8 @@ func TestSignedUpdateManifestFailsClosedForTamperAndDowngrade(t *testing.T) {
 		RuntimeRevision: "source-adapters-v84", BridgeContractVersion: bridgeContract,
 	}
 	expected := ExtensionIdentity{
-		Product: "AkuBrowser", ProductVersion: "0.7.5",
-		RuntimeRevision: "source-adapters-v85", BridgeContractVersion: bridgeContract,
+		Product: "AkuBrowser", ProductVersion: "0.7.6",
+		RuntimeRevision: "source-adapters-v86", BridgeContractVersion: bridgeContract,
 	}
 	data := signedUpdateManifestForTest(t, privateKey, expected)
 	tampered := strings.Replace(string(data), `"size":1234`, `"size":1235`, 1)
@@ -65,15 +65,15 @@ func TestSignedUpdateManifestFailsClosedForTamperAndDowngrade(t *testing.T) {
 func TestUpdateManifestRejectsAnotherReleaseOrigin(t *testing.T) {
 	_, privateKey := updateTestKey()
 	expected := ExtensionIdentity{
-		Product: "AkuBrowser", ProductVersion: "0.7.5",
-		RuntimeRevision: "source-adapters-v85", BridgeContractVersion: bridgeContract,
+		Product: "AkuBrowser", ProductVersion: "0.7.6",
+		RuntimeRevision: "source-adapters-v86", BridgeContractVersion: bridgeContract,
 	}
 	data := signedUpdateManifestForTest(t, privateKey, expected)
 	var manifest SignedUpdateManifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	manifest.Artifact.URL = "https://github.com/attacker/AkuBrowser/releases/download/v0.7.5/AkuBrowserRuntime-0.7.5-windows-x64.zip"
+	manifest.Artifact.URL = "https://github.com/attacker/AkuBrowser/releases/download/v0.7.6/AkuBrowserRuntime-0.7.6-windows-x64.zip"
 	payload, _ := json.Marshal(manifest.unsigned())
 	manifest.Signature.Value = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload))
 	data, _ = json.Marshal(manifest)

@@ -76,7 +76,7 @@
               </div>
               <span id="components-status-badge" class="status-badge">Needs checking</span>
             </div>
-            <p class="step-description">
+            <p id="runtime-platform-description" class="step-description">
               The AkuBrowser bundle installs AkuSidecar, the Native Messaging
               Host, and the C2PA verifier together. You install and prepare
               Codex App separately.
@@ -92,16 +92,70 @@
                   <small id="detail">
                     The Chrome extension is installed. Checking the local runtime.
                   </small>
-                  <p id="installer-note" class="inline-note" hidden>
-                    The installer runs for the current Windows user. When the
-                    download finishes, run it once and then check again.
-                  </p>
+                  <div
+                    id="installer-note"
+                    class="installer-instructions"
+                    role="status"
+                    aria-live="polite"
+                    tabindex="-1"
+                    hidden
+                  >
+                    <strong id="installer-note-title">Run the Windows installer after downloading it</strong>
+                    <ol>
+                      <li id="installer-step-open">Open <code>AkuBrowserRuntimeSetup.exe</code> when the download finishes.</li>
+                      <li id="installer-step-run">Approve the Windows prompt and complete the setup.</li>
+                      <li id="installer-step-check">Return to this page and select <strong>Check installation</strong>.</li>
+                    </ol>
+                  </div>
+                  <aside id="windows-antivirus-note" class="platform-warning" hidden>
+                    <strong>Windows security notice</strong>
+                    <p>
+                      The current testing installer and native runtime are not
+                      code-signed yet. Windows Security, Avast, or another
+                      antivirus may warn, quarantine, block, or sandbox them.
+                      Verify that the download came from the official AkuBrowser
+                      GitHub release before allowing it. Do not disable antivirus
+                      protection or exclude your Downloads folder.
+                    </p>
+                    <p>
+                      If installation or <strong>Update now</strong> fails with
+                      <code>Access is denied</code>, restore any quarantined
+                      AkuBrowser file and add a narrow exception for
+                      <code>%LOCALAPPDATA%\Programs\AkuBrowser\</code>. Stop the
+                      running <code>AkuSidecar.exe</code>, then select
+                      <strong>Check installation</strong> here before trying again.
+                    </p>
+                  </aside>
+                  <aside id="manual-runtime-fallback" class="manual-runtime-fallback" hidden>
+                    <strong>Automatic setup could not finish</strong>
+                    <p>
+                      Download the matching portable Windows bundle from the
+                      official GitHub release, verify its checksum, and extract
+                      it to a writable folder. If antivirus protection blocks
+                      it, add an exception only for the extracted
+                      <code>AkuSidecar.exe</code>.
+                    </p>
+                    <p>
+                      Stop any installed or older portable
+                      <code>AkuSidecar.exe</code> before running
+                      <code>Start-AkuBrowser.ps1</code>. Do not run installed and
+                      portable runtimes at the same time. The portable fallback
+                      must be started manually again after Windows restarts.
+                    </p>
+                    <a
+                      id="manual-bundle-download"
+                      class="button-link"
+                      href="https://github.com/abangkis/AkuBrowser/releases/latest"
+                      target="_blank"
+                      rel="noreferrer"
+                    >Download manual Windows bundle</a>
+                  </aside>
                 </div>
                 <div class="row-actions">
                   <button id="install" class="primary" type="button" hidden>
-                    Download &amp; install runtime
+                    Download runtime installer
                   </button>
-                  <button id="retry" type="button">Check again</button>
+                  <button id="retry" type="button">Check installation</button>
                 </div>
               </div>
 
@@ -111,13 +165,14 @@
                     <strong>Codex App</strong>
                     <span id="codex-status-badge" class="mini-status">Manual confirmation</span>
                   </div>
-                  <small>
+                  <small id="codex-platform-description">
                     Install Codex App for Windows, sign in, and make sure Codex
                     is ready. AkuBrowser never receives your Codex credentials.
                   </small>
                 </div>
                 <div class="codex-control">
                   <a
+                    id="codex-download"
                     class="button-link"
                     href="https://get.microsoft.com/installer/download/9PLM9XGG6VKS?cid=website_cta_psi"
                     target="_blank"

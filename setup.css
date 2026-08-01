@@ -273,9 +273,76 @@ h3 {
   gap: 10px;
 }
 
-.inline-note {
-  margin: 2px 0 0;
+.installer-instructions {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border: 1px solid #f1cf83;
+  border-radius: 10px;
+  color: #65460a;
+  background: #fff8e5;
   font-size: 13px;
+  line-height: 1.5;
+}
+
+.installer-instructions strong {
+  color: #4f3709;
+}
+
+.installer-instructions ol {
+  margin: 7px 0 0;
+  padding-left: 20px;
+}
+
+.installer-instructions code {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+.platform-warning {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border: 1px solid #e2b8b1;
+  border-radius: 10px;
+  color: #752e25;
+  background: #fff1ef;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.platform-warning p {
+  margin: 5px 0 0;
+}
+
+.platform-warning code {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.manual-runtime-fallback {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border: 1px solid #a9bce8;
+  border-radius: 10px;
+  color: #263c70;
+  background: #f1f5ff;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.manual-runtime-fallback p {
+  margin: 5px 0 10px;
+}
+
+.manual-runtime-fallback code {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.manual-runtime-fallback .button-link {
+  display: inline-flex;
+  align-items: center;
 }
 
 button,

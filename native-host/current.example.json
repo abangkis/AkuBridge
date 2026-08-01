@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "channel": "stable",
-  "version": "0.7.5",
-  "runtimeRevision": "source-adapters-v85",
+  "version": "0.7.6",
+  "runtimeRevision": "source-adapters-v86",
   "bridgeContractVersion": "aku-browser.bridge.v2",
   "rollbackVersion": null
 }

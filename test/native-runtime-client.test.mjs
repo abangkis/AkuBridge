@@ -31,7 +31,7 @@ test("native runtime request carries only the bounded AkuBrowser identity contra
     extension: {
       product: "AkuBrowser",
       productVersion: "0.7.4",
-      runtimeRevision: "source-adapters-v85",
+      runtimeRevision: "source-adapters-v86",
       bridgeContractVersion: "aku-browser.bridge.v2",
     },
   });
@@ -183,7 +183,7 @@ test("staging, candidate, and rollback failures remain visibly typed", async () 
         update: {
           phase: code === "rollback_failed" ? "rolling_back" : "health_check",
           currentVersion: "0.7.4",
-          targetVersion: "0.7.5",
+          targetVersion: "0.7.6",
           rollbackAvailable: true,
         },
         error: {
@@ -278,7 +278,7 @@ function readyResponse(request, overrides = {}) {
     runtime: {
       version: "0.7.4",
       channel: "stable",
-      runtimeRevision: "source-adapters-v85",
+      runtimeRevision: "source-adapters-v86",
       bridgeContractVersion: "aku-browser.bridge.v2",
       endpoint: "http://127.0.0.1:11122",
       instanceEpoch: "runtime:0001",
@@ -287,7 +287,7 @@ function readyResponse(request, overrides = {}) {
     update: {
       phase: status === "updating" ? "downloading" : "idle",
       currentVersion: "0.7.4",
-      targetVersion: status === "updating" ? "0.7.5" : null,
+      targetVersion: status === "updating" ? "0.7.6" : null,
       rollbackAvailable: true,
     },
     error: null,
