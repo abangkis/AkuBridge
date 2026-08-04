@@ -197,6 +197,15 @@ sends exactly one native request: **Check runtime** uses `status`, while
 When the runtime is active, **Stop runtime** uses the bounded
 `shutdown_if_idle` action and refuses to stop active work.
 
+Release numbers and runtime compatibility are separate. A running installed
+runtime with the same Bridge contract remains usable while Setup offers the
+matching update; a newer contract-compatible runtime is never downgraded. The
+Native Messaging host may stop the installed runtime across release-number
+differences because the private runtime control token, not an exact version
+match, proves process ownership. A loopback-only portable runtime is explicitly
+shown as unmanaged: Setup tells the user to stop it manually and offers
+**Check after stopping** instead of sending installed-host control commands.
+
 The adapter foundation separates X, LinkedIn, and Facebook DOM knowledge into source adapters loaded behind a common registry and catalog. The content runtime owns bounded scrolling, restoration, evidence normalization, and messaging; each adapter owns source matching, candidate discovery, author discovery, media exclusions, and pending-content labels.
 
 `package:verify` validates Manifest V3 references, local module imports,

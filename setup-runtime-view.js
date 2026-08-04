@@ -19,10 +19,12 @@ export function runtimeCheckTimeoutMs(retryAttempt = 0) {
 export function runtimeSetupView(outcome, {
   windowsInstallerAvailable = false,
   runtimeInstallerAttempted = false,
+  requiredRuntimeVersion = "",
+  requiredRuntimeRevision = "",
 } = {}) {
   const state = outcome?.state ?? "runtime_failed";
   const processState = outcome?.response?.runtime?.processState ?? null;
-  const update = outcome?.response?.update ?? null;
+  const update = normalizedUpdate(outcome, requiredRuntimeVersion, requiredRuntimeRevision);
 
   if (state === "runtime_unchecked") {
     return view({
@@ -36,6 +38,24 @@ export function runtimeSetupView(outcome, {
   }
 
   if (state === "runtime_ready") {
+    if (outcome?.runtimeSource === "portable") {
+      return view({
+        badge: "Portable runtime running",
+        badgeState: "ready",
+        summary: "An unmanaged portable AkuBrowser Runtime is running.",
+        detail: [
+          outcome?.observedDetail,
+          "Stop it manually from its terminal or extracted bundle before switching to the installed runtime.",
+        ].filter(Boolean).join(" "),
+        runtimeReady: true,
+        executableLocation: runtimeExecutableLocation(outcome, windowsInstallerAvailable),
+        executableLocationHint: "Open the folder where you extracted the portable AkuBrowser bundle.",
+        actionKind: RUNTIME_SETUP_ACTIONS.CHECK,
+        actionLabel: "Check after stopping",
+      });
+    }
+    const updateView = runtimeUpdateView(outcome, update, windowsInstallerAvailable, true);
+    if (updateView) return updateView;
     return view({
       badge: "Running",
       badgeState: "ready",
@@ -43,9 +63,7 @@ export function runtimeSetupView(outcome, {
       detail: "The installed runtime is compatible and ready for AkuBrowser.",
       runtimeReady: true,
       executableLocation: runtimeExecutableLocation(outcome, windowsInstallerAvailable),
-      executableLocationHint: outcome?.runtimeSource === "portable"
-        ? "Open the folder where you extracted the portable AkuBrowser bundle."
-        : "Paste this path into File Explorer if you need to access it manually.",
+      executableLocationHint: "Paste this path into File Explorer if you need to access it manually.",
       actionKind: RUNTIME_SETUP_ACTIONS.STOP,
       actionLabel: "Stop runtime",
     });
@@ -71,20 +89,16 @@ export function runtimeSetupView(outcome, {
   }
 
   if (state === "runtime_incompatible") {
-    const versionDetail = versionTransition(update);
-    const updateAvailable = Boolean(versionDetail);
+    const updateView = runtimeUpdateView(outcome, update, windowsInstallerAvailable, false);
+    if (updateView) return updateView;
     return view({
-      badge: updateAvailable ? "Update available" : "Version conflict",
+      badge: "Version conflict",
       badgeState: "warning",
-      summary: updateAvailable
-        ? "AkuBrowser Runtime needs an update."
-        : "Another AkuBrowser Runtime is conflicting with this installation.",
-      detail: updateAvailable
-        ? `${versionDetail} Update the installed runtime before starting AkuBrowser.`
-        : "Stop the older portable runtime, then retry the installed runtime.",
+      summary: "Another AkuBrowser Runtime is conflicting with this installation.",
+      detail: "Stop the older portable runtime, then retry the installed runtime.",
       actionKind: RUNTIME_SETUP_ACTIONS.ENSURE,
-      actionLabel: updateAvailable ? "Update runtime" : "Try again",
-      retryAction: !updateAvailable,
+      actionLabel: "Try again",
+      retryAction: true,
       showSecurityNotice: windowsInstallerAvailable,
     });
   }
@@ -188,8 +202,57 @@ function runtimeExecutableLocation(outcome, windowsInstallerAvailable) {
   return `%LOCALAPPDATA%\\Programs\\AkuBrowser\\runtime\\versions\\${version}\\AkuSidecar.exe`;
 }
 
+function normalizedUpdate(outcome, requiredVersion, requiredRevision) {
+  const reported = outcome?.response?.update ?? null;
+  if (reported?.currentVersion && reported?.targetVersion) return reported;
+  const runtime = outcome?.response?.runtime;
+  const currentVersion = reported?.currentVersion ?? runtime?.version ?? null;
+  const releaseMismatch = currentVersion && requiredVersion && currentVersion !== requiredVersion;
+  const revisionMismatch = runtime?.runtimeRevision && requiredRevision
+    && runtime.runtimeRevision !== requiredRevision;
+  if (!currentVersion || (!releaseMismatch && !revisionMismatch)) return reported;
+  return {
+    ...reported,
+    currentVersion,
+    targetVersion: requiredVersion || currentVersion,
+  };
+}
+
+function runtimeUpdateView(outcome, update, windowsInstallerAvailable, runtimeReady) {
+  const versionDetail = versionTransition(update);
+  if (!versionDetail) return null;
+  const sameVersionRepair = update.currentVersion === update.targetVersion;
+  const stableChannel = outcome?.response?.runtime?.channel === "stable";
+  const installerAction = windowsInstallerAvailable && (!stableChannel || sameVersionRepair);
+  return view({
+    badge: sameVersionRepair ? "Repair required" : "Update available",
+    badgeState: "warning",
+    summary: sameVersionRepair
+      ? "AkuBrowser Runtime needs a matching build."
+      : "AkuBrowser Runtime has an update available.",
+    detail: runtimeReady
+      ? `${versionDetail} The current runtime remains usable until you update it.`
+      : `${versionDetail} Update the installed runtime before starting AkuBrowser.`,
+    runtimeReady,
+    executableLocation: runtimeReady
+      ? runtimeExecutableLocation(outcome, windowsInstallerAvailable)
+      : "",
+    executableLocationHint: runtimeReady
+      ? "Paste this path into File Explorer if you need to access it manually."
+      : "",
+    actionKind: installerAction
+      ? RUNTIME_SETUP_ACTIONS.INSTALL
+      : RUNTIME_SETUP_ACTIONS.ENSURE,
+    actionLabel: sameVersionRepair ? "Repair runtime" : "Update runtime",
+    showInstallerNote: installerAction,
+    showSecurityNotice: windowsInstallerAvailable,
+  });
+}
+
 function versionTransition(update) {
   if (!update?.currentVersion || !update?.targetVersion) return "";
-  if (update.currentVersion === update.targetVersion) return "";
+  if (update.currentVersion === update.targetVersion) {
+    return `Version ${update.currentVersion} is installed, but its runtime build does not match this extension.`;
+  }
   return `Version ${update.currentVersion} is installed; version ${update.targetVersion} is required.`;
 }

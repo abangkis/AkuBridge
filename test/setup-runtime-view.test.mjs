@@ -40,7 +40,7 @@ test("outdated runtime offers the bounded native update", () => {
   const state = runtimeSetupView({
     state: "runtime_incompatible",
     response: {
-      runtime: { processState: "stopped" },
+      runtime: { processState: "stopped", channel: "stable" },
       update: { currentVersion: "0.7.6", targetVersion: "0.7.7" },
     },
   }, { windowsInstallerAvailable: true });
@@ -51,6 +51,74 @@ test("outdated runtime offers the bounded native update", () => {
   assert.equal(state.retryAction, false);
   assert.match(state.detail, /Version 0\.7\.6 is installed; version 0\.7\.7 is required/);
   assert.equal(state.runtimeReady, false);
+});
+
+test("running older compatible runtime stays usable while offering an update", () => {
+  const state = runtimeSetupView({
+    state: "runtime_ready",
+    response: {
+      runtime: { processState: "ready", channel: "stable", version: "0.7.6" },
+      update: { currentVersion: "0.7.6", targetVersion: "0.7.7" },
+    },
+  }, { windowsInstallerAvailable: true });
+
+  assert.equal(state.badge, "Update available");
+  assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.ENSURE);
+  assert.equal(state.actionLabel, "Update runtime");
+  assert.equal(state.runtimeReady, true);
+  assert.match(state.detail, /remains usable/);
+});
+
+test("preview runtime update uses the installer instead of the signed stable updater", () => {
+  const state = runtimeSetupView({
+    state: "runtime_incompatible",
+    response: {
+      runtime: { processState: "stopped", channel: "preview" },
+      update: { currentVersion: "0.7.5", targetVersion: "0.7.7" },
+    },
+  }, { windowsInstallerAvailable: true });
+
+  assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.INSTALL);
+  assert.equal(state.actionLabel, "Update runtime");
+  assert.equal(state.showInstallerNote, true);
+});
+
+test("legacy host response derives a packaged update target without external authority", () => {
+  const state = runtimeSetupView({
+    state: "runtime_incompatible",
+    response: {
+      runtime: {
+        processState: "failed",
+        channel: "preview",
+        version: "0.7.5",
+        runtimeRevision: "source-adapters-v85",
+      },
+      update: { currentVersion: "0.7.5", targetVersion: null },
+    },
+  }, {
+    windowsInstallerAvailable: true,
+    requiredRuntimeVersion: "0.7.7",
+    requiredRuntimeRevision: "source-adapters-v86",
+  });
+
+  assert.equal(state.badge, "Update available");
+  assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.INSTALL);
+  assert.equal(state.actionLabel, "Update runtime");
+  assert.match(state.detail, /Version 0\.7\.5 is installed; version 0\.7\.7 is required/);
+});
+
+test("same-version build mismatch offers installer repair", () => {
+  const state = runtimeSetupView({
+    state: "runtime_incompatible",
+    response: {
+      runtime: { processState: "stopped", channel: "stable" },
+      update: { currentVersion: "0.7.7", targetVersion: "0.7.7" },
+    },
+  }, { windowsInstallerAvailable: true });
+
+  assert.equal(state.badge, "Repair required");
+  assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.INSTALL);
+  assert.equal(state.actionLabel, "Repair runtime");
 });
 
 test("installed stopped runtime offers one run action", () => {
@@ -95,6 +163,10 @@ test("portable running runtime identifies its extracted executable without guess
   }, { windowsInstallerAvailable: true });
 
   assert.equal(state.executableLocation, "<extracted AkuBrowser folder>\\AkuSidecar.exe");
+  assert.equal(state.badge, "Portable runtime running");
+  assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.CHECK);
+  assert.equal(state.actionLabel, "Check after stopping");
+  assert.equal(state.runtimeReady, true);
   assert.equal(
     state.executableLocationHint,
     "Open the folder where you extracted the portable AkuBrowser bundle.",

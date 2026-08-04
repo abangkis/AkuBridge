@@ -25,6 +25,55 @@ func TestStatusReportsCompatibleRunningRuntime(t *testing.T) {
 	}
 }
 
+func TestStatusKeepsOlderContractCompatibleRuntimeUsableAndOffersUpdate(t *testing.T) {
+	root := writeActiveRuntime(t, activeFixture())
+	controller := testController(root, &sequenceProber{results: []probeStep{{result: readyProbe()}}}, &recordingLauncher{})
+	identity := validRequest("status").Extension
+	identity.ProductVersion = "0.7.7"
+	identity.RuntimeRevision = "source-adapters-v86"
+
+	outcome := controller.Status(context.Background(), identity)
+
+	if outcome.Status != "ready" || outcome.Runtime == nil || outcome.Runtime.ProcessState != "ready" {
+		t.Fatalf("older compatible runtime was not kept usable: %#v", outcome)
+	}
+	if outcome.Update.CurrentVersion == nil || *outcome.Update.CurrentVersion != "0.7.4" ||
+		outcome.Update.TargetVersion == nil || *outcome.Update.TargetVersion != "0.7.7" {
+		t.Fatalf("runtime update transition is missing: %#v", outcome.Update)
+	}
+}
+
+func TestStatusDoesNotDowngradeNewerRuntimeWithSameContract(t *testing.T) {
+	active := activeFixture()
+	active.Version = "0.7.8"
+	active.RuntimeRevision = "source-adapters-v87"
+	root := writeActiveRuntime(t, active)
+	probe := readyProbe()
+	probe.Health.Version = active.Version
+	controller := testController(root, &sequenceProber{results: []probeStep{{result: probe}}}, &recordingLauncher{})
+
+	outcome := controller.Status(context.Background(), validRequest("status").Extension)
+
+	if outcome.Status != "ready" || outcome.Update.TargetVersion != nil {
+		t.Fatalf("newer contract-compatible runtime was treated as a downgrade target: %#v", outcome)
+	}
+}
+
+func TestStoppedOlderRuntimeReportsExplicitUpdateTarget(t *testing.T) {
+	root := writeActiveRuntime(t, activeFixture())
+	controller := testController(root, &sequenceProber{results: []probeStep{{result: ProbeResult{Reachable: false}}}}, &recordingLauncher{})
+	identity := validRequest("status").Extension
+	identity.ProductVersion = "0.7.7"
+	identity.RuntimeRevision = "source-adapters-v86"
+
+	outcome := controller.Status(context.Background(), identity)
+
+	if outcome.Status != "incompatible" || outcome.Update.TargetVersion == nil ||
+		*outcome.Update.TargetVersion != "0.7.7" {
+		t.Fatalf("stopped outdated runtime did not expose its update target: %#v", outcome)
+	}
+}
+
 func TestEnsureStartsFixedInstalledSidecarAndWaitsForHealth(t *testing.T) {
 	active := activeFixture()
 	root := writeActiveRuntime(t, active)
@@ -74,6 +123,25 @@ func TestEnsureRejectsIncompatibleTupleWithoutLaunching(t *testing.T) {
 	}
 	if launcher.calls != 0 || prober.calls != 0 {
 		t.Fatal("incompatible tuple reached the runtime or process launcher")
+	}
+}
+
+func TestShutdownUsesInstalledRuntimeOwnershipAcrossReleaseVersions(t *testing.T) {
+	root := writeActiveRuntime(t, activeFixture())
+	controller := testController(root, &sequenceProber{}, &recordingLauncher{})
+	control := &fakeRuntimeUpdateControl{ready: true}
+	controller.UpdateControl = control
+	identity := validRequest("shutdown_if_idle").Extension
+	identity.ProductVersion = "0.7.7"
+	identity.RuntimeRevision = "source-adapters-v86"
+
+	outcome := controller.ShutdownIfIdle(context.Background(), identity)
+
+	if outcome.Status != "ready" || outcome.Runtime == nil || outcome.Runtime.ProcessState != "stopped" {
+		t.Fatalf("version-tolerant shutdown failed: %#v", outcome)
+	}
+	if control.shutdownCalls != 1 {
+		t.Fatalf("installed runtime ownership did not authorize shutdown: %d", control.shutdownCalls)
 	}
 }
 

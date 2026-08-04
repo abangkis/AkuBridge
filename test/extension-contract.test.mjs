@@ -101,6 +101,7 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"));
   const setupHtml = fs.readFileSync(path.join(projectRoot, "setup.html"), "utf8");
   const setupScript = fs.readFileSync(path.join(projectRoot, "setup.js"), "utf8");
+  const setupRuntimeView = fs.readFileSync(path.join(projectRoot, "setup-runtime-view.js"), "utf8");
 
   assert.equal(manifest.options_ui.page, "setup.html");
   assert.equal(manifest.options_ui.open_in_tab, true);
@@ -133,6 +134,8 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.match(setupScript, /:\s*await client\.ensureRuntime/);
   assert.match(setupScript, /client\.shutdownIfIdle/);
   assert.match(setupScript, /RUNTIME_SETUP_ACTIONS\.STOP/);
+  assert.match(setupScript, /runtimeSource:\s*"portable"/);
+  assert.match(setupRuntimeView, /Check after stopping/);
   assert.doesNotMatch(setupScript, /if \(!statusOnly/);
   assert.doesNotMatch(setupScript, /void reconcile\(\{ statusOnly: true \}\);/);
   assert.doesNotMatch(setupScript, /visibilitychange/);

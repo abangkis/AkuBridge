@@ -62,13 +62,10 @@ type RuntimeController struct {
 	Sleep         func(context.Context, time.Duration) error
 }
 
-func (controller RuntimeController) ShutdownIfIdle(ctx context.Context, identity ExtensionIdentity) Outcome {
+func (controller RuntimeController) ShutdownIfIdle(ctx context.Context, _ ExtensionIdentity) Outcome {
 	active, err := controller.loadActiveRuntime()
 	if err != nil {
 		return controller.metadataFailure(err)
-	}
-	if incompatible := compatibilityError(active, identity); incompatible != nil {
-		return incompatibleOutcome(active, incompatible)
 	}
 	if controller.UpdateControl == nil {
 		return updateFailureOutcome(active, active.Version, RuntimeUpdateAttempt{
@@ -109,9 +106,7 @@ func (controller RuntimeController) Status(ctx context.Context, identity Extensi
 	if err != nil {
 		return controller.metadataFailure(err)
 	}
-	if incompatible := compatibilityError(active, identity); incompatible != nil {
-		return incompatibleOutcome(active, incompatible)
-	}
+	updateRequired := runtimeUpdateRequired(active, identity)
 	probe, err := controller.Prober.Probe(ctx)
 	if err != nil {
 		return incompatibleOutcome(active, protocolError(
@@ -122,6 +117,9 @@ func (controller RuntimeController) Status(ctx context.Context, identity Extensi
 		))
 	}
 	if !probe.Reachable {
+		if updateRequired {
+			return updateRequiredOutcome(active, identity)
+		}
 		return stoppedOutcome(active)
 	}
 	if err := validateHealth(probe.Health, active); err != nil {
@@ -132,6 +130,9 @@ func (controller RuntimeController) Status(ctx context.Context, identity Extensi
 			"reinstall_runtime",
 		))
 	}
+	if updateRequired {
+		return readyUpdateOutcome(active, probe.Health, identity.ProductVersion)
+	}
 	return readyOutcome(active, probe.Health)
 }
 
@@ -140,17 +141,17 @@ func (controller RuntimeController) Ensure(ctx context.Context, identity Extensi
 	if err != nil {
 		return controller.metadataFailure(err)
 	}
-	if incompatible := compatibilityError(active, identity); incompatible != nil {
+	if runtimeUpdateRequired(active, identity) {
 		if controller.Updater == nil {
-			return incompatibleOutcome(active, incompatible)
+			return updateRequiredOutcome(active, identity)
 		}
 		attempt := controller.Updater.Update(ctx, active, identity)
 		if !attempt.Succeeded() {
 			return updateFailureOutcome(active, identity.ProductVersion, attempt)
 		}
 		active = attempt.Active
-		if stillIncompatible := compatibilityError(active, identity); stillIncompatible != nil {
-			return incompatibleOutcome(active, stillIncompatible)
+		if runtimeUpdateRequired(active, identity) {
+			return updateRequiredOutcome(active, identity)
 		}
 	}
 	activationPending := controller.Updater != nil && controller.Updater.ActivationPending(active)
@@ -419,18 +420,10 @@ func (controller RuntimeController) metadataFailure(_ error) Outcome {
 	}
 }
 
-func compatibilityError(active ActiveRuntime, identity ExtensionIdentity) *ErrorState {
-	if identity.ProductVersion != active.Version ||
-		identity.RuntimeRevision != active.RuntimeRevision ||
-		identity.BridgeContractVersion != active.BridgeContractVersion {
-		return protocolError(
-			"runtime_incompatible",
-			"Installed runtime does not match the extension compatibility tuple.",
-			false,
-			"reinstall_runtime",
-		)
-	}
-	return nil
+func runtimeUpdateRequired(active ActiveRuntime, identity ExtensionIdentity) bool {
+	comparison := compareVersions(active.Version, identity.ProductVersion)
+	return comparison < 0 ||
+		(comparison == 0 && active.RuntimeRevision != identity.RuntimeRevision)
 }
 
 func validateHealth(health Health, active ActiveRuntime) error {
@@ -449,6 +442,14 @@ func readyOutcome(active ActiveRuntime, health Health) Outcome {
 		Status:  "ready",
 		Runtime: runtimeState(active, health.InstanceEpoch, "ready"),
 		Update:  updateState(active),
+	}
+}
+
+func readyUpdateOutcome(active ActiveRuntime, health Health, targetVersion string) Outcome {
+	return Outcome{
+		Status:  "ready",
+		Runtime: runtimeState(active, health.InstanceEpoch, "ready"),
+		Update:  updateStateWithTarget(active, targetVersion),
 	}
 }
 
@@ -489,6 +490,20 @@ func incompatibleOutcome(active ActiveRuntime, state *ErrorState) Outcome {
 	}
 }
 
+func updateRequiredOutcome(active ActiveRuntime, identity ExtensionIdentity) Outcome {
+	return Outcome{
+		Status:  "incompatible",
+		Runtime: runtimeState(active, "update-required", "stopped"),
+		Update:  updateStateWithTarget(active, identity.ProductVersion),
+		Error: protocolError(
+			"runtime_incompatible",
+			"The installed runtime must be reconciled with this extension release.",
+			true,
+			"retry",
+		),
+	}
+}
+
 func runtimeState(active ActiveRuntime, epoch, processState string) *RuntimeState {
 	return &RuntimeState{
 		Version:               active.Version,
@@ -509,6 +524,12 @@ func updateState(active ActiveRuntime) UpdateState {
 		TargetVersion:     nil,
 		RollbackAvailable: active.RollbackVersion != nil,
 	}
+}
+
+func updateStateWithTarget(active ActiveRuntime, targetVersion string) UpdateState {
+	state := updateState(active)
+	state.TargetVersion = &targetVersion
+	return state
 }
 
 func (controller RuntimeController) startupWait() time.Duration {

@@ -15,6 +15,7 @@ import {
   detectSetupPlatform,
   SETUP_PLATFORMS,
 } from "./setup-platform.js";
+import { BRIDGE_RUNTIME_REVISION } from "./bridge-capabilities.js";
 import {
   RUNTIME_SETUP_ACTIONS,
   runtimeCheckTimeoutMs,
@@ -209,8 +210,15 @@ function applyPlatformCopy() {
     : "View Codex options";
 }
 
-function configureInstallerGuidance(state) {
+function configureInstallerGuidance(state, runtimeView) {
   if (setupPlatform !== SETUP_PLATFORMS.WINDOWS) return;
+  if (state === "runtime_incompatible" && runtimeView.actionKind === RUNTIME_SETUP_ACTIONS.INSTALL) {
+    installerNoteTitle.textContent = "Install the matching AkuBrowser Runtime";
+    installerStepOpen.innerHTML = "Open <code>AkuBrowserRuntimeSetup.exe</code> after the download finishes.";
+    installerStepRun.textContent = "Complete setup to replace or repair the outdated runtime build.";
+    installerStepCheck.textContent = "Return here and select Check runtime.";
+    return;
+  }
   if (state === "runtime_incompatible") {
     installerNoteTitle.textContent = "Stop the older portable runtime before retrying";
     installerStepOpen.textContent = "Close the AkuBrowser portable terminal or development runtime that is still running.";
@@ -252,11 +260,13 @@ function renderOutcome(outcome) {
   const runtimeView = runtimeSetupView(outcome, {
     windowsInstallerAvailable: windowsRuntimeInstallerAvailable,
     runtimeInstallerAttempted,
+    requiredRuntimeVersion: productVersion,
+    requiredRuntimeRevision: BRIDGE_RUNTIME_REVISION,
   });
-  configureInstallerGuidance(outcome.state);
   runtimeReady = runtimeView.runtimeReady;
   currentRuntimeAction = runtimeView.actionKind;
   currentRuntimeActionRetries = runtimeView.retryAction;
+  configureInstallerGuidance(outcome.state, runtimeView);
   summary.textContent = runtimeView.summary;
   detail.textContent = runtimeView.detail;
   runtimeAction.textContent = runtimeView.actionLabel;
@@ -274,8 +284,7 @@ function renderOutcome(outcome) {
 function renderReady(message, { runtimeSource } = {}) {
   runtimeInstallerAttempted = false;
   globalThis.sessionStorage.removeItem(RUNTIME_INSTALLER_ATTEMPT_KEY);
-  renderOutcome({ state: "runtime_ready", runtimeSource });
-  detail.textContent = message;
+  renderOutcome({ state: "runtime_ready", runtimeSource, observedDetail: message });
 }
 
 async function renderSourceAccess() {
