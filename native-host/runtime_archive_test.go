@@ -18,7 +18,7 @@ func TestRuntimeArchiveExtractsOnlyDeclaredVerifiedFiles(t *testing.T) {
 		"config/sidecar.json": []byte(`{"version":1}`),
 	})
 	candidate := filepath.Join(t.TempDir(), "candidate")
-	if err := extractVerifiedRuntimeArchive(archive, candidate, "0.7.7"); err != nil {
+	if err := extractVerifiedRuntimeArchive(archive, candidate, "0.7.8"); err != nil {
 		t.Fatalf("extract runtime archive: %v", err)
 	}
 	if data, err := os.ReadFile(filepath.Join(candidate, "AkuSidecar.exe")); err != nil || string(data) != "signed-sidecar" {
@@ -42,7 +42,7 @@ func TestRuntimeArchiveRejectsTraversalAndUndeclaredFiles(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			archive := filepath.Join(t.TempDir(), "runtime.zip")
 			writeRuntimeArchiveForTest(t, archive, files)
-			if err := extractVerifiedRuntimeArchive(archive, filepath.Join(t.TempDir(), "candidate"), "0.7.7"); err == nil {
+			if err := extractVerifiedRuntimeArchive(archive, filepath.Join(t.TempDir(), "candidate"), "0.7.8"); err == nil {
 				t.Fatal("unsafe archive was accepted")
 			}
 		})
@@ -62,7 +62,7 @@ func writeRuntimeArchiveForTest(t *testing.T, archivePath string, files map[stri
 		})
 	}
 	manifest, err := json.Marshal(RuntimePayloadManifest{
-		SchemaVersion: 1, Product: "AkuBrowser", Version: "0.7.7",
+		SchemaVersion: 1, Product: "AkuBrowser", Version: "0.7.8",
 		Architecture: "windows-x64", Files: declared,
 	})
 	if err != nil {

@@ -81,7 +81,7 @@ test("a native host held by security software times out instead of hanging setup
         storageWrites.push(structuredClone(value));
       },
     },
-    productVersion: "0.7.7",
+    productVersion: "0.7.8",
     runtimeRevision: "source-adapters-v86",
     now: () => FIXED_NOW,
     randomUUID: () => FIXED_REQUEST_ID,
@@ -254,7 +254,7 @@ test("staging, candidate, and rollback failures remain visibly typed", async () 
         update: {
           phase: code === "rollback_failed" ? "rolling_back" : "health_check",
           currentVersion: "0.7.4",
-          targetVersion: "0.7.7",
+          targetVersion: "0.7.8",
           rollbackAvailable: true,
         },
         error: {
@@ -358,7 +358,7 @@ function readyResponse(request, overrides = {}) {
     update: {
       phase: status === "updating" ? "downloading" : "idle",
       currentVersion: "0.7.4",
-      targetVersion: status === "updating" ? "0.7.7" : null,
+      targetVersion: status === "updating" ? "0.7.8" : null,
       rollbackAvailable: true,
     },
     error: null,

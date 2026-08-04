@@ -29,7 +29,7 @@ func TestStatusKeepsOlderContractCompatibleRuntimeUsableAndOffersUpdate(t *testi
 	root := writeActiveRuntime(t, activeFixture())
 	controller := testController(root, &sequenceProber{results: []probeStep{{result: readyProbe()}}}, &recordingLauncher{})
 	identity := validRequest("status").Extension
-	identity.ProductVersion = "0.7.7"
+	identity.ProductVersion = "0.7.8"
 	identity.RuntimeRevision = "source-adapters-v86"
 
 	outcome := controller.Status(context.Background(), identity)
@@ -38,7 +38,7 @@ func TestStatusKeepsOlderContractCompatibleRuntimeUsableAndOffersUpdate(t *testi
 		t.Fatalf("older compatible runtime was not kept usable: %#v", outcome)
 	}
 	if outcome.Update.CurrentVersion == nil || *outcome.Update.CurrentVersion != "0.7.4" ||
-		outcome.Update.TargetVersion == nil || *outcome.Update.TargetVersion != "0.7.7" {
+		outcome.Update.TargetVersion == nil || *outcome.Update.TargetVersion != "0.7.8" {
 		t.Fatalf("runtime update transition is missing: %#v", outcome.Update)
 	}
 }
@@ -63,13 +63,13 @@ func TestStoppedOlderRuntimeReportsExplicitUpdateTarget(t *testing.T) {
 	root := writeActiveRuntime(t, activeFixture())
 	controller := testController(root, &sequenceProber{results: []probeStep{{result: ProbeResult{Reachable: false}}}}, &recordingLauncher{})
 	identity := validRequest("status").Extension
-	identity.ProductVersion = "0.7.7"
+	identity.ProductVersion = "0.7.8"
 	identity.RuntimeRevision = "source-adapters-v86"
 
 	outcome := controller.Status(context.Background(), identity)
 
 	if outcome.Status != "incompatible" || outcome.Update.TargetVersion == nil ||
-		*outcome.Update.TargetVersion != "0.7.7" {
+		*outcome.Update.TargetVersion != "0.7.8" {
 		t.Fatalf("stopped outdated runtime did not expose its update target: %#v", outcome)
 	}
 }
@@ -132,7 +132,7 @@ func TestShutdownUsesInstalledRuntimeOwnershipAcrossReleaseVersions(t *testing.T
 	control := &fakeRuntimeUpdateControl{ready: true}
 	controller.UpdateControl = control
 	identity := validRequest("shutdown_if_idle").Extension
-	identity.ProductVersion = "0.7.7"
+	identity.ProductVersion = "0.7.8"
 	identity.RuntimeRevision = "source-adapters-v86"
 
 	outcome := controller.ShutdownIfIdle(context.Background(), identity)
@@ -148,7 +148,7 @@ func TestShutdownUsesInstalledRuntimeOwnershipAcrossReleaseVersions(t *testing.T
 func TestEnsureDelegatesExactIncompatibleTupleToSignedUpdater(t *testing.T) {
 	root := writeActiveRuntime(t, activeFixture())
 	updated := ActiveRuntime{
-		SchemaVersion: 1, Channel: "stable", Version: "0.7.7",
+		SchemaVersion: 1, Channel: "stable", Version: "0.7.8",
 		RuntimeRevision: "source-adapters-v86", BridgeContractVersion: bridgeContract,
 		RollbackVersion: stringPointer("0.7.4"),
 	}
@@ -158,19 +158,19 @@ func TestEnsureDelegatesExactIncompatibleTupleToSignedUpdater(t *testing.T) {
 	prober := &sequenceProber{results: []probeStep{{result: ProbeResult{
 		Reachable: true,
 		Health: Health{
-			Status: "ok", Version: "0.7.7", Runtime: "go",
+			Status: "ok", Version: "0.7.8", Runtime: "go",
 			BridgeContractVersion: bridgeContract, InstanceEpoch: "updated-runtime",
 		},
 	}}}}
 	controller := testController(root, prober, &recordingLauncher{})
 	controller.Updater = updater
 	identity := validRequest("ensure_runtime").Extension
-	identity.ProductVersion = "0.7.7"
+	identity.ProductVersion = "0.7.8"
 	identity.RuntimeRevision = "source-adapters-v86"
 
 	outcome := controller.Ensure(context.Background(), identity)
 
-	if outcome.Status != "ready" || outcome.Runtime.Version != "0.7.7" || updater.updateCalls != 1 {
+	if outcome.Status != "ready" || outcome.Runtime.Version != "0.7.8" || updater.updateCalls != 1 {
 		t.Fatalf("updated outcome=%+v calls=%d", outcome, updater.updateCalls)
 	}
 }
@@ -231,7 +231,7 @@ func TestEnsureRecoversAfterCrashedRuntimeStartFailure(t *testing.T) {
 func TestFailedCandidateDirectoryCannotReplaceKnownGoodActiveRuntime(t *testing.T) {
 	active := activeFixture()
 	root := writeActiveRuntime(t, active)
-	candidatePath := filepath.Join(root, "versions", "0.7.7", "AkuSidecar.exe")
+	candidatePath := filepath.Join(root, "versions", "0.7.8", "AkuSidecar.exe")
 	if err := os.MkdirAll(filepath.Dir(candidatePath), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestRuntimeControlTokenCreationConvergesAcrossConcurrentHosts(t *testing.T)
 
 func TestEnsureRollsBackAnUnconfirmedRuntimeAfterHealthFailure(t *testing.T) {
 	active := activeFixture()
-	active.Version = "0.7.7"
+	active.Version = "0.7.8"
 	active.RuntimeRevision = "source-adapters-v86"
 	active.RollbackVersion = stringPointer("0.7.4")
 	root := writeActiveRuntime(t, active)
@@ -316,7 +316,7 @@ func TestEnsureRollsBackAnUnconfirmedRuntimeAfterHealthFailure(t *testing.T) {
 	}}}, &recordingLauncher{})
 	controller.Updater = updater
 	identity := validRequest("ensure_runtime").Extension
-	identity.ProductVersion = "0.7.7"
+	identity.ProductVersion = "0.7.8"
 	identity.RuntimeRevision = "source-adapters-v86"
 
 	outcome := controller.Ensure(context.Background(), identity)
