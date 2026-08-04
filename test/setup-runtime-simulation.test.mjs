@@ -3,6 +3,9 @@ import test from "node:test";
 
 import {
   RUNTIME_INSTALL_REQUIRED_SIMULATION,
+  RUNTIME_RUNNING_SIMULATION,
+  RUNTIME_STOPPED_SIMULATION,
+  RUNTIME_UPDATE_REQUIRED_SIMULATION,
   simulatedRuntimeOutcome,
 } from "../setup-runtime-simulation.js";
 
@@ -18,4 +21,16 @@ test("setup ignores absent or unsupported runtime simulations", () => {
   assert.equal(simulatedRuntimeOutcome(""), null);
   assert.equal(simulatedRuntimeOutcome("?simulateRuntime=ready"), null);
   assert.equal(simulatedRuntimeOutcome("?another=value"), null);
+});
+
+test("setup simulates update, stopped, and running runtime states", () => {
+  const update = simulatedRuntimeOutcome(`?simulateRuntime=${RUNTIME_UPDATE_REQUIRED_SIMULATION}`);
+  const stopped = simulatedRuntimeOutcome(`?simulateRuntime=${RUNTIME_STOPPED_SIMULATION}`);
+  const running = simulatedRuntimeOutcome(`?simulateRuntime=${RUNTIME_RUNNING_SIMULATION}`);
+
+  assert.equal(update.state, "runtime_incompatible");
+  assert.equal(update.response.update.currentVersion, "0.7.6");
+  assert.equal(stopped.response.runtime.processState, "stopped");
+  assert.equal(running.state, "runtime_ready");
+  assert.equal(running.response.runtime.processState, "ready");
 });

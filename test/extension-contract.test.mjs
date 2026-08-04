@@ -109,15 +109,33 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.match(setupScript, /client\.status/);
   assert.match(setupScript, /client\.ensureRuntime/);
   assert.match(setupScript, /simulatedRuntimeOutcome/);
-  assert.match(setupScript, /this page is behaving like a new installation/);
+  assert.match(setupScript, /Simulation mode uses the real runtime action controls/);
   assert.match(setupHtml, /setup-timeline/);
   assert.match(setupHtml, /About AkuBrowser/);
   assert.match(setupHtml, /AkuSidecar/);
   assert.match(setupHtml, /C2PA Verification/);
   assert.match(setupHtml, /Codex App/);
-  assert.match(setupHtml, /Download runtime installer/);
+  assert.match(setupHtml, /id="runtime-action"/);
   assert.match(setupHtml, /Open <code>AkuBrowserRuntimeSetup\.exe<\/code>/);
-  assert.match(setupHtml, /Check installation/);
+  assert.doesNotMatch(setupHtml, /Check installation/);
+  assert.match(setupScript, /runtimeSetupView/);
+  assert.match(setupHtml, /id="runtime-executable-location"/);
+  assert.match(setupScript, /runtimeExecutablePath\.textContent = runtimeView\.executableLocation/);
+  assert.match(
+    setupScript,
+    /windowsInstallerAvailable:\s*windowsRuntimeInstallerAvailable/,
+  );
+  assert.match(setupScript, /runtime_unchecked/);
+  assert.match(setupScript, /RUNTIME_SETUP_ACTIONS\.CHECK/);
+  assert.match(setupScript, /RUNTIME_SETUP_ACTIONS\.ENSURE/);
+  assert.match(setupScript, /runtimeCheckTimeoutMs/);
+  assert.match(setupScript, /statusOnly\s*\?\s*await client\.status/);
+  assert.match(setupScript, /:\s*await client\.ensureRuntime/);
+  assert.match(setupScript, /client\.shutdownIfIdle/);
+  assert.match(setupScript, /RUNTIME_SETUP_ACTIONS\.STOP/);
+  assert.doesNotMatch(setupScript, /if \(!statusOnly/);
+  assert.doesNotMatch(setupScript, /void reconcile\(\{ statusOnly: true \}\);/);
+  assert.doesNotMatch(setupScript, /visibilitychange/);
   assert.match(setupScript, /Chrome cannot run downloaded applications automatically/);
   assert.match(setupScript, /Download started — run the installer next/);
   assert.match(setupScript, /detectSetupPlatform/);
@@ -132,10 +150,7 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.match(setupScript, /AkuBrowser-\$\{productVersion\}-windows-x64\.zip/);
   assert.match(setupScript, /windowsAntivirusNote\.hidden = !windowsRuntimeInstallerAvailable/);
   assert.match(setupScript, /runtimeInstallerAttempted\.v1/);
-  assert.match(setupScript, /attemptedInstallStillMissing = installRequired && runtimeInstallerAttempted/);
-  assert.match(setupScript, /failed \|\| attemptedInstallStillMissing/);
-  assert.match(setupScript, /Close any older portable AkuBrowser Runtime/);
-  assert.match(setupScript, /Stop the older portable runtime before retrying/);
+  assert.match(setupScript, /runtimeInstallerAttempted/);
   assert.match(
     setupScript,
     /https:\/\/github\.com\/abangkis\/AkuBrowser\/releases\/latest\/download\/AkuBrowserRuntimeSetup\.exe/,

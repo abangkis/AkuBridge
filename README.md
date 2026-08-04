@@ -184,9 +184,18 @@ local runtime, open the unpacked extension page with:
 chrome-extension://<extension-id>/setup.html?simulateRuntime=not-installed
 ```
 
-This simulation bypasses local runtime detection for the setup page only. Its
-download button still opens the real release installer. Remove the query string
-and select **Check again** to return to live runtime detection after installation.
+Additional setup states can be previewed with `update-required`, `stopped`, and
+`running`. These simulations bypass local runtime detection for the setup page
+only, while their buttons retain the real action wiring. Remove the query string
+to return to the initial **Not checked** state; live detection starts only after
+the user selects **Check runtime**.
+
+The first explicit runtime check has a 30-second Native Messaging timeout. Each
+consecutive **Try again** adds 10 seconds (40, 50, 60, and so on). A Setup action
+sends exactly one native request: **Check runtime** uses `status`, while
+**Run AkuBrowser**, **Update runtime**, and **Try again** use `ensure_runtime`.
+When the runtime is active, **Stop runtime** uses the bounded
+`shutdown_if_idle` action and refuses to stop active work.
 
 The adapter foundation separates X, LinkedIn, and Facebook DOM knowledge into source adapters loaded behind a common registry and catalog. The content runtime owns bounded scrolling, restoration, evidence normalization, and messaging; each adapter owns source matching, candidate discovery, author discovery, media exclusions, and pending-content labels.
 

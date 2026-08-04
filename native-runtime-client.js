@@ -12,6 +12,7 @@ export const NATIVE_RUNTIME_CLIENT_STATES = Object.freeze({
   CHECKING_HOST: "checking_host",
   INSTALL_REQUIRED: "runtime_install_required",
   READY: "runtime_ready",
+  STOPPED: "runtime_stopped",
   UPDATING: "runtime_updating",
   BUSY: "runtime_busy",
   RESTART_REQUIRED: "runtime_restart_required",
@@ -92,6 +93,7 @@ export function createNativeRuntimeClient({
   hostName = NATIVE_RUNTIME_HOST,
   now = () => Date.now(),
   randomUUID = defaultRandomUUID,
+  nativeMessageTimeoutMs = 30_000,
 } = {}) {
   if (!runtime?.sendNativeMessage) {
     throw new TypeError("Native runtime client requires runtime.sendNativeMessage.");
@@ -106,9 +108,15 @@ export function createNativeRuntimeClient({
     throw new TypeError("Native runtime client received an unsupported bridge contract.");
   }
 
-  async function request(action, { trigger = "manual" } = {}) {
+  async function request(action, {
+    trigger = "manual",
+    timeoutMs = nativeMessageTimeoutMs,
+  } = {}) {
     if (!ALLOWED_ACTIONS.has(action)) {
       throw new TypeError(`Unsupported native runtime action: ${String(action)}`);
+    }
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new TypeError("Native runtime request timeout must be positive.");
     }
 
     const requestId = normalizeRequestId(randomUUID());
@@ -133,7 +141,7 @@ export function createNativeRuntimeClient({
 
     let response;
     try {
-      response = await sendNativeMessage(runtime, hostName, nativeRequest);
+      response = await sendNativeMessage(runtime, hostName, nativeRequest, timeoutMs);
     } catch (error) {
       const missingHost = isMissingNativeHostError(error);
       const outcome = {
@@ -259,9 +267,12 @@ function stateFromResponse(response, trigger, now) {
     incompatible: NATIVE_RUNTIME_CLIENT_STATES.INCOMPATIBLE,
     error: NATIVE_RUNTIME_CLIENT_STATES.FAILED,
   };
+  const state = response.status === "ready" && response.runtime?.processState === "stopped"
+    ? NATIVE_RUNTIME_CLIENT_STATES.STOPPED
+    : stateByStatus[response.status];
   const outcome = {
     schemaVersion: NATIVE_RUNTIME_PROTOCOL_VERSION,
-    state: stateByStatus[response.status],
+    state,
     trigger: normalizeTrigger(trigger),
     observedAt: new Date(now()).toISOString(),
     status: response.status,
@@ -353,19 +364,29 @@ function assertExactKeys(value, expected, label) {
   }
 }
 
-function sendNativeMessage(runtime, hostName, request) {
+function sendNativeMessage(runtime, hostName, request, timeoutMs) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      callback(value);
+    };
+    const timeout = setTimeout(() => {
+      finish(reject, new Error("Native messaging timed out."));
+    }, timeoutMs);
     try {
       runtime.sendNativeMessage(hostName, request, (response) => {
         const lastError = runtime.lastError;
         if (lastError) {
-          reject(new Error(lastError.message || "Native messaging failed."));
+          finish(reject, new Error(lastError.message || "Native messaging failed."));
           return;
         }
-        resolve(response);
+        finish(resolve, response);
       });
     } catch (error) {
-      reject(error);
+      finish(reject, error);
     }
   });
 }

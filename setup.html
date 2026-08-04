@@ -87,11 +87,16 @@
                 <div class="settings-copy">
                   <div class="row-title">
                     <strong>AkuBrowser Runtime</strong>
-                    <span id="runtime-status-badge" class="mini-status">Checking</span>
+                    <span id="runtime-status-badge" class="mini-status">Not checked</span>
                   </div>
                   <small id="detail">
-                    The Chrome extension is installed. Checking the local runtime.
+                    No local runtime process will start until you check it.
                   </small>
+                  <p id="runtime-executable-location" class="runtime-executable-location" hidden>
+                    <strong>Runtime executable</strong>
+                    <code id="runtime-executable-path"></code>
+                    <span id="runtime-executable-location-hint"></span>
+                  </p>
                   <div
                     id="installer-note"
                     class="installer-instructions"
@@ -104,7 +109,7 @@
                     <ol>
                       <li id="installer-step-open">Open <code>AkuBrowserRuntimeSetup.exe</code> when the download finishes.</li>
                       <li id="installer-step-run">Approve the Windows prompt and complete the setup.</li>
-                      <li id="installer-step-check">Return to this page and select <strong>Check installation</strong>.</li>
+                      <li id="installer-step-check">Return to this page and select <strong>Check runtime</strong>.</li>
                     </ol>
                   </div>
                   <aside id="windows-antivirus-note" class="platform-warning" hidden>
@@ -122,8 +127,8 @@
                       <code>Access is denied</code>, restore any quarantined
                       AkuBrowser file and add a narrow exception for
                       <code>%LOCALAPPDATA%\Programs\AkuBrowser\</code>. Stop the
-                      running <code>AkuSidecar.exe</code>, then select
-                      <strong>Check installation</strong> here before trying again.
+                      running <code>AkuSidecar.exe</code>, then return here and
+                      select the available runtime action.
                     </p>
                   </aside>
                   <aside id="manual-runtime-fallback" class="manual-runtime-fallback" hidden>
@@ -152,10 +157,9 @@
                   </aside>
                 </div>
                 <div class="row-actions">
-                  <button id="install" class="primary" type="button" hidden>
-                    Download runtime installer
+                  <button id="runtime-action" class="primary" type="button">
+                    Check runtime
                   </button>
-                  <button id="retry" type="button">Check installation</button>
                 </div>
               </div>
 

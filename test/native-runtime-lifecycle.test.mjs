@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { planNativeRuntimeLifecycle } from "../native-runtime-lifecycle.js";
 
-test("first Store install opens setup and inspects without starting native work", () => {
+test("first Store install opens setup without contacting the native host", () => {
   assert.deepEqual(planNativeRuntimeLifecycle("installed", { reason: "install" }), {
-    action: "status",
+    action: "none",
     trigger: "installed_install",
     openSetup: true,
   });

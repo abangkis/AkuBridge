@@ -69,6 +69,32 @@ test("missing registered host becomes install-required state without throwing", 
   assert.deepEqual(storageWrites.at(-1)[NATIVE_RUNTIME_STATE_KEY], outcome);
 });
 
+test("a native host held by security software times out instead of hanging setup", async () => {
+  const storageWrites = [];
+  const client = createNativeRuntimeClient({
+    runtime: {
+      sendNativeMessage() {},
+    },
+    storage: {
+      async set(value) {
+        storageWrites.push(structuredClone(value));
+      },
+    },
+    productVersion: "0.7.7",
+    runtimeRevision: "source-adapters-v86",
+    now: () => FIXED_NOW,
+    randomUUID: () => FIXED_REQUEST_ID,
+    nativeMessageTimeoutMs: 1_000,
+  });
+
+  const outcome = await client.status({ trigger: "setup_check", timeoutMs: 5 });
+
+  assert.equal(outcome.state, "runtime_failed");
+  assert.equal(outcome.errorCode, "native_message_failed");
+  assert.equal(outcome.retryable, true);
+  assert.deepEqual(storageWrites.at(-1)[NATIVE_RUNTIME_STATE_KEY], outcome);
+});
+
 test("native host statuses map to explicit client states", async () => {
   const cases = [
     ["updating", "runtime_updating"],
@@ -84,6 +110,20 @@ test("native host statuses map to explicit client states", async () => {
     const outcome = await client.status();
     assert.equal(outcome.state, expectedState);
   }
+});
+
+test("successful idle shutdown maps ready-stopped to an explicit stopped state", async () => {
+  const { client } = clientWithResponder((_host, request, callback) => {
+    const response = readyResponse(request);
+    response.runtime.processState = "stopped";
+    response.runtime.instanceEpoch = "shutdown-complete";
+    callback(response);
+  });
+
+  const outcome = await client.shutdownIfIdle({ trigger: "setup_stop" });
+
+  assert.equal(outcome.state, NATIVE_RUNTIME_CLIENT_STATES.STOPPED);
+  assert.equal(outcome.response.runtime.processState, "stopped");
 });
 
 test("schema-valid incompatible details remain typed but are not persisted verbatim", async () => {

@@ -414,6 +414,7 @@ async function inspectNativeRuntime(trigger) {
 }
 
 async function executeNativeRuntimeLifecycle(plan) {
+  if (plan.action === "none") return null;
   if (plan.action === "status") {
     return inspectNativeRuntime(plan.trigger);
   }
