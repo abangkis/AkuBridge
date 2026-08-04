@@ -1,6 +1,6 @@
 {
   "name": "@aku-browser/bridge",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "akuRuntimeRevision": "source-adapters-v86",
   "private": true,
   "type": "module",

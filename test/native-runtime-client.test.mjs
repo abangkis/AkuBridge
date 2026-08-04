@@ -183,7 +183,7 @@ test("staging, candidate, and rollback failures remain visibly typed", async () 
         update: {
           phase: code === "rollback_failed" ? "rolling_back" : "health_check",
           currentVersion: "0.7.4",
-          targetVersion: "0.7.6",
+          targetVersion: "0.7.7",
           rollbackAvailable: true,
         },
         error: {
@@ -287,7 +287,7 @@ function readyResponse(request, overrides = {}) {
     update: {
       phase: status === "updating" ? "downloading" : "idle",
       currentVersion: "0.7.4",
-      targetVersion: status === "updating" ? "0.7.6" : null,
+      targetVersion: status === "updating" ? "0.7.7" : null,
       rollbackAvailable: true,
     },
     error: null,
