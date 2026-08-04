@@ -9,8 +9,9 @@ import (
 )
 
 type Host struct {
-	Controller RuntimeController
-	Diagnostic *DiagnosticWriter
+	Controller   RuntimeController
+	CodexChecker CodexChecker
+	Diagnostic   *DiagnosticWriter
 }
 
 func (host Host) Handle(ctx context.Context, request Request) Response {
@@ -21,6 +22,37 @@ func (host Host) Handle(ctx context.Context, request Request) Response {
 		}
 		host.log("warn", "request_rejected", map[string]any{"code": validationError.Code})
 		return errorResponse(request, status, nil, UpdateState{Phase: "idle"}, validationError)
+	}
+
+	if request.Action == "check_codex" {
+		codex, state := CodexState{Status: "error"}, protocolError(
+			"codex_check_failed",
+			"Codex availability could not be checked.",
+			true,
+			"retry",
+		)
+		if host.CodexChecker != nil {
+			codex, state = host.CodexChecker.Check(ctx)
+		}
+		status := "error"
+		if state == nil {
+			status = "ready"
+		}
+		host.log("info", "request_completed", map[string]any{
+			"action": request.Action,
+			"status": status,
+		})
+		return Response{
+			SchemaVersion: protocolVersion,
+			Kind:          "response",
+			RequestID:     request.RequestID,
+			Action:        request.Action,
+			Status:        status,
+			Runtime:       nil,
+			Update:        UpdateState{Phase: "idle"},
+			Error:         state,
+			Codex:         &codex,
+		}
 	}
 
 	var outcome Outcome

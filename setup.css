@@ -277,6 +277,13 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.codex-detected-detail {
+  margin: 7px 0 0;
+  color: var(--success);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .row-title {
   display: flex;
   align-items: center;

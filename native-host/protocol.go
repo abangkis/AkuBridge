@@ -48,6 +48,11 @@ type Response struct {
 	Runtime       *RuntimeState `json:"runtime"`
 	Update        UpdateState   `json:"update"`
 	Error         *ErrorState   `json:"error"`
+	Codex         *CodexState   `json:"codex,omitempty"`
+}
+
+type CodexState struct {
+	Status string `json:"status"`
 }
 
 type RuntimeState struct {
@@ -177,7 +182,7 @@ func validateRequest(request Request) *ErrorState {
 
 func isKnownAction(action string) bool {
 	switch action {
-	case "status", "ensure_runtime", "shutdown_if_idle":
+	case "status", "ensure_runtime", "shutdown_if_idle", "check_codex":
 		return true
 	default:
 		return false

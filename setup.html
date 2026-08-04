@@ -167,26 +167,42 @@
                 <div class="settings-copy">
                   <div class="row-title">
                     <strong>Codex App</strong>
-                    <span id="codex-status-badge" class="mini-status">Manual confirmation</span>
+                    <span id="codex-status-badge" class="mini-status">Not checked</span>
                   </div>
                   <small id="codex-platform-description">
-                    Install Codex App for Windows, sign in, and make sure Codex
-                    is ready. AkuBrowser never receives your Codex credentials.
+                    Check the local Codex installation when you are ready.
+                    AkuBrowser never receives your Codex credentials.
                   </small>
+                  <div id="codex-install-instructions" class="installer-instructions" hidden>
+                    <strong>Prepare Codex App</strong>
+                    <ol>
+                      <li>Download and install Codex App for this computer.</li>
+                      <li>Open Codex App and sign in to your OpenAI account.</li>
+                      <li>Return here and select <strong>Try again</strong>.</li>
+                    </ol>
+                  </div>
+                  <p id="codex-detected-detail" class="codex-detected-detail" hidden>
+                    A compatible Codex App Server executable was detected.
+                    Confirm below that you are signed in and Codex is ready to use.
+                  </p>
                 </div>
                 <div class="codex-control">
+                  <button id="codex-action" class="primary" type="button" disabled>
+                    Check Codex
+                  </button>
                   <a
                     id="codex-download"
                     class="button-link"
                     href="https://get.microsoft.com/installer/download/9PLM9XGG6VKS?cid=website_cta_psi"
                     target="_blank"
                     rel="noreferrer"
+                    hidden
                   >
                     Download Codex App
                   </a>
-                  <label class="confirmation-check">
-                    <input id="codex-confirmation" type="checkbox">
-                    <span>Installed &amp; signed in</span>
+                  <label id="codex-confirmation-control" class="confirmation-check" hidden>
+                    <input id="codex-confirmation" type="checkbox" disabled>
+                    <span>I am signed in and Codex is ready</span>
                   </label>
                 </div>
               </div>

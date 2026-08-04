@@ -116,6 +116,13 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.match(setupHtml, /AkuSidecar/);
   assert.match(setupHtml, /C2PA Verification/);
   assert.match(setupHtml, /Codex App/);
+  assert.match(setupHtml, /id="codex-action"/);
+  assert.match(setupHtml, /Download and install Codex App/);
+  assert.match(setupHtml, /Open Codex App and sign in/);
+  assert.match(setupHtml, /I am signed in and Codex is ready/);
+  assert.match(setupScript, /client\.checkCodex/);
+  assert.match(setupScript, /codex_available/);
+  assert.doesNotMatch(setupScript, /^void performCodexAction\(\)/m);
   assert.match(setupHtml, /id="runtime-action"/);
   assert.match(setupHtml, /Open <code>AkuBrowserRuntimeSetup\.exe<\/code>/);
   assert.doesNotMatch(setupHtml, /Check installation/);

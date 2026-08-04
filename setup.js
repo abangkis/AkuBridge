@@ -21,6 +21,10 @@ import {
   runtimeCheckTimeoutMs,
   runtimeSetupView,
 } from "./setup-runtime-view.js";
+import {
+  CODEX_SETUP_ACTIONS,
+  codexSetupView,
+} from "./setup-codex-view.js";
 
 const RUNTIME_INSTALLER_URL =
   "https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuBrowserRuntimeSetup.exe";
@@ -48,6 +52,10 @@ const manualBundleDownload = document.querySelector("#manual-bundle-download");
 const runtimePlatformDescription = document.querySelector("#runtime-platform-description");
 const codexPlatformDescription = document.querySelector("#codex-platform-description");
 const codexDownload = document.querySelector("#codex-download");
+const codexAction = document.querySelector("#codex-action");
+const codexInstallInstructions = document.querySelector("#codex-install-instructions");
+const codexDetectedDetail = document.querySelector("#codex-detected-detail");
+const codexConfirmationControl = document.querySelector("#codex-confirmation-control");
 const componentsStep = document.querySelector("#step-components");
 const componentsStatusBadge = document.querySelector("#components-status-badge");
 const runtimeStatusBadge = document.querySelector("#runtime-status-badge");
@@ -67,6 +75,9 @@ let grantedSourceIds = new Set();
 let sourceSelectionRecorded = false;
 let runtimeReady = false;
 let codexConfirmed = false;
+let codexAvailable = false;
+let codexOutcome = { state: "codex_unchecked" };
+let currentCodexAction = CODEX_SETUP_ACTIONS.NONE;
 let runtimeInstallerAttempted = globalThis.sessionStorage.getItem(RUNTIME_INSTALLER_ATTEMPT_KEY) === "1";
 let currentRuntimeAction = RUNTIME_SETUP_ACTIONS.NONE;
 let currentRuntimeActionRetries = false;
@@ -75,6 +86,7 @@ let runtimeRetryAttempts = 0;
 applyPlatformCopy();
 
 runtimeAction.addEventListener("click", () => void performRuntimeAction());
+codexAction.addEventListener("click", () => void performCodexAction());
 open.addEventListener("click", () => {
   chrome.tabs.create({ url: `${AKU_BROWSER_LOOPBACK_ORIGIN}/`, active: true });
 });
@@ -83,6 +95,7 @@ sourceOptions.addEventListener("change", updateSourceAccessButton);
 saveSourceAccess.addEventListener("click", () => void saveSelectedSourceAccess());
 
 renderOutcome(simulatedOutcome ?? { state: "runtime_unchecked" });
+renderCodexOutcome(codexOutcome);
 void renderCodexConfirmation();
 void renderSourceAccess();
 
@@ -115,6 +128,25 @@ async function performRuntimeAction() {
       timeoutMs: runtimeCheckTimeoutMs(runtimeRetryAttempts),
     });
   }
+}
+
+async function performCodexAction() {
+  if (currentCodexAction !== CODEX_SETUP_ACTIONS.CHECK) return;
+  renderCodexOutcome({ state: "codex_checking" });
+  const outcome = await client.checkCodex({
+    trigger: "setup_codex_check",
+    timeoutMs: 30_000,
+  });
+  const supportedStates = new Set([
+    "codex_available",
+    "codex_not_found",
+    "codex_check_failed",
+  ]);
+  renderCodexOutcome(supportedStates.has(outcome.state)
+    ? outcome
+    : outcome.state === "runtime_install_required"
+      ? { state: "codex_runtime_required" }
+      : { state: "codex_check_failed" });
 }
 
 async function reconcile({
@@ -180,8 +212,8 @@ function applyPlatformCopy() {
       "and the C2PA verifier. You install and prepare Codex App separately.",
     ].join(" ");
     codexPlatformDescription.textContent = [
-      "Install Codex App for Windows, sign in, and make sure Codex is ready.",
-      "AkuBrowser never receives your Codex credentials.",
+      "Select Check Codex to inspect this computer.",
+      "If Codex is found, confirm that you are signed in and ready. AkuBrowser never receives your Codex credentials.",
     ].join(" ");
     return;
   }
@@ -200,8 +232,8 @@ function applyPlatformCopy() {
   installerStepRun.textContent = "Install a compatible AkuBrowser Runtime using the platform release instructions.";
   installerStepCheck.textContent = "Return here and select Check runtime.";
   codexPlatformDescription.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
-    ? "Install the desktop app for macOS, sign in, and make sure Codex is ready. AkuBrowser never receives your credentials."
-    : "Prepare a supported Codex installation and sign in. AkuBrowser never receives your credentials.";
+    ? "Select Check Codex to inspect this computer. If Codex is found, confirm that you are signed in and ready. AkuBrowser never receives your credentials."
+    : "Select Check Codex to inspect this computer. A supported Codex installation and sign-in are required; AkuBrowser never receives your credentials.";
   codexDownload.href = setupPlatform === SETUP_PLATFORMS.MACOS
     ? "https://chatgpt.com/download/"
     : "https://openai.com/codex/";
@@ -278,6 +310,7 @@ function renderOutcome(outcome) {
   runtimeExecutableLocationHint.textContent = runtimeView.executableLocationHint;
   runtimeExecutableLocation.hidden = !runtimeView.executableLocation;
   setRuntimeBadge(runtimeView.badge, runtimeView.badgeState);
+  renderCodexOutcome(codexOutcome);
   updateTimelineState();
 }
 
@@ -329,16 +362,17 @@ async function renderCodexConfirmation() {
   const stored = await chrome.storage.local.get("akuBrowserCodexPrerequisiteConfirmed");
   codexConfirmed = stored.akuBrowserCodexPrerequisiteConfirmed === true;
   codexConfirmation.checked = codexConfirmed;
-  setCodexBadge(codexConfirmed);
+  renderCodexOutcome(codexOutcome);
   updateTimelineState();
 }
 
 async function saveCodexConfirmation() {
+  if (!codexAvailable) return;
   codexConfirmed = codexConfirmation.checked;
   await chrome.storage.local.set({
     akuBrowserCodexPrerequisiteConfirmed: codexConfirmed,
   });
-  setCodexBadge(codexConfirmed);
+  renderCodexOutcome(codexOutcome);
   updateTimelineState();
 }
 
@@ -348,10 +382,25 @@ function setRuntimeBadge(label, state = "") {
   runtimeStatusBadge.classList.toggle("is-warning", state === "warning");
 }
 
-function setCodexBadge(confirmed) {
-  codexStatusBadge.textContent = confirmed ? "Confirmed" : "Manual confirmation";
-  codexStatusBadge.classList.toggle("is-ready", confirmed);
-  codexStatusBadge.classList.toggle("is-warning", !confirmed);
+function renderCodexOutcome(outcome) {
+  codexOutcome = outcome;
+  const codexView = codexSetupView(outcome);
+  codexAvailable = codexView.available;
+  currentCodexAction = codexView.actionKind;
+  codexStatusBadge.textContent = codexAvailable && codexConfirmed
+    ? "Ready"
+    : codexView.badge;
+  codexStatusBadge.classList.toggle("is-ready", codexAvailable);
+  codexStatusBadge.classList.toggle("is-warning", codexView.badgeState === "warning");
+  codexPlatformDescription.textContent = codexView.detail;
+  codexAction.textContent = codexView.actionLabel;
+  codexAction.disabled = codexView.actionDisabled;
+  codexDownload.hidden = !codexView.showDownload;
+  codexInstallInstructions.hidden = !codexView.showInstructions;
+  codexDetectedDetail.hidden = !codexView.showDetectedDetail;
+  codexConfirmationControl.hidden = !codexView.showConfirmation;
+  codexConfirmation.disabled = !codexView.showConfirmation;
+  updateTimelineState();
 }
 
 function setStepState(step, state) {
@@ -360,7 +409,7 @@ function setStepState(step, state) {
 }
 
 function updateTimelineState() {
-  const componentsReady = runtimeReady && codexConfirmed;
+  const componentsReady = runtimeReady && codexAvailable && codexConfirmed;
   const permissionsReady = grantedSourceIds.size > 0;
   setStepState(componentsStep, componentsReady ? "complete" : "active");
   setStepState(permissionStep, permissionsReady ? "complete" : componentsReady ? "active" : "");
@@ -380,7 +429,7 @@ function updateTimelineState() {
   finishDetail.textContent = ready
     ? "All components are ready and your source access is saved."
     : !componentsReady
-      ? "Finish installing the runtime and confirm that Codex is ready."
+      ? "Finish the runtime check, check Codex, and confirm that you are signed in."
       : "Choose at least one source to start building your timeline.";
 }
 

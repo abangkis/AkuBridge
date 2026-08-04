@@ -76,3 +76,30 @@ func TestStageSevenShutdownRequiresExplicitIdleHandoff(t *testing.T) {
 		t.Fatal("shutdown escaped the idle handoff boundary")
 	}
 }
+
+func TestHostChecksCodexWithoutStartingAnotherRuntime(t *testing.T) {
+	prober := &sequenceProber{}
+	launcher := &recordingLauncher{}
+	host := Host{
+		Controller:   testController(t.TempDir(), prober, launcher),
+		CodexChecker: fixedCodexChecker{state: CodexState{Status: "available"}},
+	}
+
+	response := host.Handle(context.Background(), validRequest("check_codex"))
+
+	if response.Status != "ready" || response.Codex == nil || response.Codex.Status != "available" {
+		t.Fatalf("Codex result is not typed: %#v", response)
+	}
+	if response.Runtime != nil || prober.calls != 0 || launcher.calls != 0 {
+		t.Fatal("Codex check reached the runtime process lifecycle")
+	}
+}
+
+type fixedCodexChecker struct {
+	state CodexState
+	err   *ErrorState
+}
+
+func (checker fixedCodexChecker) Check(context.Context) (CodexState, *ErrorState) {
+	return checker.state, checker.err
+}

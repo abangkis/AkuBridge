@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  NATIVE_CODEX_STATE_KEY,
   NATIVE_RUNTIME_CLIENT_STATES,
   NATIVE_RUNTIME_HOST,
   NATIVE_RUNTIME_STATE_KEY,
@@ -124,6 +125,36 @@ test("successful idle shutdown maps ready-stopped to an explicit stopped state",
 
   assert.equal(outcome.state, NATIVE_RUNTIME_CLIENT_STATES.STOPPED);
   assert.equal(outcome.response.runtime.processState, "stopped");
+});
+
+test("Codex checks use a bounded action and separate persisted state", async () => {
+  let observedRequest;
+  const { client, storageWrites } = clientWithResponder((_host, request, callback) => {
+    observedRequest = request;
+    callback(codexResponse(request, "available"));
+  });
+
+  const outcome = await client.checkCodex({ trigger: "setup_codex_check" });
+
+  assert.equal(observedRequest.action, "check_codex");
+  assert.equal(outcome.state, NATIVE_RUNTIME_CLIENT_STATES.CODEX_AVAILABLE);
+  assert.equal(outcome.response.codex.status, "available");
+  assert.equal(Object.hasOwn(storageWrites.at(-1), NATIVE_CODEX_STATE_KEY), true);
+  assert.equal(Object.hasOwn(storageWrites.at(-1), NATIVE_RUNTIME_STATE_KEY), false);
+});
+
+test("missing Codex maps to installation guidance without exposing paths", async () => {
+  const { client, storageWrites } = clientWithResponder((_host, request, callback) => {
+    callback(codexResponse(request, "not_found"));
+  });
+
+  const outcome = await client.checkCodex();
+
+  assert.equal(outcome.state, NATIVE_RUNTIME_CLIENT_STATES.CODEX_NOT_FOUND);
+  assert.equal(outcome.errorCode, "codex_not_found");
+  assert.equal(outcome.remediation, "install_codex");
+  assert.equal(JSON.stringify(outcome).includes("executable"), false);
+  assert.equal(storageWrites.at(-1)[NATIVE_CODEX_STATE_KEY].state, "codex_not_found");
 });
 
 test("schema-valid incompatible details remain typed but are not persisted verbatim", async () => {
@@ -332,5 +363,30 @@ function readyResponse(request, overrides = {}) {
     },
     error: null,
     ...overrides,
+  };
+}
+
+function codexResponse(request, status) {
+  const available = status === "available";
+  return {
+    schemaVersion: 1,
+    kind: "response",
+    requestId: request.requestId,
+    action: request.action,
+    status: available ? "ready" : "error",
+    runtime: null,
+    update: {
+      phase: "idle",
+      currentVersion: null,
+      targetVersion: null,
+      rollbackAvailable: false,
+    },
+    error: available ? null : {
+      code: "codex_not_found",
+      message: "A compatible Codex App Server installation was not found.",
+      retryable: false,
+      remediation: "install_codex",
+    },
+    codex: { status },
   };
 }

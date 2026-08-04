@@ -6,6 +6,7 @@ import {
 export const NATIVE_RUNTIME_HOST = "com.akubrowser.runtime";
 export const NATIVE_RUNTIME_PROTOCOL_VERSION = 1;
 export const NATIVE_RUNTIME_STATE_KEY = "akuBrowserNativeRuntimeState";
+export const NATIVE_CODEX_STATE_KEY = "akuBrowserNativeCodexState";
 export const AKU_BROWSER_LOOPBACK_ORIGIN = "http://127.0.0.1:11122";
 
 export const NATIVE_RUNTIME_CLIENT_STATES = Object.freeze({
@@ -18,12 +19,17 @@ export const NATIVE_RUNTIME_CLIENT_STATES = Object.freeze({
   RESTART_REQUIRED: "runtime_restart_required",
   INCOMPATIBLE: "runtime_incompatible",
   FAILED: "runtime_failed",
+  CODEX_CHECKING: "codex_checking",
+  CODEX_AVAILABLE: "codex_available",
+  CODEX_NOT_FOUND: "codex_not_found",
+  CODEX_FAILED: "codex_check_failed",
 });
 
 const ALLOWED_ACTIONS = new Set([
   "status",
   "ensure_runtime",
   "shutdown_if_idle",
+  "check_codex",
 ]);
 const RESPONSE_STATUSES = new Set([
   "ready",
@@ -65,6 +71,8 @@ const ERROR_CODES = new Set([
   "candidate_health_failed",
   "rollback_failed",
   "internal_error",
+  "codex_not_found",
+  "codex_check_failed",
 ]);
 const REMEDIATIONS = new Set([
   "retry",
@@ -73,6 +81,7 @@ const REMEDIATIONS = new Set([
   "reinstall_runtime",
   "contact_support",
   "none",
+  "install_codex",
 ]);
 const ENDPOINTS = new Set([
   "http://127.0.0.1:11122",
@@ -132,9 +141,14 @@ export function createNativeRuntimeClient({
         bridgeContractVersion,
       },
     };
-    await persistState(storage, {
+    const stateKey = action === "check_codex"
+      ? NATIVE_CODEX_STATE_KEY
+      : NATIVE_RUNTIME_STATE_KEY;
+    await persistState(storage, stateKey, {
       schemaVersion: NATIVE_RUNTIME_PROTOCOL_VERSION,
-      state: NATIVE_RUNTIME_CLIENT_STATES.CHECKING_HOST,
+      state: action === "check_codex"
+        ? NATIVE_RUNTIME_CLIENT_STATES.CODEX_CHECKING
+        : NATIVE_RUNTIME_CLIENT_STATES.CHECKING_HOST,
       trigger: normalizeTrigger(trigger),
       observedAt: new Date(now()).toISOString(),
     });
@@ -155,7 +169,7 @@ export function createNativeRuntimeClient({
         retryable: !missingHost,
         remediation: missingHost ? "install_runtime" : "retry",
       };
-      await persistState(storage, outcome);
+      await persistState(storage, stateKey, outcome);
       return outcome;
     }
 
@@ -171,12 +185,12 @@ export function createNativeRuntimeClient({
         retryable: false,
         remediation: "reinstall_runtime",
       };
-      await persistState(storage, outcome);
+      await persistState(storage, stateKey, outcome);
       return outcome;
     }
 
     const outcome = stateFromResponse(response, trigger, now);
-    await persistState(storage, outcome);
+    await persistState(storage, stateKey, outcome);
     return { ...outcome, response };
   }
 
@@ -185,6 +199,7 @@ export function createNativeRuntimeClient({
     status: (options) => request("status", options),
     ensureRuntime: (options) => request("ensure_runtime", options),
     shutdownIfIdle: (options) => request("shutdown_if_idle", options),
+    checkCodex: (options) => request("check_codex", options),
   });
 }
 
@@ -229,7 +244,7 @@ export async function probeCompatibleLoopbackRuntime({
 }
 
 export function assertValidResponse(response, request) {
-  assertExactKeys(response, [
+  const expectedKeys = [
     "schemaVersion",
     "kind",
     "requestId",
@@ -238,7 +253,9 @@ export function assertValidResponse(response, request) {
     "runtime",
     "update",
     "error",
-  ], "response");
+  ];
+  if (request.action === "check_codex") expectedKeys.push("codex");
+  assertExactKeys(response, expectedKeys, "response");
   if (response.schemaVersion !== NATIVE_RUNTIME_PROTOCOL_VERSION) {
     throw new TypeError("Native response protocol version is incompatible.");
   }
@@ -255,10 +272,29 @@ export function assertValidResponse(response, request) {
   assertRuntimeState(response.runtime);
   assertUpdateState(response.update);
   assertErrorState(response.error);
+  if (request.action === "check_codex") assertCodexState(response.codex);
   return true;
 }
 
 function stateFromResponse(response, trigger, now) {
+  if (response.action === "check_codex") {
+    const codexState = response.codex?.status === "available"
+      ? NATIVE_RUNTIME_CLIENT_STATES.CODEX_AVAILABLE
+      : response.codex?.status === "not_found"
+        ? NATIVE_RUNTIME_CLIENT_STATES.CODEX_NOT_FOUND
+        : NATIVE_RUNTIME_CLIENT_STATES.CODEX_FAILED;
+    const outcome = {
+      schemaVersion: NATIVE_RUNTIME_PROTOCOL_VERSION,
+      state: codexState,
+      trigger: normalizeTrigger(trigger),
+      observedAt: new Date(now()).toISOString(),
+      status: response.status,
+      retryable: response.error?.retryable ?? false,
+      remediation: response.error?.remediation ?? "none",
+    };
+    if (response.error) outcome.errorCode = response.error.code;
+    return outcome;
+  }
   const stateByStatus = {
     ready: NATIVE_RUNTIME_CLIENT_STATES.READY,
     updating: NATIVE_RUNTIME_CLIENT_STATES.UPDATING,
@@ -391,14 +427,21 @@ function sendNativeMessage(runtime, hostName, request, timeoutMs) {
   });
 }
 
+function assertCodexState(codexState) {
+  assertExactKeys(codexState, ["status"], "codex");
+  if (!["available", "not_found", "error"].includes(codexState.status)) {
+    throw new TypeError("Native Codex status is invalid.");
+  }
+}
+
 function isMissingNativeHostError(error) {
   return /native messaging host.*not found|specified native messaging host not found/i
     .test(String(error?.message ?? error));
 }
 
-async function persistState(storage, state) {
+async function persistState(storage, key, state) {
   if (!storage?.set) return;
-  await storage.set({ [NATIVE_RUNTIME_STATE_KEY]: state });
+  await storage.set({ [key]: state });
 }
 
 function normalizeTrigger(value) {

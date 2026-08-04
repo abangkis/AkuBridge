@@ -78,10 +78,16 @@ func run(stdin *os.File, stdout *os.File, stderr *os.File, arguments []string) i
 	timeout := 15 * time.Second
 	if request.Action == "ensure_runtime" {
 		timeout = 3 * time.Minute
+	} else if request.Action == "check_codex" {
+		timeout = 30 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	response := (Host{Controller: controller, Diagnostic: diagnostic}).Handle(ctx, request)
+	response := (Host{
+		Controller:   controller,
+		CodexChecker: InstalledCodexChecker{RuntimeRoot: controller.RuntimeRoot},
+		Diagnostic:   diagnostic,
+	}).Handle(ctx, request)
 	if err := writeResponse(stdout, response); err != nil {
 		diagnostic.Log("error", "response_write_failed", nil)
 		return 7
