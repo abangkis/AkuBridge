@@ -347,6 +347,87 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.runtime-conflict-note {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border: 1px solid #e0b65d;
+  border-radius: 10px;
+  color: #5b3b00;
+  background: #fff6d8;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.runtime-conflict-note p {
+  margin: 5px 0 0;
+}
+
+.runtime-conflict-note code,
+.runtime-conflict-dialog code {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+.runtime-conflict-dialog {
+  width: min(620px, calc(100vw - 32px));
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  color: var(--ink);
+  background: #fff;
+  box-shadow: 0 24px 70px rgb(24 39 75 / 28%);
+}
+
+.runtime-conflict-dialog::backdrop {
+  background: rgb(20 31 52 / 52%);
+}
+
+.dialog-content {
+  padding: 26px;
+}
+
+.dialog-content h2 {
+  margin: 4px 0 10px;
+  font-size: 24px;
+}
+
+.dialog-content > p:not(.step-label),
+.dialog-content li {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.dialog-content ol {
+  margin: 16px 0 0;
+  padding-left: 22px;
+}
+
+.runtime-process-identity {
+  display: grid;
+  gap: 3px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid #e0b65d;
+  border-radius: 10px;
+  background: #fff6d8;
+}
+
+.runtime-process-identity span {
+  font-weight: 750;
+}
+
+.runtime-process-identity small {
+  color: #6e531c;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 22px;
+}
+
 .manual-runtime-fallback {
   margin: 12px 0 0;
   padding: 12px 14px;

@@ -62,6 +62,10 @@ const runtimeStatusBadge = document.querySelector("#runtime-status-badge");
 const runtimeExecutableLocation = document.querySelector("#runtime-executable-location");
 const runtimeExecutablePath = document.querySelector("#runtime-executable-path");
 const runtimeExecutableLocationHint = document.querySelector("#runtime-executable-location-hint");
+const runtimeConflictNote = document.querySelector("#runtime-conflict-note");
+const runtimeConflictDialog = document.querySelector("#runtime-conflict-dialog");
+const runtimeConflictCancel = document.querySelector("#runtime-conflict-cancel");
+const runtimeConflictCheck = document.querySelector("#runtime-conflict-check");
 const codexConfirmation = document.querySelector("#codex-confirmation");
 const codexStatusBadge = document.querySelector("#codex-status-badge");
 const permissionStep = document.querySelector("#step-permissions");
@@ -86,6 +90,8 @@ let runtimeRetryAttempts = 0;
 applyPlatformCopy();
 
 runtimeAction.addEventListener("click", () => void performRuntimeAction());
+runtimeConflictCancel.addEventListener("click", () => runtimeConflictDialog.close());
+runtimeConflictCheck.addEventListener("click", () => void checkAfterManualConflictStop());
 codexAction.addEventListener("click", () => void performCodexAction());
 open.addEventListener("click", () => {
   chrome.tabs.create({ url: `${AKU_BROWSER_LOOPBACK_ORIGIN}/`, active: true });
@@ -127,7 +133,17 @@ async function performRuntimeAction() {
       stopOnly: true,
       timeoutMs: runtimeCheckTimeoutMs(runtimeRetryAttempts),
     });
+    return;
   }
+  if (currentRuntimeAction === RUNTIME_SETUP_ACTIONS.RESOLVE_CONFLICT) {
+    runtimeConflictDialog.showModal();
+  }
+}
+
+async function checkAfterManualConflictStop() {
+  runtimeConflictDialog.close();
+  runtimeRetryAttempts += 1;
+  await reconcile({ timeoutMs: runtimeCheckTimeoutMs(runtimeRetryAttempts) });
 }
 
 async function performCodexAction() {
@@ -271,6 +287,7 @@ function setChecking(timeoutMs, { stopping = false } = {}) {
   runtimeAction.disabled = true;
   installerNote.hidden = true;
   manualRuntimeFallback.hidden = true;
+  runtimeConflictNote.hidden = true;
   windowsAntivirusNote.hidden = true;
   summary.textContent = stopping
     ? "Stopping AkuBrowser Runtime..."
@@ -306,6 +323,7 @@ function renderOutcome(outcome) {
   installerNote.hidden = !runtimeView.showInstallerNote;
   windowsAntivirusNote.hidden = !runtimeView.showSecurityNotice;
   manualRuntimeFallback.hidden = !runtimeView.showManualFallback;
+  runtimeConflictNote.hidden = !runtimeView.showConflictNotice;
   runtimeExecutablePath.textContent = runtimeView.executableLocation;
   runtimeExecutableLocationHint.textContent = runtimeView.executableLocationHint;
   runtimeExecutableLocation.hidden = !runtimeView.executableLocation;

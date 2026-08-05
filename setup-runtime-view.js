@@ -3,9 +3,10 @@ export const RUNTIME_SETUP_ACTIONS = Object.freeze({
   INSTALL: "install",
   ENSURE: "ensure",
   STOP: "stop",
+  RESOLVE_CONFLICT: "resolve_conflict",
   NONE: "none",
 });
-export const RUNTIME_CHECK_TIMEOUT_BASE_MS = 30_000;
+export const RUNTIME_CHECK_TIMEOUT_BASE_MS = 60_000;
 export const RUNTIME_CHECK_TIMEOUT_RETRY_STEP_MS = 10_000;
 
 export function runtimeCheckTimeoutMs(retryAttempt = 0) {
@@ -91,16 +92,7 @@ export function runtimeSetupView(outcome, {
   if (state === "runtime_incompatible") {
     const updateView = runtimeUpdateView(outcome, update, windowsInstallerAvailable, false);
     if (updateView) return updateView;
-    return view({
-      badge: "Version conflict",
-      badgeState: "warning",
-      summary: "Another AkuBrowser Runtime is conflicting with this installation.",
-      detail: "Stop the older portable runtime, then retry the installed runtime.",
-      actionKind: RUNTIME_SETUP_ACTIONS.ENSURE,
-      actionLabel: "Try again",
-      retryAction: true,
-      showSecurityNotice: windowsInstallerAvailable,
-    });
+    return runtimeConflictView();
   }
 
   if (state === "runtime_updating") {
@@ -185,11 +177,25 @@ function view(overrides) {
     retryAction: false,
     showInstallerNote: false,
     showSecurityNotice: false,
+    showConflictNotice: false,
     showManualFallback: false,
     executableLocation: "",
     executableLocationHint: "",
     ...overrides,
   };
+}
+
+function runtimeConflictView(overrides = {}) {
+  return view({
+    badge: "Version conflict",
+    badgeState: "warning",
+    summary: "An older portable AkuBrowser Runtime is still running.",
+    detail: "Stop it before AkuBrowser can start the installed runtime. Repeated checks will not resolve this conflict.",
+    actionKind: RUNTIME_SETUP_ACTIONS.RESOLVE_CONFLICT,
+    actionLabel: "Stop older runtime",
+    showConflictNotice: true,
+    ...overrides,
+  });
 }
 
 function runtimeExecutableLocation(outcome, windowsInstallerAvailable) {

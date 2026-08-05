@@ -7,10 +7,10 @@ import {
   runtimeSetupView,
 } from "../setup-runtime-view.js";
 
-test("runtime checking starts at 30 seconds and adds 10 seconds per retry", () => {
-  assert.equal(runtimeCheckTimeoutMs(), 30_000);
-  assert.equal(runtimeCheckTimeoutMs(1), 40_000);
-  assert.equal(runtimeCheckTimeoutMs(2), 50_000);
+test("runtime checking starts at 60 seconds and adds 10 seconds per retry", () => {
+  assert.equal(runtimeCheckTimeoutMs(), 60_000);
+  assert.equal(runtimeCheckTimeoutMs(1), 70_000);
+  assert.equal(runtimeCheckTimeoutMs(2), 80_000);
 });
 
 test("fresh setup waits for an explicit runtime check", () => {
@@ -119,6 +119,20 @@ test("same-version build mismatch offers installer repair", () => {
   assert.equal(state.badge, "Repair required");
   assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.INSTALL);
   assert.equal(state.actionLabel, "Repair runtime");
+});
+
+test("occupied runtime conflict highlights stopping the older portable runtime", () => {
+  const state = runtimeSetupView({ state: "runtime_incompatible" }, {
+    windowsInstallerAvailable: true,
+  });
+
+  assert.equal(state.badge, "Version conflict");
+  assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.RESOLVE_CONFLICT);
+  assert.equal(state.actionLabel, "Stop older runtime");
+  assert.equal(state.retryAction, false);
+  assert.equal(state.showConflictNotice, true);
+  assert.equal(state.showSecurityNotice, false);
+  assert.match(state.detail, /Repeated checks will not resolve/);
 });
 
 test("installed stopped runtime offers one run action", () => {

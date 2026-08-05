@@ -2,6 +2,7 @@ export const RUNTIME_INSTALL_REQUIRED_SIMULATION = "not-installed";
 export const RUNTIME_UPDATE_REQUIRED_SIMULATION = "update-required";
 export const RUNTIME_STOPPED_SIMULATION = "stopped";
 export const RUNTIME_RUNNING_SIMULATION = "running";
+export const RUNTIME_VERSION_CONFLICT_SIMULATION = "version-conflict";
 
 export function simulatedRuntimeOutcome(search = "") {
   const requestedState = new URLSearchParams(search).get("simulateRuntime");
@@ -35,6 +36,9 @@ export function simulatedRuntimeOutcome(search = "") {
         update: { currentVersion: "0.7.8", targetVersion: "0.7.8" },
       },
     };
+  }
+  if (requestedState === RUNTIME_VERSION_CONFLICT_SIMULATION) {
+    return { state: "runtime_incompatible" };
   }
   return null;
 }

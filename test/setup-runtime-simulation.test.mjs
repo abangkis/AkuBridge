@@ -6,6 +6,7 @@ import {
   RUNTIME_RUNNING_SIMULATION,
   RUNTIME_STOPPED_SIMULATION,
   RUNTIME_UPDATE_REQUIRED_SIMULATION,
+  RUNTIME_VERSION_CONFLICT_SIMULATION,
   simulatedRuntimeOutcome,
 } from "../setup-runtime-simulation.js";
 
@@ -33,4 +34,11 @@ test("setup simulates update, stopped, and running runtime states", () => {
   assert.equal(stopped.response.runtime.processState, "stopped");
   assert.equal(running.state, "runtime_ready");
   assert.equal(running.response.runtime.processState, "ready");
+});
+
+test("setup simulates an occupied version conflict", () => {
+  assert.deepEqual(
+    simulatedRuntimeOutcome(`?simulateRuntime=${RUNTIME_VERSION_CONFLICT_SIMULATION}`),
+    { state: "runtime_incompatible" },
+  );
 });

@@ -97,6 +97,17 @@
                     <code id="runtime-executable-path"></code>
                     <span id="runtime-executable-location-hint"></span>
                   </p>
+                  <aside id="runtime-conflict-note" class="runtime-conflict-note" hidden>
+                    <strong>Required next step: stop the old runtime</strong>
+                    <p>
+                      Checking again cannot fix this while the
+                      <strong>AkuBrowser Portable Runtime</strong> is still
+                      running. Its Windows process name is
+                      <code>AkuSidecar.exe</code>. Use
+                      <strong>Stop older runtime</strong> to switch safely to
+                      the installed runtime.
+                    </p>
+                  </aside>
                   <div
                     id="installer-note"
                     class="installer-instructions"
@@ -288,6 +299,40 @@
         </li>
       </ol>
     </main>
+
+    <dialog id="runtime-conflict-dialog" class="runtime-conflict-dialog" aria-labelledby="runtime-conflict-dialog-title">
+      <div class="dialog-content">
+        <p class="step-label">Version conflict</p>
+        <h2 id="runtime-conflict-dialog-title">Stop the older portable runtime?</h2>
+        <p>
+          The portable runtime is unmanaged, so AkuBrowser cannot stop it
+          securely from Chrome. Close it manually before starting the installed
+          runtime.
+        </p>
+        <div class="runtime-process-identity">
+          <strong>Runtime to close</strong>
+          <span>AkuBrowser Portable Runtime</span>
+          <small>Task Manager → Details process: <code>AkuSidecar.exe</code></small>
+        </div>
+        <ol>
+          <li>
+            Close the terminal or window that launched the portable
+            AkuBrowser bundle.
+          </li>
+          <li>
+            If that window is no longer visible, open Task Manager → Details
+            and end <code>AkuSidecar.exe</code> from the extracted AkuBrowser
+            bundle. Do not end <code>AkuBrowserRuntimeHost.exe</code>.
+          </li>
+          <li>Select <strong>I've stopped it — check again</strong>.</li>
+        </ol>
+        <div class="dialog-actions">
+          <button id="runtime-conflict-cancel" type="button">Cancel</button>
+          <button id="runtime-conflict-check" class="primary" type="button">I've stopped it — check again</button>
+        </div>
+      </div>
+    </dialog>
+
     <script type="module" src="setup.js"></script>
   </body>
 </html>

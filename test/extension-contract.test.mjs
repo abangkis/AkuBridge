@@ -157,6 +157,14 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.match(setupHtml, /Automatic setup could not finish/);
   assert.match(setupHtml, /Download manual Windows bundle/);
   assert.match(setupHtml, /Do not run installed and\s+portable runtimes at the same time/);
+  assert.match(setupHtml, /id="runtime-conflict-dialog"/);
+  assert.match(setupHtml, /I've stopped it — check again/);
+  assert.match(setupHtml, /AkuBrowser cannot stop it\s+securely from Chrome/);
+  assert.match(setupHtml, /AkuBrowser Portable Runtime/);
+  assert.match(setupHtml, /Task Manager → Details process: <code>AkuSidecar\.exe<\/code>/);
+  assert.match(setupHtml, /Do not end <code>AkuBrowserRuntimeHost\.exe<\/code>/);
+  assert.match(setupScript, /RUNTIME_SETUP_ACTIONS\.RESOLVE_CONFLICT/);
+  assert.match(setupScript, /runtimeConflictDialog\.showModal/);
   assert.match(setupScript, /AkuBrowser-\$\{productVersion\}-windows-x64\.zip/);
   assert.match(setupScript, /windowsAntivirusNote\.hidden = !windowsRuntimeInstallerAvailable/);
   assert.match(setupScript, /runtimeInstallerAttempted\.v1/);
