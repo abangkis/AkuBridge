@@ -100,6 +100,7 @@ test("AkuBridge checks the bounded native runtime lifecycle without gating captu
 test("AkuBrowser setup page presents a component and permission timeline", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"));
   const setupHtml = fs.readFileSync(path.join(projectRoot, "setup.html"), "utf8");
+  const setupFavicon = fs.readFileSync(path.join(projectRoot, "icons", "setup-favicon.svg"), "utf8");
   const setupScript = fs.readFileSync(path.join(projectRoot, "setup.js"), "utf8");
   const setupRuntimeView = fs.readFileSync(path.join(projectRoot, "setup-runtime-view.js"), "utf8");
 
@@ -107,6 +108,9 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.equal(manifest.options_ui.open_in_tab, true);
   assert.match(setupHtml, /setup\.css/);
   assert.match(setupHtml, /setup\.js/);
+  assert.match(setupHtml, /rel="icon" type="image\/svg\+xml" href="icons\/setup-favicon\.svg"/);
+  assert.match(setupFavicon, /aria-label="Set up AkuBrowser"/);
+  assert.match(setupFavicon, /#f0aa24/);
   assert.match(setupScript, /client\.status/);
   assert.match(setupScript, /client\.ensureRuntime/);
   assert.match(setupScript, /simulatedRuntimeOutcome/);
