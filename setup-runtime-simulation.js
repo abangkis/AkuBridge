@@ -14,7 +14,7 @@ export function simulatedRuntimeOutcome(search = "") {
       state: "runtime_incompatible",
       response: {
         runtime: { processState: "stopped" },
-        update: { currentVersion: "0.7.7", targetVersion: "0.7.8" },
+        update: { currentVersion: "0.7.7", targetVersion: "0.7.9" },
       },
     };
   }
@@ -24,7 +24,7 @@ export function simulatedRuntimeOutcome(search = "") {
       errorCode: "runtime_start_failed",
       response: {
         runtime: { processState: "stopped" },
-        update: { currentVersion: "0.7.8", targetVersion: "0.7.8" },
+        update: { currentVersion: "0.7.9", targetVersion: "0.7.9" },
       },
     };
   }
@@ -33,7 +33,7 @@ export function simulatedRuntimeOutcome(search = "") {
       state: "runtime_ready",
       response: {
         runtime: { processState: "ready" },
-        update: { currentVersion: "0.7.8", targetVersion: "0.7.8" },
+        update: { currentVersion: "0.7.9", targetVersion: "0.7.9" },
       },
     };
   }

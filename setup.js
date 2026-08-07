@@ -26,17 +26,24 @@ import {
   codexSetupView,
 } from "./setup-codex-view.js";
 
-const RUNTIME_INSTALLER_URL =
-  "https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuBrowserRuntimeSetup.exe";
+const RUNTIME_INSTALLER_URLS = Object.freeze({
+  [SETUP_PLATFORMS.WINDOWS]:
+    "https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuBrowserRuntimeSetup.exe",
+  [SETUP_PLATFORMS.MACOS]:
+    "https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuBrowserRuntimeSetup.pkg",
+});
 const RUNTIME_INSTALLER_ATTEMPT_KEY = "akuBrowser.runtimeInstallerAttempted.v1";
 const simulatedOutcome = simulatedRuntimeOutcome(globalThis.location.search);
 const setupPlatform = detectSetupPlatform(globalThis.navigator);
+const runtimeInstallerURL = RUNTIME_INSTALLER_URLS[setupPlatform] ?? "";
+const runtimeInstallerAvailable = Boolean(runtimeInstallerURL);
 const windowsRuntimeInstallerAvailable = setupPlatform === SETUP_PLATFORMS.WINDOWS;
 const client = createChromeNativeRuntimeClient(chrome);
 const manifest = chrome.runtime.getManifest();
 const productVersion = manifest.version_name || manifest.version;
-const RUNTIME_PORTABLE_BUNDLE_URL =
-  `https://github.com/abangkis/AkuBrowser/releases/download/v${productVersion}/AkuBrowser-${productVersion}-windows-x64.zip`;
+const RUNTIME_PORTABLE_BUNDLE_URL = setupPlatform === SETUP_PLATFORMS.MACOS
+  ? `https://github.com/abangkis/AkuBrowser/releases/download/v${productVersion}/AkuBrowser-${productVersion}-macos-universal.zip`
+  : `https://github.com/abangkis/AkuBrowser/releases/download/v${productVersion}/AkuBrowser-${productVersion}-windows-x64.zip`;
 const summary = document.querySelector("#summary");
 const detail = document.querySelector("#detail");
 const runtimeAction = document.querySelector("#runtime-action");
@@ -49,6 +56,8 @@ const installerStepCheck = document.querySelector("#installer-step-check");
 const windowsAntivirusNote = document.querySelector("#windows-antivirus-note");
 const manualRuntimeFallback = document.querySelector("#manual-runtime-fallback");
 const manualBundleDownload = document.querySelector("#manual-bundle-download");
+const manualRuntimeDescription = document.querySelector("#manual-runtime-description");
+const manualRuntimeInstructions = document.querySelector("#manual-runtime-instructions");
 const runtimePlatformDescription = document.querySelector("#runtime-platform-description");
 const codexPlatformDescription = document.querySelector("#codex-platform-description");
 const codexDownload = document.querySelector("#codex-download");
@@ -194,11 +203,11 @@ async function reconcile({
 }
 
 async function downloadRuntimeInstaller() {
-  if (!windowsRuntimeInstallerAvailable) return;
+  if (!runtimeInstallerAvailable) return;
   runtimeAction.disabled = true;
   try {
     manualRuntimeFallback.hidden = true;
-    await chrome.tabs.create({ url: RUNTIME_INSTALLER_URL, active: true });
+    await chrome.tabs.create({ url: runtimeInstallerURL, active: true });
     runtimeInstallerAttempted = true;
     globalThis.sessionStorage.setItem(RUNTIME_INSTALLER_ATTEMPT_KEY, "1");
     currentRuntimeAction = RUNTIME_SETUP_ACTIONS.CHECK;
@@ -207,11 +216,15 @@ async function downloadRuntimeInstaller() {
     summary.textContent = "The runtime installer is downloading.";
     detail.textContent = [
       "Chrome cannot run downloaded applications automatically.",
-      "Open AkuBrowserRuntimeSetup.exe, finish Windows setup, return here, then select Check runtime.",
+      setupPlatform === SETUP_PLATFORMS.MACOS
+        ? "Open AkuBrowserRuntimeSetup.pkg, finish macOS setup, return here, then select Check runtime."
+        : "Open AkuBrowserRuntimeSetup.exe, finish Windows setup, return here, then select Check runtime.",
     ].join(" ");
   } catch {
     summary.textContent = "The runtime installer could not be downloaded.";
-    detail.textContent = "Use the matching manual Windows bundle below. Your setup progress has not changed.";
+    detail.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
+      ? "Use the matching manual macOS bundle below. Your setup progress has not changed."
+      : "Use the matching manual Windows bundle below. Your setup progress has not changed.";
     manualRuntimeFallback.hidden = false;
   } finally {
     runtimeAction.disabled = false;
@@ -231,12 +244,35 @@ function applyPlatformCopy() {
       "Select Check Codex to inspect this computer.",
       "If Codex is found, confirm that you are signed in and ready. AkuBrowser never receives your Codex credentials.",
     ].join(" ");
+    manualBundleDownload.textContent = "Download manual Windows bundle";
     return;
   }
 
-  const platformLabel = setupPlatform === SETUP_PLATFORMS.MACOS
-    ? "macOS"
-    : setupPlatform === SETUP_PLATFORMS.LINUX
+  if (setupPlatform === SETUP_PLATFORMS.MACOS) {
+    runtimePlatformDescription.textContent = [
+      "The macOS universal runtime installer includes AkuSidecar, the Native Messaging Host,",
+      "and the C2PA verifier for Intel and Apple silicon. You install and prepare Codex App separately.",
+    ].join(" ");
+    installerNoteTitle.textContent = "Run the macOS installer after downloading it";
+    installerStepOpen.innerHTML = "Open <code>AkuBrowserRuntimeSetup.pkg</code> when the download finishes.";
+    installerStepRun.textContent = "Complete the macOS Installer flow. Production packages are signed and notarized.";
+    installerStepCheck.textContent = "Return here and select Check runtime.";
+    codexPlatformDescription.textContent = "Select Check Codex to inspect this computer. If Codex is found, confirm that you are signed in and ready. AkuBrowser never receives your credentials.";
+    codexDownload.href = "https://chatgpt.com/download/";
+    codexDownload.textContent = "Download for macOS";
+    manualRuntimeDescription.innerHTML = [
+      "Download the matching portable macOS universal bundle from the official GitHub release,",
+      "verify its checksum, and extract it to a writable folder.",
+    ].join(" ");
+    manualRuntimeInstructions.innerHTML = [
+      "Stop any installed or older portable <code>AkuSidecar</code> before running",
+      "<code>Start-AkuBrowser.command</code>. Do not run installed and portable runtimes at the same time.",
+    ].join(" ");
+    manualBundleDownload.textContent = "Download manual macOS bundle";
+    return;
+  }
+
+  const platformLabel = setupPlatform === SETUP_PLATFORMS.LINUX
       ? "Linux"
       : "this platform";
   runtimePlatformDescription.textContent = [
@@ -247,22 +283,20 @@ function applyPlatformCopy() {
   installerStepOpen.textContent = "Do not download the Windows .exe on this device.";
   installerStepRun.textContent = "Install a compatible AkuBrowser Runtime using the platform release instructions.";
   installerStepCheck.textContent = "Return here and select Check runtime.";
-  codexPlatformDescription.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
-    ? "Select Check Codex to inspect this computer. If Codex is found, confirm that you are signed in and ready. AkuBrowser never receives your credentials."
-    : "Select Check Codex to inspect this computer. A supported Codex installation and sign-in are required; AkuBrowser never receives your credentials.";
-  codexDownload.href = setupPlatform === SETUP_PLATFORMS.MACOS
-    ? "https://chatgpt.com/download/"
-    : "https://openai.com/codex/";
-  codexDownload.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
-    ? "Download for macOS"
-    : "View Codex options";
+  codexPlatformDescription.textContent = "Select Check Codex to inspect this computer. A supported Codex installation and sign-in are required; AkuBrowser never receives your credentials.";
+  codexDownload.href = "https://openai.com/codex/";
+  codexDownload.textContent = "View Codex options";
 }
 
 function configureInstallerGuidance(state, runtimeView) {
-  if (setupPlatform !== SETUP_PLATFORMS.WINDOWS) return;
+  if (!runtimeInstallerAvailable) return;
+  const installerName = setupPlatform === SETUP_PLATFORMS.MACOS
+    ? "AkuBrowserRuntimeSetup.pkg"
+    : "AkuBrowserRuntimeSetup.exe";
+  const platformName = setupPlatform === SETUP_PLATFORMS.MACOS ? "macOS" : "Windows";
   if (state === "runtime_incompatible" && runtimeView.actionKind === RUNTIME_SETUP_ACTIONS.INSTALL) {
     installerNoteTitle.textContent = "Install the matching AkuBrowser Runtime";
-    installerStepOpen.innerHTML = "Open <code>AkuBrowserRuntimeSetup.exe</code> after the download finishes.";
+    installerStepOpen.innerHTML = `Open <code>${installerName}</code> after the download finishes.`;
     installerStepRun.textContent = "Complete setup to replace or repair the outdated runtime build.";
     installerStepCheck.textContent = "Return here and select Check runtime.";
     return;
@@ -270,13 +304,13 @@ function configureInstallerGuidance(state, runtimeView) {
   if (state === "runtime_incompatible") {
     installerNoteTitle.textContent = "Stop the older portable runtime before retrying";
     installerStepOpen.textContent = "Close the AkuBrowser portable terminal or development runtime that is still running.";
-    installerStepRun.textContent = "Keep the installed Windows Runtime; reinstall it only if the mismatch remains.";
+    installerStepRun.textContent = `Keep the installed ${platformName} Runtime; reinstall it only if the mismatch remains.`;
     installerStepCheck.textContent = "Return here and select Try again.";
     return;
   }
-  installerNoteTitle.textContent = "Run the Windows installer after downloading it";
-  installerStepOpen.innerHTML = "Open <code>AkuBrowserRuntimeSetup.exe</code> when the download finishes.";
-  installerStepRun.textContent = "Approve the Windows prompt and complete the setup.";
+  installerNoteTitle.textContent = `Run the ${platformName} installer after downloading it`;
+  installerStepOpen.innerHTML = `Open <code>${installerName}</code> when the download finishes.`;
+  installerStepRun.textContent = `Complete the ${platformName} setup flow.`;
   installerStepCheck.textContent = "Return here and select Check runtime.";
 }
 
@@ -308,6 +342,8 @@ function renderOutcome(outcome) {
   }
   const runtimeView = runtimeSetupView(outcome, {
     windowsInstallerAvailable: windowsRuntimeInstallerAvailable,
+    installerAvailable: runtimeInstallerAvailable,
+    runtimePlatform: setupPlatform,
     runtimeInstallerAttempted,
     requiredRuntimeVersion: productVersion,
     requiredRuntimeRevision: BRIDGE_RUNTIME_REVISION,

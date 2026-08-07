@@ -52,18 +52,21 @@ type CandidateProbe interface {
 }
 
 type SignedRuntimeUpdater struct {
-	RuntimeRoot    string
-	DataRoot       string
-	PublicKey      string
-	Transport      UpdateTransport
-	Control        RuntimeUpdateControl
-	Probe          CandidateProbe
-	Launcher       ProcessLauncher
-	Health         HealthProber
-	ControlToken   string
-	Now            func() time.Time
-	ActivationWait time.Duration
-	PollInterval   time.Duration
+	RuntimeRoot       string
+	DataRoot          string
+	Architecture      string
+	RuntimeExecutable string
+	ManifestURL       string
+	PublicKey         string
+	Transport         UpdateTransport
+	Control           RuntimeUpdateControl
+	Probe             CandidateProbe
+	Launcher          ProcessLauncher
+	Health            HealthProber
+	ControlToken      string
+	Now               func() time.Time
+	ActivationWait    time.Duration
+	PollInterval      time.Duration
 }
 
 func (updater SignedRuntimeUpdater) Update(ctx context.Context, active ActiveRuntime, expected ExtensionIdentity) RuntimeUpdateAttempt {
@@ -78,11 +81,16 @@ func (updater SignedRuntimeUpdater) Update(ctx context.Context, active ActiveRun
 	if updater.Now != nil {
 		now = updater.Now()
 	}
-	manifestData, err := updater.Transport.Read(ctx, updateManifestURL, maxUpdateManifestBytes)
+	manifestURL := updater.ManifestURL
+	if manifestURL == "" {
+		manifestURL = platformUpdateManifestURL(architectureOrDefault(updater.Architecture))
+	}
+	manifestData, err := updater.Transport.Read(ctx, manifestURL, maxUpdateManifestBytes)
 	if err != nil {
 		return fail("checking", "update_check_failed", "AkuBrowser could not read the signed runtime update manifest.", true, "retry")
 	}
-	manifest, err := decodeAndVerifyUpdateManifest(manifestData, updater.PublicKey, expected, active, now.UTC())
+	architecture := architectureOrDefault(updater.Architecture)
+	manifest, err := decodeAndVerifyUpdateManifest(manifestData, updater.PublicKey, expected, active, now.UTC(), architecture)
 	if err != nil {
 		return fail("verifying", "signature_invalid", "The runtime update manifest could not be authenticated.", false, "contact_support")
 	}
@@ -116,10 +124,11 @@ func (updater SignedRuntimeUpdater) Update(ctx context.Context, active ActiveRun
 	}
 	_ = os.Remove(candidateRoot)
 	defer os.RemoveAll(candidateRoot)
-	if err := extractVerifiedRuntimeArchive(archivePath, candidateRoot, manifest.Version); err != nil {
+	executableName := runtimeExecutableOrDefault(updater.RuntimeExecutable)
+	if err := extractVerifiedRuntimeArchive(archivePath, candidateRoot, manifest.Version, architecture, executableName); err != nil {
 		return fail("staging", "checksum_invalid", "The runtime update payload is incomplete or changed.", false, "contact_support")
 	}
-	candidateExecutable := filepath.Join(candidateRoot, "AkuSidecar.exe")
+	candidateExecutable := filepath.Join(candidateRoot, executableName)
 	candidateConfig := filepath.Join(candidateRoot, "config", "sidecar.json")
 	if err := updater.Probe.Probe(ctx, candidateExecutable, candidateConfig, expected); err != nil {
 		return fail("health_check", "candidate_health_failed", "The candidate runtime did not pass its isolated health probe.", false, "contact_support")
@@ -234,7 +243,7 @@ func (updater SignedRuntimeUpdater) RollbackPending(ctx context.Context, failed 
 func (updater SignedRuntimeUpdater) launchAndCheck(ctx context.Context, active ActiveRuntime) error {
 	workingDirectory := filepath.Join(updater.RuntimeRoot, "versions", active.Version)
 	if err := updater.Launcher.Start(
-		filepath.Join(workingDirectory, "AkuSidecar.exe"), workingDirectory,
+		filepath.Join(workingDirectory, runtimeExecutableOrDefault(updater.RuntimeExecutable)), workingDirectory,
 		filepath.Join(workingDirectory, "config", "sidecar.json"),
 		filepath.Join(updater.DataRoot, "aku-browser.db"), updater.ControlToken,
 	); err != nil {

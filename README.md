@@ -1,7 +1,7 @@
 # AkuBridge
 
-Current preview identity: **`0.7.8`** / Chrome manifest
-**`0.7.8.0`** / runtime **`source-adapters-v86`**.
+Current preview identity: **`0.7.9`** / Chrome manifest
+**`0.7.9.0`** / runtime **`source-adapters-v87`**.
 
 Runtime v73 adds bounded background command dispatch for AkuBrowser Auto
 Update. After a trusted local AkuBrowser page configures the loopback endpoint
@@ -23,9 +23,10 @@ AkuBridge is the read-only Chrome extension used by AkuBrowser to collect a boun
 ## Chrome Store runtime bootstrap
 
 The extension-side Native Messaging client lives in
-`native-runtime-client.js`. The separate Stage 3 Go host lives under
-`native-host/` and builds as `AkuBrowserRuntimeHost.exe`; it is not included in
-the Chrome extension package.
+`native-runtime-client.js`. The separate Go host lives under `native-host/`
+and builds as `AkuBrowserRuntimeHost.exe` on Windows or a universal
+`AkuBrowserRuntimeHost` on macOS; it is not included in the Chrome extension
+package.
 
 The host accepts only the bounded Native Messaging v1 actions and derives all
 runtime paths from installer-owned local metadata. See
@@ -170,12 +171,11 @@ npm run check
 npm run package:verify
 ```
 
-Load this directory as an unpacked extension from `chrome://extensions` with
-Developer mode enabled. Manual installation is the supported
-`0.7.8` distribution path on Windows and macOS; the preview does not
-claim silent local-CRX installation. It assumes Chrome is already signed in to
-every enabled source. This manual step is required only for the initial bootstrap or
-recovery when the installed extension cannot handle cooperative self-reload.
+Production users install AkuBrowser from Chrome Web Store. Load this directory
+as an unpacked extension only for development or portable-fallback recovery.
+When the registered runtime is missing, Setup links to the fixed `.exe` asset
+on Windows or fixed `.pkg` asset on macOS. Linux intentionally exposes no
+installer action until 0.7.10.
 
 To preview the first-run runtime download state without uninstalling a working
 local runtime, open the unpacked extension page with:

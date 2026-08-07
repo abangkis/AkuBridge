@@ -19,6 +19,8 @@ export function runtimeCheckTimeoutMs(retryAttempt = 0) {
 
 export function runtimeSetupView(outcome, {
   windowsInstallerAvailable = false,
+  installerAvailable = windowsInstallerAvailable,
+  runtimePlatform = windowsInstallerAvailable ? "windows" : "unknown",
   runtimeInstallerAttempted = false,
   requiredRuntimeVersion = "",
   requiredRuntimeRevision = "",
@@ -49,13 +51,13 @@ export function runtimeSetupView(outcome, {
           "Stop it manually from its terminal or extracted bundle before switching to the installed runtime.",
         ].filter(Boolean).join(" "),
         runtimeReady: true,
-        executableLocation: runtimeExecutableLocation(outcome, windowsInstallerAvailable),
+        executableLocation: runtimeExecutableLocation(outcome, runtimePlatform),
         executableLocationHint: "Open the folder where you extracted the portable AkuBrowser bundle.",
         actionKind: RUNTIME_SETUP_ACTIONS.CHECK,
         actionLabel: "Check after stopping",
       });
     }
-    const updateView = runtimeUpdateView(outcome, update, windowsInstallerAvailable, true);
+    const updateView = runtimeUpdateView(outcome, update, installerAvailable, runtimePlatform, true);
     if (updateView) return updateView;
     return view({
       badge: "Running",
@@ -63,8 +65,8 @@ export function runtimeSetupView(outcome, {
       summary: "AkuBrowser Runtime is running.",
       detail: "The installed runtime is compatible and ready for AkuBrowser.",
       runtimeReady: true,
-      executableLocation: runtimeExecutableLocation(outcome, windowsInstallerAvailable),
-      executableLocationHint: "Paste this path into File Explorer if you need to access it manually.",
+      executableLocation: runtimeExecutableLocation(outcome, runtimePlatform),
+      executableLocationHint: runtimeExecutableLocationHint(runtimePlatform),
       actionKind: RUNTIME_SETUP_ACTIONS.STOP,
       actionLabel: "Stop runtime",
     });
@@ -75,22 +77,22 @@ export function runtimeSetupView(outcome, {
       badge: "Not installed",
       badgeState: "warning",
       summary: "AkuBrowser Runtime is not installed.",
-      detail: windowsInstallerAvailable
+      detail: installerAvailable
         ? "Install the latest runtime on this device. Setup will detect it when you return."
         : "Install a compatible runtime using the platform release instructions.",
-      actionKind: windowsInstallerAvailable
+      actionKind: installerAvailable
         ? RUNTIME_SETUP_ACTIONS.INSTALL
         : RUNTIME_SETUP_ACTIONS.NONE,
-      actionLabel: windowsInstallerAvailable ? "Install runtime" : "Installer unavailable",
-      actionDisabled: !windowsInstallerAvailable,
+      actionLabel: installerAvailable ? "Install runtime" : "Installer unavailable",
+      actionDisabled: !installerAvailable,
       showInstallerNote: true,
-      showSecurityNotice: windowsInstallerAvailable,
-      showManualFallback: windowsInstallerAvailable && runtimeInstallerAttempted,
+      showSecurityNotice: runtimePlatform === "windows",
+      showManualFallback: installerAvailable && runtimeInstallerAttempted,
     });
   }
 
   if (state === "runtime_incompatible") {
-    const updateView = runtimeUpdateView(outcome, update, windowsInstallerAvailable, false);
+    const updateView = runtimeUpdateView(outcome, update, installerAvailable, runtimePlatform, false);
     if (updateView) return updateView;
     return runtimeConflictView();
   }
@@ -103,7 +105,7 @@ export function runtimeSetupView(outcome, {
       detail: "Keep Chrome open while the latest compatible runtime is prepared.",
       actionLabel: "Updating...",
       actionDisabled: true,
-      showSecurityNotice: windowsInstallerAvailable,
+      showSecurityNotice: runtimePlatform === "windows",
     });
   }
 
@@ -140,7 +142,7 @@ export function runtimeSetupView(outcome, {
     });
   }
 
-  const repairWithInstaller = windowsInstallerAvailable
+  const repairWithInstaller = installerAvailable
     && outcome?.remediation === "reinstall_runtime";
   return view({
     badge: "Needs attention",
@@ -150,7 +152,7 @@ export function runtimeSetupView(outcome, {
       : "AkuBrowser Runtime could not start.",
     detail: repairWithInstaller
       ? "Run the latest installer again to repair the local runtime."
-      : windowsInstallerAvailable
+      : runtimePlatform === "windows"
       ? "Review the Windows security notice, then try again or use the manual bundle."
       : "Try again. If the problem continues, repair the companion runtime.",
     actionKind: repairWithInstaller
@@ -159,8 +161,8 @@ export function runtimeSetupView(outcome, {
     actionLabel: repairWithInstaller ? "Repair runtime" : "Try again",
     retryAction: !repairWithInstaller,
     showInstallerNote: repairWithInstaller,
-    showSecurityNotice: windowsInstallerAvailable,
-    showManualFallback: windowsInstallerAvailable,
+    showSecurityNotice: runtimePlatform === "windows",
+    showManualFallback: installerAvailable,
   });
 }
 
@@ -198,14 +200,27 @@ function runtimeConflictView(overrides = {}) {
   });
 }
 
-function runtimeExecutableLocation(outcome, windowsInstallerAvailable) {
-  if (!windowsInstallerAvailable) return "";
+function runtimeExecutableLocation(outcome, runtimePlatform) {
   if (outcome?.runtimeSource === "portable") {
-    return "<extracted AkuBrowser folder>\\AkuSidecar.exe";
+    return runtimePlatform === "windows"
+      ? "<extracted AkuBrowser folder>\\AkuSidecar.exe"
+      : "<extracted AkuBrowser folder>/AkuSidecar";
   }
   const version = outcome?.response?.runtime?.version;
-  if (!version) return "%LOCALAPPDATA%\\Programs\\AkuBrowser\\runtime\\versions\\<version>\\AkuSidecar.exe";
-  return `%LOCALAPPDATA%\\Programs\\AkuBrowser\\runtime\\versions\\${version}\\AkuSidecar.exe`;
+  if (runtimePlatform === "windows") {
+    if (!version) return "%LOCALAPPDATA%\\Programs\\AkuBrowser\\runtime\\versions\\<version>\\AkuSidecar.exe";
+    return `%LOCALAPPDATA%\\Programs\\AkuBrowser\\runtime\\versions\\${version}\\AkuSidecar.exe`;
+  }
+  if (runtimePlatform === "macos") {
+    return `~/Library/Application Support/AkuBrowser/runtime/versions/${version || "<version>"}/AkuSidecar`;
+  }
+  return "";
+}
+
+function runtimeExecutableLocationHint(runtimePlatform) {
+  return runtimePlatform === "macos"
+    ? "Use Finder → Go → Go to Folder to open this location."
+    : "Paste this path into File Explorer if you need to access it manually.";
 }
 
 function normalizedUpdate(outcome, requiredVersion, requiredRevision) {
@@ -224,12 +239,12 @@ function normalizedUpdate(outcome, requiredVersion, requiredRevision) {
   };
 }
 
-function runtimeUpdateView(outcome, update, windowsInstallerAvailable, runtimeReady) {
+function runtimeUpdateView(outcome, update, installerAvailable, runtimePlatform, runtimeReady) {
   const versionDetail = versionTransition(update);
   if (!versionDetail) return null;
   const sameVersionRepair = update.currentVersion === update.targetVersion;
   const stableChannel = outcome?.response?.runtime?.channel === "stable";
-  const installerAction = windowsInstallerAvailable && (!stableChannel || sameVersionRepair);
+  const installerAction = installerAvailable && (!stableChannel || sameVersionRepair);
   return view({
     badge: sameVersionRepair ? "Repair required" : "Update available",
     badgeState: "warning",
@@ -241,17 +256,17 @@ function runtimeUpdateView(outcome, update, windowsInstallerAvailable, runtimeRe
       : `${versionDetail} Update the installed runtime before starting AkuBrowser.`,
     runtimeReady,
     executableLocation: runtimeReady
-      ? runtimeExecutableLocation(outcome, windowsInstallerAvailable)
+      ? runtimeExecutableLocation(outcome, runtimePlatform)
       : "",
     executableLocationHint: runtimeReady
-      ? "Paste this path into File Explorer if you need to access it manually."
+      ? runtimeExecutableLocationHint(runtimePlatform)
       : "",
     actionKind: installerAction
       ? RUNTIME_SETUP_ACTIONS.INSTALL
       : RUNTIME_SETUP_ACTIONS.ENSURE,
     actionLabel: sameVersionRepair ? "Repair runtime" : "Update runtime",
     showInstallerNote: installerAction,
-    showSecurityNotice: windowsInstallerAvailable,
+    showSecurityNotice: runtimePlatform === "windows",
   });
 }
 

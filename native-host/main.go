@@ -37,12 +37,12 @@ func run(stdin *os.File, stdout *os.File, stderr *os.File, arguments []string) i
 		diagnostic.Log("warn", "request_read_failed", nil)
 		return 6
 	}
-	localAppData := os.Getenv("LOCALAPPDATA")
-	if localAppData == "" {
-		diagnostic.Log("error", "local_app_data_missing", nil)
+	platform, err := resolveRuntimePlatform(executablePath)
+	if err != nil {
+		diagnostic.Log("error", "platform_layout_unavailable", nil)
 		response := errorResponse(request, "error", nil, UpdateState{Phase: "idle"}, protocolError(
 			"internal_error",
-			"AkuBrowser local application data directory is unavailable.",
+			"AkuBrowser platform storage layout is unavailable.",
 			false,
 			"contact_support",
 		))
@@ -51,26 +51,29 @@ func run(stdin *os.File, stdout *os.File, stderr *os.File, arguments []string) i
 		}
 		return 0
 	}
-	installRoot := filepath.Dir(filepath.Dir(executablePath))
 	controller := RuntimeController{
-		RuntimeRoot: filepath.Join(installRoot, "runtime"),
-		DataRoot:    filepath.Join(localAppData, "AkuBrowser", "data"),
-		Prober:      HTTPHealthProber{},
-		Launcher:    OSProcessLauncher{},
+		RuntimeRoot:       platform.RuntimeRoot,
+		DataRoot:          platform.DataRoot,
+		RuntimeExecutable: platform.RuntimeExecutable,
+		Prober:            HTTPHealthProber{},
+		Launcher:          OSProcessLauncher{},
 	}
 	if token, tokenErr := controller.runtimeControlToken(); tokenErr == nil {
 		updateControl := HTTPRuntimeUpdateControl{}
 		controller.UpdateControl = updateControl
 		controller.Updater = SignedRuntimeUpdater{
-			RuntimeRoot:  controller.RuntimeRoot,
-			DataRoot:     controller.DataRoot,
-			PublicKey:    pinnedUpdatePublicKey,
-			Transport:    HTTPUpdateTransport{},
-			Control:      updateControl,
-			Probe:        OSCandidateProbe{},
-			Launcher:     controller.Launcher,
-			Health:       controller.Prober,
-			ControlToken: token,
+			RuntimeRoot:       controller.RuntimeRoot,
+			DataRoot:          controller.DataRoot,
+			Architecture:      platform.Architecture,
+			RuntimeExecutable: platform.RuntimeExecutable,
+			ManifestURL:       platform.UpdateManifestURL,
+			PublicKey:         pinnedUpdatePublicKey,
+			Transport:         HTTPUpdateTransport{},
+			Control:           updateControl,
+			Probe:             OSCandidateProbe{},
+			Launcher:          controller.Launcher,
+			Health:            controller.Prober,
+			ControlToken:      token,
 		}
 	} else {
 		diagnostic.Log("error", "runtime_control_initialization_failed", nil)
@@ -84,9 +87,12 @@ func run(stdin *os.File, stdout *os.File, stderr *os.File, arguments []string) i
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	response := (Host{
-		Controller:   controller,
-		CodexChecker: InstalledCodexChecker{RuntimeRoot: controller.RuntimeRoot},
-		Diagnostic:   diagnostic,
+		Controller: controller,
+		CodexChecker: InstalledCodexChecker{
+			RuntimeRoot:       controller.RuntimeRoot,
+			RuntimeExecutable: controller.RuntimeExecutable,
+		},
+		Diagnostic: diagnostic,
 	}).Handle(ctx, request)
 	if err := writeResponse(stdout, response); err != nil {
 		diagnostic.Log("error", "response_write_failed", nil)

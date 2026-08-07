@@ -17,7 +17,6 @@ import (
 
 const (
 	updateManifestSchemaVersion = 1
-	updateManifestURL           = "https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuBrowserRuntimeUpdate.json"
 	updateSigningKeyID          = "aku-runtime-stable-v1"
 	maxUpdateManifestBytes      = 64 * 1024
 	maxUpdateArtifactBytes      = 512 * 1024 * 1024
@@ -63,7 +62,7 @@ type unsignedUpdateManifest struct {
 	Artifact              UpdateArtifact `json:"artifact"`
 }
 
-func decodeAndVerifyUpdateManifest(data []byte, publicKey string, expected ExtensionIdentity, active ActiveRuntime, now time.Time) (SignedUpdateManifest, error) {
+func decodeAndVerifyUpdateManifest(data []byte, publicKey string, expected ExtensionIdentity, active ActiveRuntime, now time.Time, platforms ...string) (SignedUpdateManifest, error) {
 	if len(data) == 0 || len(data) > maxUpdateManifestBytes {
 		return SignedUpdateManifest{}, errors.New("update manifest size is invalid")
 	}
@@ -76,7 +75,7 @@ func decodeAndVerifyUpdateManifest(data []byte, publicKey string, expected Exten
 	if err := ensureJSONEOF(decoder); err != nil {
 		return SignedUpdateManifest{}, err
 	}
-	if err := validateUpdateManifest(manifest, expected, active, now); err != nil {
+	if err := validateUpdateManifest(manifest, expected, active, now, platforms...); err != nil {
 		return SignedUpdateManifest{}, err
 	}
 	decodedKey, err := base64.StdEncoding.DecodeString(publicKey)
@@ -107,7 +106,7 @@ func (manifest SignedUpdateManifest) unsigned() unsignedUpdateManifest {
 	}
 }
 
-func validateUpdateManifest(manifest SignedUpdateManifest, expected ExtensionIdentity, active ActiveRuntime, now time.Time) error {
+func validateUpdateManifest(manifest SignedUpdateManifest, expected ExtensionIdentity, active ActiveRuntime, now time.Time, platforms ...string) error {
 	if manifest.SchemaVersion != updateManifestSchemaVersion || manifest.Product != "AkuBrowser" {
 		return errors.New("update manifest identity is invalid")
 	}
@@ -132,7 +131,14 @@ func validateUpdateManifest(manifest SignedUpdateManifest, expected ExtensionIde
 	if !sha256Pattern.MatchString(manifest.Artifact.SHA256) {
 		return errors.New("update artifact checksum is invalid")
 	}
-	expectedName := "AkuBrowserRuntime-" + manifest.Version + "-windows-x64.zip"
+	architecture := legacyWindowsArchitecture
+	if len(platforms) > 0 && platforms[0] != "" {
+		architecture = platforms[0]
+	}
+	if !supportedRuntimeArchitecture(architecture) {
+		return errors.New("runtime update architecture is unsupported")
+	}
+	expectedName := "AkuBrowserRuntime-" + manifest.Version + "-" + architecture + ".zip"
 	parsed, err := url.Parse(manifest.Artifact.URL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host != "github.com" ||
 		parsed.RawQuery != "" || parsed.Fragment != "" ||
@@ -143,6 +149,15 @@ func validateUpdateManifest(manifest SignedUpdateManifest, expected ExtensionIde
 		return errors.New("update signing identity is invalid")
 	}
 	return nil
+}
+
+func supportedRuntimeArchitecture(value string) bool {
+	switch value {
+	case "windows-x64", "macos-universal", "linux-x64", "linux-arm64":
+		return true
+	default:
+		return false
+	}
 }
 
 func compareVersions(left, right string) int {

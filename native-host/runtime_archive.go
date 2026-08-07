@@ -33,7 +33,15 @@ type RuntimePayloadManifest struct {
 	Files         []RuntimePayloadFile `json:"files"`
 }
 
-func extractVerifiedRuntimeArchive(archivePath, candidateRoot, expectedVersion string) (err error) {
+func extractVerifiedRuntimeArchive(archivePath, candidateRoot, expectedVersion string, platform ...string) (err error) {
+	expectedArchitecture := legacyWindowsArchitecture
+	executableName := "AkuSidecar.exe"
+	if len(platform) > 0 && platform[0] != "" {
+		expectedArchitecture = platform[0]
+	}
+	if len(platform) > 1 && platform[1] != "" {
+		executableName = platform[1]
+	}
 	reader, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return fmt.Errorf("open runtime archive: %w", err)
@@ -82,7 +90,8 @@ func extractVerifiedRuntimeArchive(archivePath, candidateRoot, expectedVersion s
 		return err
 	}
 	if manifest.SchemaVersion != runtimePayloadSchemaVersion || manifest.Product != "AkuBrowser" ||
-		manifest.Version != expectedVersion || manifest.Architecture != "windows-x64" {
+		manifest.Version != expectedVersion || manifest.Architecture != expectedArchitecture ||
+		!supportedRuntimeArchitecture(manifest.Architecture) {
 		return errors.New("runtime payload identity is invalid")
 	}
 	if len(manifest.Files) < 2 || len(manifest.Files) > maxRuntimePayloadFiles {
@@ -100,7 +109,7 @@ func extractVerifiedRuntimeArchive(archivePath, candidateRoot, expectedVersion s
 		}
 		expected[name] = item
 	}
-	for _, required := range []string{"AkuSidecar.exe", "config/sidecar.json"} {
+	for _, required := range []string{executableName, "config/sidecar.json"} {
 		if _, ok := expected[required]; !ok {
 			return fmt.Errorf("runtime payload is missing %s", required)
 		}
@@ -124,6 +133,16 @@ func extractVerifiedRuntimeArchive(archivePath, candidateRoot, expectedVersion s
 		target := filepath.Join(candidateRoot, filepath.FromSlash(name))
 		if err := extractRuntimeFile(entry, target, item); err != nil {
 			return err
+		}
+	}
+	if executableName != "AkuSidecar.exe" {
+		for _, name := range []string{executableName, "c2patool"} {
+			if _, present := expected[name]; !present {
+				continue
+			}
+			if err := os.Chmod(filepath.Join(candidateRoot, name), 0o700); err != nil {
+				return fmt.Errorf("make runtime executable %s: %w", name, err)
+			}
 		}
 	}
 	return nil

@@ -51,15 +51,16 @@ type ProcessLauncher interface {
 }
 
 type RuntimeController struct {
-	RuntimeRoot   string
-	DataRoot      string
-	Prober        HealthProber
-	Launcher      ProcessLauncher
-	Updater       RuntimeUpdater
-	UpdateControl RuntimeUpdateControl
-	StartupWait   time.Duration
-	PollInterval  time.Duration
-	Sleep         func(context.Context, time.Duration) error
+	RuntimeRoot       string
+	DataRoot          string
+	RuntimeExecutable string
+	Prober            HealthProber
+	Launcher          ProcessLauncher
+	Updater           RuntimeUpdater
+	UpdateControl     RuntimeUpdateControl
+	StartupWait       time.Duration
+	PollInterval      time.Duration
+	Sleep             func(context.Context, time.Duration) error
 }
 
 func (controller RuntimeController) ShutdownIfIdle(ctx context.Context, _ ExtensionIdentity) Outcome {
@@ -401,7 +402,7 @@ func loadActiveRuntimeFile(path string) (ActiveRuntime, error) {
 
 func (controller RuntimeController) runtimePaths(active ActiveRuntime) (string, string, string, string) {
 	workingDirectory := filepath.Join(controller.RuntimeRoot, "versions", active.Version)
-	executablePath := filepath.Join(workingDirectory, "AkuSidecar.exe")
+	executablePath := filepath.Join(workingDirectory, runtimeExecutableOrDefault(controller.RuntimeExecutable))
 	configPath := filepath.Join(workingDirectory, "config", "sidecar.json")
 	databasePath := filepath.Join(controller.DataRoot, "aku-browser.db")
 	return executablePath, workingDirectory, configPath, databasePath

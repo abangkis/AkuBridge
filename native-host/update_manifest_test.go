@@ -16,8 +16,8 @@ func TestSignedUpdateManifestAuthenticatesExactUpgrade(t *testing.T) {
 		RuntimeRevision: "source-adapters-v84", BridgeContractVersion: bridgeContract,
 	}
 	expected := ExtensionIdentity{
-		Product: "AkuBrowser", ProductVersion: "0.7.8",
-		RuntimeRevision: "source-adapters-v86", BridgeContractVersion: bridgeContract,
+		Product: "AkuBrowser", ProductVersion: "0.7.9",
+		RuntimeRevision: "source-adapters-v87", BridgeContractVersion: bridgeContract,
 	}
 	data := signedUpdateManifestForTest(t, privateKey, expected)
 	manifest, err := decodeAndVerifyUpdateManifest(
@@ -39,8 +39,8 @@ func TestSignedUpdateManifestFailsClosedForTamperAndDowngrade(t *testing.T) {
 		RuntimeRevision: "source-adapters-v84", BridgeContractVersion: bridgeContract,
 	}
 	expected := ExtensionIdentity{
-		Product: "AkuBrowser", ProductVersion: "0.7.8",
-		RuntimeRevision: "source-adapters-v86", BridgeContractVersion: bridgeContract,
+		Product: "AkuBrowser", ProductVersion: "0.7.9",
+		RuntimeRevision: "source-adapters-v87", BridgeContractVersion: bridgeContract,
 	}
 	data := signedUpdateManifestForTest(t, privateKey, expected)
 	tampered := strings.Replace(string(data), `"size":1234`, `"size":1235`, 1)
@@ -65,15 +65,15 @@ func TestSignedUpdateManifestFailsClosedForTamperAndDowngrade(t *testing.T) {
 func TestUpdateManifestRejectsAnotherReleaseOrigin(t *testing.T) {
 	_, privateKey := updateTestKey()
 	expected := ExtensionIdentity{
-		Product: "AkuBrowser", ProductVersion: "0.7.8",
-		RuntimeRevision: "source-adapters-v86", BridgeContractVersion: bridgeContract,
+		Product: "AkuBrowser", ProductVersion: "0.7.9",
+		RuntimeRevision: "source-adapters-v87", BridgeContractVersion: bridgeContract,
 	}
 	data := signedUpdateManifestForTest(t, privateKey, expected)
 	var manifest SignedUpdateManifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	manifest.Artifact.URL = "https://github.com/attacker/AkuBrowser/releases/download/v0.7.8/AkuBrowserRuntime-0.7.8-windows-x64.zip"
+	manifest.Artifact.URL = "https://github.com/attacker/AkuBrowser/releases/download/v0.7.9/AkuBrowserRuntime-0.7.9-windows-x64.zip"
 	payload, _ := json.Marshal(manifest.unsigned())
 	manifest.Signature.Value = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload))
 	data, _ = json.Marshal(manifest)
@@ -86,8 +86,31 @@ func TestUpdateManifestRejectsAnotherReleaseOrigin(t *testing.T) {
 	}
 }
 
-func signedUpdateManifestForTest(t *testing.T, privateKey ed25519.PrivateKey, expected ExtensionIdentity) []byte {
+func TestSignedUpdateManifestAcceptsExactMacOSUniversalArtifact(t *testing.T) {
+	publicKey, privateKey := updateTestKey()
+	active := ActiveRuntime{
+		SchemaVersion: 1, Channel: "stable", Version: "0.7.4",
+		RuntimeRevision: "source-adapters-v84", BridgeContractVersion: bridgeContract,
+	}
+	expected := ExtensionIdentity{
+		Product: "AkuBrowser", ProductVersion: "0.7.9",
+		RuntimeRevision: "source-adapters-v87", BridgeContractVersion: bridgeContract,
+	}
+	data := signedUpdateManifestForTest(t, privateKey, expected, "macos-universal")
+	if _, err := decodeAndVerifyUpdateManifest(
+		data, base64.StdEncoding.EncodeToString(publicKey), expected, active,
+		time.Date(2026, 8, 7, 1, 0, 0, 0, time.UTC), "macos-universal",
+	); err != nil {
+		t.Fatalf("verify macOS update manifest: %v", err)
+	}
+}
+
+func signedUpdateManifestForTest(t *testing.T, privateKey ed25519.PrivateKey, expected ExtensionIdentity, platforms ...string) []byte {
 	t.Helper()
+	architecture := legacyWindowsArchitecture
+	if len(platforms) > 0 {
+		architecture = platforms[0]
+	}
 	manifest := SignedUpdateManifest{
 		SchemaVersion: 1, Product: "AkuBrowser", Channel: "stable",
 		Version: expected.ProductVersion, RuntimeRevision: expected.RuntimeRevision,
@@ -95,7 +118,7 @@ func signedUpdateManifestForTest(t *testing.T, privateKey ed25519.PrivateKey, ex
 		PublishedAt:           "2026-07-29T00:00:00Z",
 		Artifact: UpdateArtifact{
 			URL: "https://github.com/abangkis/AkuBrowser/releases/download/v" + expected.ProductVersion +
-				"/AkuBrowserRuntime-" + expected.ProductVersion + "-windows-x64.zip",
+				"/AkuBrowserRuntime-" + expected.ProductVersion + "-" + architecture + ".zip",
 			Size: 1234, SHA256: strings.Repeat("a", 64),
 		},
 		Signature: UpdateSignature{Algorithm: "ed25519", KeyID: updateSigningKeyID},

@@ -16,12 +16,12 @@ import (
 func TestSignedRuntimeUpdaterActivatesHealthyCandidateAndKeepsOneRollback(t *testing.T) {
 	fixture := newRuntimeUpdateFixture(t)
 	attempt := fixture.updater.Update(context.Background(), fixture.active, fixture.expected)
-	if !attempt.Succeeded() || attempt.Active.Version != "0.7.8" {
+	if !attempt.Succeeded() || attempt.Active.Version != "0.7.9" {
 		t.Fatalf("attempt=%+v", attempt)
 	}
 	var current ActiveRuntime
 	readJSONFileForTest(t, filepath.Join(fixture.root, "current.json"), &current)
-	if current.Version != "0.7.8" || current.RollbackVersion == nil || *current.RollbackVersion != "0.7.4" {
+	if current.Version != "0.7.9" || current.RollbackVersion == nil || *current.RollbackVersion != "0.7.4" {
 		t.Fatalf("current=%+v", current)
 	}
 	if fixture.control.shutdownCalls != 1 || fixture.launcher.calls != 1 {
@@ -30,7 +30,7 @@ func TestSignedRuntimeUpdaterActivatesHealthyCandidateAndKeepsOneRollback(t *tes
 	if _, err := os.Stat(filepath.Join(fixture.root, "versions", "0.7.4")); err != nil {
 		t.Fatalf("rollback version removed: %v", err)
 	}
-	if data, err := os.ReadFile(filepath.Join(fixture.root, "versions", "0.7.8", ".activation-confirmed")); err != nil || string(data) != "0.7.8\n" {
+	if data, err := os.ReadFile(filepath.Join(fixture.root, "versions", "0.7.9", ".activation-confirmed")); err != nil || string(data) != "0.7.9\n" {
 		t.Fatalf("activation confirmation=%q err=%v", data, err)
 	}
 }
@@ -56,7 +56,7 @@ func TestSignedRuntimeUpdaterCanUpgradeAnAlreadyStoppedRuntime(t *testing.T) {
 	fixture := newRuntimeUpdateFixture(t)
 	fixture.health.stoppedInitially = true
 	attempt := fixture.updater.Update(context.Background(), fixture.active, fixture.expected)
-	if !attempt.Succeeded() || attempt.Active.Version != "0.7.8" {
+	if !attempt.Succeeded() || attempt.Active.Version != "0.7.9" {
 		t.Fatalf("attempt=%+v", attempt)
 	}
 	if fixture.control.shutdownCalls != 0 || fixture.launcher.calls != 1 {
@@ -66,7 +66,7 @@ func TestSignedRuntimeUpdaterCanUpgradeAnAlreadyStoppedRuntime(t *testing.T) {
 
 func TestSignedRuntimeUpdaterReplacesOnlyAnUnactivatedInterruptedCandidate(t *testing.T) {
 	fixture := newRuntimeUpdateFixture(t)
-	orphan := filepath.Join(fixture.root, "versions", "0.7.8")
+	orphan := filepath.Join(fixture.root, "versions", "0.7.9")
 	if err := os.MkdirAll(orphan, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestSignedRuntimeUpdaterRollsBackFailedCandidate(t *testing.T) {
 	if current.Version != "0.7.4" {
 		t.Fatalf("rollback current=%+v", current)
 	}
-	if _, err := os.Stat(filepath.Join(fixture.root, "versions", "0.7.8")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(fixture.root, "versions", "0.7.9")); !os.IsNotExist(err) {
 		t.Fatalf("failed candidate retained with authority: %v", err)
 	}
 }
@@ -119,8 +119,8 @@ func newRuntimeUpdateFixture(t *testing.T) runtimeUpdateFixture {
 		RuntimeRevision: "source-adapters-v84", BridgeContractVersion: bridgeContract,
 	}
 	expected := ExtensionIdentity{
-		Product: "AkuBrowser", ProductVersion: "0.7.8",
-		RuntimeRevision: "source-adapters-v86", BridgeContractVersion: bridgeContract,
+		Product: "AkuBrowser", ProductVersion: "0.7.9",
+		RuntimeRevision: "source-adapters-v87", BridgeContractVersion: bridgeContract,
 	}
 	root := writeActiveRuntime(t, active)
 	if err := os.MkdirAll(filepath.Join(root, "versions", active.Version), 0o700); err != nil {
@@ -143,7 +143,7 @@ func newRuntimeUpdateFixture(t *testing.T) runtimeUpdateFixture {
 		BridgeContractVersion: expected.BridgeContractVersion,
 		PublishedAt:           "2026-07-29T00:00:00Z",
 		Artifact: UpdateArtifact{
-			URL:  "https://github.com/abangkis/AkuBrowser/releases/download/v0.7.8/AkuBrowserRuntime-0.7.8-windows-x64.zip",
+			URL:  "https://github.com/abangkis/AkuBrowser/releases/download/v0.7.9/AkuBrowserRuntime-0.7.9-windows-x64.zip",
 			Size: int64(len(archiveData)), SHA256: hex.EncodeToString(archiveHash[:]),
 		},
 		Signature: UpdateSignature{Algorithm: "ed25519", KeyID: updateSigningKeyID},

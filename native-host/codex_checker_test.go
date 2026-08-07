@@ -48,7 +48,8 @@ func TestCodexCheckerMapsDiscoveryMissToInstallGuidance(t *testing.T) {
 
 func TestInstalledCodexCheckerUsesThePackagedProbeWhenRuntimeIsStopped(t *testing.T) {
 	runtimeRoot := writeActiveRuntime(t, activeFixture())
-	executable := filepath.Join(runtimeRoot, "versions", activeFixture().Version, "AkuSidecar.exe")
+	executableName := "AkuSidecar"
+	executable := filepath.Join(runtimeRoot, "versions", activeFixture().Version, executableName)
 	if err := os.MkdirAll(filepath.Dir(executable), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +57,8 @@ func TestInstalledCodexCheckerUsesThePackagedProbeWhenRuntimeIsStopped(t *testin
 		t.Fatal(err)
 	}
 	checker := InstalledCodexChecker{
-		RuntimeRoot: runtimeRoot,
+		RuntimeRoot:       runtimeRoot,
+		RuntimeExecutable: executableName,
 		HTTP: HTTPReasoningRuntimeChecker{
 			Endpoint: "http://127.0.0.1:1",
 			Client:   &http.Client{Timeout: 10 * time.Millisecond},

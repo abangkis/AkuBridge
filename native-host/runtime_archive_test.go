@@ -18,7 +18,7 @@ func TestRuntimeArchiveExtractsOnlyDeclaredVerifiedFiles(t *testing.T) {
 		"config/sidecar.json": []byte(`{"version":1}`),
 	})
 	candidate := filepath.Join(t.TempDir(), "candidate")
-	if err := extractVerifiedRuntimeArchive(archive, candidate, "0.7.8"); err != nil {
+	if err := extractVerifiedRuntimeArchive(archive, candidate, "0.7.9"); err != nil {
 		t.Fatalf("extract runtime archive: %v", err)
 	}
 	if data, err := os.ReadFile(filepath.Join(candidate, "AkuSidecar.exe")); err != nil || string(data) != "signed-sidecar" {
@@ -42,15 +42,38 @@ func TestRuntimeArchiveRejectsTraversalAndUndeclaredFiles(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			archive := filepath.Join(t.TempDir(), "runtime.zip")
 			writeRuntimeArchiveForTest(t, archive, files)
-			if err := extractVerifiedRuntimeArchive(archive, filepath.Join(t.TempDir(), "candidate"), "0.7.8"); err == nil {
+			if err := extractVerifiedRuntimeArchive(archive, filepath.Join(t.TempDir(), "candidate"), "0.7.9"); err == nil {
 				t.Fatal("unsafe archive was accepted")
 			}
 		})
 	}
 }
 
-func writeRuntimeArchiveForTest(t *testing.T, archivePath string, files map[string][]byte) {
+func TestRuntimeArchiveAcceptsMacOSUniversalExecutable(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "runtime.zip")
+	writeRuntimeArchiveForTest(t, archive, map[string][]byte{
+		"AkuSidecar":          []byte("signed-universal-sidecar"),
+		"config/sidecar.json": []byte(`{"version":1}`),
+	}, "macos-universal")
+	candidate := filepath.Join(t.TempDir(), "candidate")
+	if err := extractVerifiedRuntimeArchive(archive, candidate, "0.7.9", "macos-universal", "AkuSidecar"); err != nil {
+		t.Fatalf("extract macOS runtime archive: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(candidate, "AkuSidecar"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&0o100 == 0 {
+		t.Fatalf("macOS runtime is not executable: mode=%v", info.Mode())
+	}
+}
+
+func writeRuntimeArchiveForTest(t *testing.T, archivePath string, files map[string][]byte, architectures ...string) {
 	t.Helper()
+	architecture := legacyWindowsArchitecture
+	if len(architectures) > 0 {
+		architecture = architectures[0]
+	}
 	declared := make([]RuntimePayloadFile, 0, len(files))
 	for name, data := range files {
 		if strings.HasPrefix(name, "../") || name == "extra.dll" {
@@ -62,8 +85,8 @@ func writeRuntimeArchiveForTest(t *testing.T, archivePath string, files map[stri
 		})
 	}
 	manifest, err := json.Marshal(RuntimePayloadManifest{
-		SchemaVersion: 1, Product: "AkuBrowser", Version: "0.7.8",
-		Architecture: "windows-x64", Files: declared,
+		SchemaVersion: 1, Product: "AkuBrowser", Version: "0.7.9",
+		Architecture: architecture, Files: declared,
 	})
 	if err != nil {
 		t.Fatal(err)

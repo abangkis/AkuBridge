@@ -25,9 +25,10 @@ type HTTPReasoningRuntimeChecker struct {
 }
 
 type InstalledCodexChecker struct {
-	RuntimeRoot string
-	HTTP        HTTPReasoningRuntimeChecker
-	RunProbe    func(context.Context, string) ([]byte, error)
+	RuntimeRoot       string
+	RuntimeExecutable string
+	HTTP              HTTPReasoningRuntimeChecker
+	RunProbe          func(context.Context, string) ([]byte, error)
 }
 
 func (checker InstalledCodexChecker) Check(ctx context.Context) (CodexState, *ErrorState) {
@@ -40,7 +41,12 @@ func (checker InstalledCodexChecker) Check(ctx context.Context) (CodexState, *Er
 	if err != nil {
 		return codexCheckFailure()
 	}
-	executable := filepath.Join(checker.RuntimeRoot, "versions", active.Version, "AkuSidecar.exe")
+	executable := filepath.Join(
+		checker.RuntimeRoot,
+		"versions",
+		active.Version,
+		runtimeExecutableOrDefault(checker.RuntimeExecutable),
+	)
 	info, err := os.Stat(executable)
 	if err != nil || !info.Mode().IsRegular() {
 		return codexCheckFailure()

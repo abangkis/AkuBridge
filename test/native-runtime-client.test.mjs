@@ -32,7 +32,7 @@ test("native runtime request carries only the bounded AkuBrowser identity contra
     extension: {
       product: "AkuBrowser",
       productVersion: "0.7.4",
-      runtimeRevision: "source-adapters-v86",
+      runtimeRevision: "source-adapters-v87",
       bridgeContractVersion: "aku-browser.bridge.v2",
     },
   });
@@ -81,8 +81,8 @@ test("a native host held by security software times out instead of hanging setup
         storageWrites.push(structuredClone(value));
       },
     },
-    productVersion: "0.7.8",
-    runtimeRevision: "source-adapters-v86",
+    productVersion: "0.7.9",
+    runtimeRevision: "source-adapters-v87",
     now: () => FIXED_NOW,
     randomUUID: () => FIXED_REQUEST_ID,
     nativeMessageTimeoutMs: 1_000,
@@ -254,7 +254,7 @@ test("staging, candidate, and rollback failures remain visibly typed", async () 
         update: {
           phase: code === "rollback_failed" ? "rolling_back" : "health_check",
           currentVersion: "0.7.4",
-          targetVersion: "0.7.8",
+          targetVersion: "0.7.9",
           rollbackAvailable: true,
         },
         error: {
@@ -349,7 +349,7 @@ function readyResponse(request, overrides = {}) {
     runtime: {
       version: "0.7.4",
       channel: "stable",
-      runtimeRevision: "source-adapters-v86",
+      runtimeRevision: "source-adapters-v87",
       bridgeContractVersion: "aku-browser.bridge.v2",
       endpoint: "http://127.0.0.1:11122",
       instanceEpoch: "runtime:0001",
@@ -358,7 +358,7 @@ function readyResponse(request, overrides = {}) {
     update: {
       phase: status === "updating" ? "downloading" : "idle",
       currentVersion: "0.7.4",
-      targetVersion: status === "updating" ? "0.7.8" : null,
+      targetVersion: status === "updating" ? "0.7.9" : null,
       rollbackAvailable: true,
     },
     error: null,
