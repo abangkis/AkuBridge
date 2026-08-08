@@ -36,7 +36,7 @@ test("missing Windows runtime offers installation", () => {
   assert.equal(state.runtimeReady, false);
 });
 
-test("missing macOS runtime offers the notarized companion installer", () => {
+test("missing macOS runtime offers the versioned preview companion installer", () => {
   const state = runtimeSetupView({ state: "runtime_install_required" }, {
     installerAvailable: true,
     runtimePlatform: "macos",

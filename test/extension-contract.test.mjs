@@ -148,6 +148,9 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.doesNotMatch(setupScript, /visibilitychange/);
   assert.match(setupScript, /Chrome cannot run downloaded applications automatically/);
   assert.match(setupScript, /Download started — run the installer next/);
+  assert.match(setupScript, /v0\.7\.9-preview1\/AkuBrowserRuntimeSetup-0\.7\.9-macos-universal-unsigned\.pkg/);
+  assert.match(setupScript, /unsigned and not notarized/);
+  assert.match(setupScript, /Never disable Gatekeeper globally/);
   assert.match(setupScript, /detectSetupPlatform/);
   assert.match(setupHtml, /Windows Security, Avast, or another\s+antivirus may warn, quarantine, block, or sandbox them/);
   assert.match(setupHtml, /Do not disable antivirus\s+protection or exclude your Downloads folder/);
