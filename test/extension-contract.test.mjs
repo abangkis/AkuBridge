@@ -178,7 +178,7 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   );
   assert.match(
     setupScript,
-    /https:\/\/github\.com\/abangkis\/AkuBrowser\/releases\/latest\/download\/AkuBrowserRuntimeSetup\.pkg/,
+    /https:\/\/github\.com\/abangkis\/AkuBrowser\/releases\/download\/v0\.7\.9-preview1\/AkuBrowserRuntimeSetup-0\.7\.9-macos-universal-unsigned\.pkg/,
   );
   assert.match(setupScript, /AkuBrowser-\$\{productVersion\}-macos-universal\.zip/);
   assert.match(setupScript, /installerAvailable:\s*runtimeInstallerAvailable/);
