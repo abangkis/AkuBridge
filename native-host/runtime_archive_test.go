@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -63,7 +64,10 @@ func TestRuntimeArchiveAcceptsMacOSUniversalExecutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode()&0o100 == 0 {
+	// Windows does not expose Unix executable mode bits through os.Chmod.
+	// The same extraction path is still exercised there; enforce the bit on
+	// platforms where it is meaningful.
+	if runtime.GOOS != "windows" && info.Mode()&0o100 == 0 {
 		t.Fatalf("macOS runtime is not executable: mode=%v", info.Mode())
 	}
 }
