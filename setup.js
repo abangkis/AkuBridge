@@ -26,24 +26,24 @@ import {
   codexSetupView,
 } from "./setup-codex-view.js";
 
+const RUNTIME_INSTALLER_ATTEMPT_KEY = "akuBrowser.runtimeInstallerAttempted.v1";
+const simulatedOutcome = simulatedRuntimeOutcome(globalThis.location.search);
+const setupPlatform = detectSetupPlatform(globalThis.navigator);
+const client = createChromeNativeRuntimeClient(chrome);
+const manifest = chrome.runtime.getManifest();
+const productVersion = manifest.version_name || manifest.version;
+const MACOS_RUNTIME_INSTALLER_NAME = `AkuBrowserRuntimeSetup-${productVersion}-macos-universal.pkg`;
 const RUNTIME_INSTALLER_URLS = Object.freeze({
   [SETUP_PLATFORMS.WINDOWS]:
     "https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuBrowserRuntimeSetup.exe",
   [SETUP_PLATFORMS.MACOS]:
-    "https://github.com/abangkis/AkuBrowser/releases/download/v0.7.9-preview1/AkuBrowserRuntimeSetup-0.7.9-macos-universal-unsigned.pkg",
+    `https://github.com/abangkis/AkuBrowser/releases/download/v${productVersion}/${MACOS_RUNTIME_INSTALLER_NAME}`,
 });
-const MACOS_RUNTIME_INSTALLER_NAME = "AkuBrowserRuntimeSetup-0.7.9-macos-universal-unsigned.pkg";
-const RUNTIME_INSTALLER_ATTEMPT_KEY = "akuBrowser.runtimeInstallerAttempted.v1";
-const simulatedOutcome = simulatedRuntimeOutcome(globalThis.location.search);
-const setupPlatform = detectSetupPlatform(globalThis.navigator);
 const runtimeInstallerURL = RUNTIME_INSTALLER_URLS[setupPlatform] ?? "";
 const runtimeInstallerAvailable = Boolean(runtimeInstallerURL);
 const windowsRuntimeInstallerAvailable = setupPlatform === SETUP_PLATFORMS.WINDOWS;
-const client = createChromeNativeRuntimeClient(chrome);
-const manifest = chrome.runtime.getManifest();
-const productVersion = manifest.version_name || manifest.version;
 const RUNTIME_PORTABLE_BUNDLE_URL = setupPlatform === SETUP_PLATFORMS.MACOS
-  ? `https://github.com/abangkis/AkuBrowser/releases/download/v0.7.9-preview1/AkuBrowser-${productVersion}-macos-universal.zip`
+  ? `https://github.com/abangkis/AkuBrowser/releases/download/v${productVersion}/AkuBrowser-${productVersion}-macos-universal.zip`
   : `https://github.com/abangkis/AkuBrowser/releases/download/v${productVersion}/AkuBrowser-${productVersion}-windows-x64.zip`;
 const summary = document.querySelector("#summary");
 const detail = document.querySelector("#detail");
@@ -256,7 +256,7 @@ function applyPlatformCopy() {
     ].join(" ");
     installerNoteTitle.textContent = "Run the macOS installer after downloading it";
     installerStepOpen.innerHTML = `Open <code>${MACOS_RUNTIME_INSTALLER_NAME}</code> when the download finishes.`;
-    installerStepRun.textContent = "Early Preview 1 is unsigned and not notarized. Verify its SHA-256; if macOS blocks it, use System Settings > Privacy & Security > Open Anyway. Never disable Gatekeeper globally.";
+    installerStepRun.textContent = "This stable package is unsigned and not notarized. Verify its SHA-256; if macOS blocks it, use System Settings > Privacy & Security > Open Anyway. Never disable Gatekeeper globally.";
     installerStepCheck.textContent = "Return here and select Check runtime.";
     codexPlatformDescription.textContent = "Select Check Codex to inspect this computer. If Codex is found, confirm that you are signed in and ready. AkuBrowser never receives your credentials.";
     codexDownload.href = "https://chatgpt.com/download/";
@@ -299,7 +299,7 @@ function configureInstallerGuidance(state, runtimeView) {
     installerNoteTitle.textContent = "Install the matching AkuBrowser Runtime";
     installerStepOpen.innerHTML = `Open <code>${installerName}</code> after the download finishes.`;
     installerStepRun.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
-      ? "Complete the disclosed unsigned Early Preview setup to replace or repair the outdated runtime build."
+      ? "Complete the disclosed unsigned macOS setup to replace or repair the outdated runtime build."
       : "Complete setup to replace or repair the outdated runtime build.";
     installerStepCheck.textContent = "Return here and select Check runtime.";
     return;
@@ -314,7 +314,7 @@ function configureInstallerGuidance(state, runtimeView) {
   installerNoteTitle.textContent = `Run the ${platformName} installer after downloading it`;
   installerStepOpen.innerHTML = `Open <code>${installerName}</code> when the download finishes.`;
   installerStepRun.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
-    ? "Complete the unsigned Early Preview setup. If blocked, use Privacy & Security > Open Anyway; do not disable Gatekeeper."
+    ? "Complete the unsigned macOS setup. If blocked, use Privacy & Security > Open Anyway; do not disable Gatekeeper."
     : `Complete the ${platformName} setup flow.`;
   installerStepCheck.textContent = "Return here and select Check runtime.";
 }

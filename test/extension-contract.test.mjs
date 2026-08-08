@@ -152,8 +152,8 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.doesNotMatch(setupScript, /visibilitychange/);
   assert.match(setupScript, /Chrome cannot run downloaded applications automatically/);
   assert.match(setupScript, /Download started — run the installer next/);
-  assert.match(setupScript, /v0\.7\.9-preview1\/AkuBrowserRuntimeSetup-0\.7\.9-macos-universal-unsigned\.pkg/);
-  assert.match(setupScript, /unsigned and not notarized/);
+  assert.match(setupScript, /v\$\{productVersion\}\/\$\{MACOS_RUNTIME_INSTALLER_NAME\}/);
+  assert.match(setupScript, /stable package is unsigned and not notarized/);
   assert.match(setupScript, /Never disable Gatekeeper globally/);
   assert.match(setupScript, /detectSetupPlatform/);
   assert.match(setupHtml, /Windows Security, Avast, or another\s+antivirus may warn, quarantine, block, or sandbox them/);
@@ -182,7 +182,7 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   );
   assert.match(
     setupScript,
-    /https:\/\/github\.com\/abangkis\/AkuBrowser\/releases\/download\/v0\.7\.9-preview1\/AkuBrowserRuntimeSetup-0\.7\.9-macos-universal-unsigned\.pkg/,
+    /https:\/\/github\.com\/abangkis\/AkuBrowser\/releases\/download\/v\$\{productVersion\}\/\$\{MACOS_RUNTIME_INSTALLER_NAME\}/,
   );
   assert.match(setupScript, /AkuBrowser-\$\{productVersion\}-macos-universal\.zip/);
   assert.match(setupScript, /installerAvailable:\s*runtimeInstallerAvailable/);
