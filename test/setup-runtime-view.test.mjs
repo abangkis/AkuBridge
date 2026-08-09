@@ -199,6 +199,37 @@ test("running runtime offers the bounded stop action", () => {
   );
 });
 
+test("healthy native runtime remains authoritative over a stale installer failure", () => {
+  const state = runtimeSetupView({
+    state: "runtime_ready",
+    installerResult: { status: "failed" },
+    response: { runtime: { processState: "ready", version: "0.7.9" } },
+  }, { windowsInstallerAvailable: true });
+
+  assert.equal(state.badge, "Running");
+  assert.equal(state.runtimeReady, true);
+  assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.STOP);
+});
+
+test("healthy loopback fallback does not guess that the runtime is portable", () => {
+  const state = runtimeSetupView({
+    state: "runtime_ready",
+    runtimeSource: "loopback",
+    observedDetail: "A compatible local endpoint responded.",
+  }, {
+    windowsInstallerAvailable: true,
+    runtimePlatform: "windows",
+  });
+
+  assert.equal(state.badge, "Runtime running");
+  assert.equal(state.runtimeReady, true);
+  assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.CHECK);
+  assert.equal(state.actionLabel, "Check native host again");
+  assert.equal(state.executableLocation, "");
+  assert.equal(state.showSecurityNotice, true);
+  assert.doesNotMatch(state.detail, /portable/i);
+});
+
 test("portable running runtime identifies its extracted executable without guessing a folder", () => {
   const state = runtimeSetupView({
     state: "runtime_ready",

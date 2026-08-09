@@ -41,6 +41,21 @@ export function runtimeSetupView(outcome, {
   }
 
   if (state === "runtime_ready") {
+    if (outcome?.runtimeSource === "loopback") {
+      return view({
+        badge: "Runtime running",
+        badgeState: "ready",
+        summary: "A compatible AkuBrowser Runtime is running.",
+        detail: [
+          outcome?.observedDetail,
+          "The local endpoint is healthy, but the registered Native Messaging Host did not complete this check. Security software may still be inspecting it.",
+        ].filter(Boolean).join(" "),
+        runtimeReady: true,
+        actionKind: RUNTIME_SETUP_ACTIONS.CHECK,
+        actionLabel: "Check native host again",
+        showSecurityNotice: runtimePlatform === "windows",
+      });
+    }
     if (outcome?.runtimeSource === "portable") {
       return view({
         badge: "Portable runtime running",

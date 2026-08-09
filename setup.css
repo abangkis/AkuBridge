@@ -347,6 +347,12 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.platform-warning .button-link {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 10px;
+}
+
 .runtime-conflict-note {
   margin: 12px 0 0;
   padding: 12px 14px;

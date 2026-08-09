@@ -154,7 +154,8 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.match(setupScript, /:\s*await client\.ensureRuntime/);
   assert.match(setupScript, /client\.shutdownIfIdle/);
   assert.match(setupScript, /RUNTIME_SETUP_ACTIONS\.STOP/);
-  assert.match(setupScript, /runtimeSource:\s*"portable"/);
+  assert.match(setupScript, /runtimeSource:\s*"loopback"/);
+  assert.match(setupRuntimeView, /Check native host again/);
   assert.match(setupRuntimeView, /Check after stopping/);
   assert.doesNotMatch(setupScript, /if \(!statusOnly/);
   assert.doesNotMatch(setupScript, /void reconcile\(\{ statusOnly: true \}\);/);
@@ -167,6 +168,11 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.match(setupScript, /detectSetupPlatform/);
   assert.match(setupHtml, /Windows Security, Avast, or another\s+antivirus may warn, quarantine, block, or sandbox them/);
   assert.match(setupHtml, /Do not disable antivirus\s+protection or exclude your Downloads folder/);
+  assert.match(setupHtml, /Avast CyberCapture may open this unsigned installer twice/);
+  assert.match(setupHtml, /Complete only the first Setup window/);
+  assert.match(setupHtml, /id="antivirus-help"/);
+  assert.match(setupHtml, /release\/windows\/README\.md#antivirus-warning/);
+  assert.match(setupScript, /If Avast opens another Setup window, select No or Cancel/);
   assert.match(setupHtml, /Access is denied/);
   assert.match(setupHtml, /%LOCALAPPDATA%\\Programs\\AkuBrowser\\/);
   assert.match(setupHtml, /Stop the\s+running <code>AkuSidecar\.exe<\/code>/);

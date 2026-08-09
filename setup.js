@@ -48,6 +48,10 @@ const runtimeInstallerName = setupPlatform === SETUP_PLATFORMS.WINDOWS
     : "";
 const runtimeInstallerAvailable = Boolean(runtimeInstallerURL);
 const windowsRuntimeInstallerAvailable = setupPlatform === SETUP_PLATFORMS.WINDOWS;
+const WINDOWS_INSTALLER_COMPLETION_GUIDANCE = [
+  "Complete one Windows Setup flow.",
+  "If Avast opens another Setup window, select No or Cancel; do not run Repair twice.",
+].join(" ");
 const RUNTIME_PORTABLE_BUNDLE_URL = setupPlatform === SETUP_PLATFORMS.MACOS
   ? `https://github.com/abangkis/AkuBrowser/releases/download/v${productVersion}/AkuBrowser-${productVersion}-macos-universal.zip`
   : `https://github.com/abangkis/AkuBrowser/releases/download/v${productVersion}/AkuBrowser-${productVersion}-windows-x64.zip`;
@@ -200,8 +204,8 @@ async function reconcile({
   if (!stopOnly && outcome.state !== "runtime_ready") {
     const portableRuntimeReady = await probeCompatibleLoopbackRuntime({ productVersion });
     if (portableRuntimeReady) {
-      renderReady("A compatible portable AkuBrowser Runtime was detected and is ready.", {
-        runtimeSource: "portable",
+      renderReady("A compatible local AkuBrowser Runtime endpoint was detected and is ready.", {
+        runtimeSource: "loopback",
       });
       return;
     }
@@ -224,7 +228,10 @@ async function downloadRuntimeInstaller() {
     detail.textContent = [
       "Chrome cannot run downloaded applications automatically.",
       `Open ${runtimeInstallerName}, finish ${setupPlatform === SETUP_PLATFORMS.MACOS ? "macOS" : "Windows"} setup, return here, then select Check runtime.`,
-    ].join(" ");
+      setupPlatform === SETUP_PLATFORMS.WINDOWS
+        ? "If Avast opens another Setup window, select No or Cancel; do not run Repair twice."
+        : "",
+    ].filter(Boolean).join(" ");
   } catch {
     summary.textContent = "The runtime installer could not be downloaded.";
     detail.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
@@ -246,6 +253,7 @@ function applyPlatformCopy() {
       "and the C2PA verifier. You install and prepare Codex App separately.",
     ].join(" ");
     installerStepOpen.innerHTML = `Open <code>${WINDOWS_RUNTIME_INSTALLER_NAME}</code> when the download finishes.`;
+    installerStepRun.textContent = WINDOWS_INSTALLER_COMPLETION_GUIDANCE;
     codexPlatformDescription.textContent = [
       "Select Check Codex to inspect this computer.",
       "If Codex is found, confirm that you are signed in and ready. AkuBrowser never receives your Codex credentials.",
@@ -302,7 +310,7 @@ function configureInstallerGuidance(state, runtimeView) {
     installerStepOpen.innerHTML = `Open <code>${runtimeInstallerName}</code> after the download finishes.`;
     installerStepRun.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
       ? "Complete the disclosed unsigned macOS setup to replace or repair the outdated runtime build."
-      : "Complete setup to replace or repair the outdated runtime build.";
+      : WINDOWS_INSTALLER_COMPLETION_GUIDANCE;
     installerStepCheck.textContent = "Return here and select Check runtime.";
     return;
   }
@@ -317,7 +325,7 @@ function configureInstallerGuidance(state, runtimeView) {
   installerStepOpen.innerHTML = `Open <code>${runtimeInstallerName}</code> when the download finishes.`;
   installerStepRun.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
     ? "Complete the unsigned macOS setup. If blocked, use Privacy & Security > Open Anyway; do not disable Gatekeeper."
-    : `Complete the ${platformName} setup flow.`;
+    : WINDOWS_INSTALLER_COMPLETION_GUIDANCE;
   installerStepCheck.textContent = "Return here and select Check runtime.";
 }
 
