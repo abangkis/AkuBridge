@@ -245,6 +245,20 @@ test("invalid installed metadata offers installer repair", () => {
   assert.equal(state.showInstallerNote, true);
 });
 
+test("forbidden native host explains the extension identity repair", () => {
+  const state = runtimeSetupView({
+    state: "runtime_failed",
+    errorCode: "native_host_forbidden",
+    remediation: "reinstall_runtime",
+  }, { windowsInstallerAvailable: true });
+
+  assert.equal(state.summary, "AkuBrowser Runtime identity is out of date.");
+  assert.match(state.detail, /does not allow this AkuBrowser extension/);
+  assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.INSTALL);
+  assert.equal(state.actionLabel, "Repair runtime");
+  assert.equal(state.retryAction, false);
+});
+
 test("retryable failure increments the next request timeout", () => {
   const state = runtimeSetupView({ state: "runtime_failed" });
 

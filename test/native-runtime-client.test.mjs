@@ -96,6 +96,45 @@ test("a native host held by security software times out instead of hanging setup
   assert.deepEqual(storageWrites.at(-1)[NATIVE_RUNTIME_STATE_KEY], outcome);
 });
 
+test("a native host that rejects this extension requests an installer repair", async () => {
+  const storageWrites = [];
+  const runtime = {
+    lastError: null,
+    sendNativeMessage(_host, _request, callback) {
+      this.lastError = {
+        message: "Access to the specified native messaging host is forbidden.",
+      };
+      callback(undefined);
+      this.lastError = null;
+    },
+  };
+  const client = createNativeRuntimeClient({
+    runtime,
+    storage: {
+      async set(value) {
+        storageWrites.push(structuredClone(value));
+      },
+    },
+    productVersion: "0.7.9",
+    runtimeRevision: "source-adapters-v87",
+    now: () => FIXED_NOW,
+    randomUUID: () => FIXED_REQUEST_ID,
+  });
+
+  const outcome = await client.status({ trigger: "setup_check" });
+
+  assert.deepEqual(outcome, {
+    schemaVersion: 1,
+    state: "runtime_failed",
+    trigger: "setup_check",
+    observedAt: "2026-07-28T10:00:00.000Z",
+    errorCode: "native_host_forbidden",
+    retryable: false,
+    remediation: "reinstall_runtime",
+  });
+  assert.deepEqual(storageWrites.at(-1)[NATIVE_RUNTIME_STATE_KEY], outcome);
+});
+
 test("native host statuses map to explicit client states", async () => {
   const cases = [
     ["updating", "runtime_updating"],

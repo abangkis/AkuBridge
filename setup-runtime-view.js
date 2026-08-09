@@ -142,16 +142,21 @@ export function runtimeSetupView(outcome, {
     });
   }
 
+  const forbiddenHost = outcome?.errorCode === "native_host_forbidden";
   const repairWithInstaller = installerAvailable
     && outcome?.remediation === "reinstall_runtime";
   return view({
     badge: "Needs attention",
     badgeState: "warning",
     summary: repairWithInstaller
-      ? "AkuBrowser Runtime needs repair."
+      ? forbiddenHost
+        ? "AkuBrowser Runtime identity is out of date."
+        : "AkuBrowser Runtime needs repair."
       : "AkuBrowser Runtime could not start.",
     detail: repairWithInstaller
-      ? "Run the latest installer again to repair the local runtime."
+      ? forbiddenHost
+        ? "The installed Native Messaging Host does not allow this AkuBrowser extension. Run the matching installer to repair its allowed extension identity."
+        : "Run the latest installer again to repair the local runtime."
       : runtimePlatform === "windows"
       ? "Review the Windows security notice, then try again or use the manual bundle."
       : "Try again. If the problem continues, repair the companion runtime.",

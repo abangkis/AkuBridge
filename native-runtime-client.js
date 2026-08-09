@@ -158,6 +158,7 @@ export function createNativeRuntimeClient({
       response = await sendNativeMessage(runtime, hostName, nativeRequest, timeoutMs);
     } catch (error) {
       const missingHost = isMissingNativeHostError(error);
+      const forbiddenHost = isForbiddenNativeHostError(error);
       const outcome = {
         schemaVersion: NATIVE_RUNTIME_PROTOCOL_VERSION,
         state: missingHost
@@ -165,9 +166,17 @@ export function createNativeRuntimeClient({
           : NATIVE_RUNTIME_CLIENT_STATES.FAILED,
         trigger: normalizeTrigger(trigger),
         observedAt: new Date(now()).toISOString(),
-        errorCode: missingHost ? "native_host_not_found" : "native_message_failed",
-        retryable: !missingHost,
-        remediation: missingHost ? "install_runtime" : "retry",
+        errorCode: missingHost
+          ? "native_host_not_found"
+          : forbiddenHost
+            ? "native_host_forbidden"
+            : "native_message_failed",
+        retryable: !missingHost && !forbiddenHost,
+        remediation: missingHost
+          ? "install_runtime"
+          : forbiddenHost
+            ? "reinstall_runtime"
+            : "retry",
       };
       await persistState(storage, stateKey, outcome);
       return outcome;
@@ -436,6 +445,11 @@ function assertCodexState(codexState) {
 
 function isMissingNativeHostError(error) {
   return /native messaging host.*not found|specified native messaging host not found/i
+    .test(String(error?.message ?? error));
+}
+
+function isForbiddenNativeHostError(error) {
+  return /access to the specified native messaging host is forbidden|native messaging host.*forbidden/i
     .test(String(error?.message ?? error));
 }
 
