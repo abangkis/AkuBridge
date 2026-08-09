@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createBridgeCapabilities } from "../bridge-capabilities.js";
 import { registeredScriptsForSources } from "../source-access-policy.js";
@@ -19,6 +20,14 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   assert.equal(manifest.version, "0.7.9.0");
   assert.equal(manifest.version_name, "0.7.9");
   assert.equal(manifest.name, "AkuBrowser");
+  const publicKey = Buffer.from(manifest.key, "base64");
+  assert.equal(publicKey.toString("base64"), manifest.key);
+  assert.equal(publicKey.length, 294);
+  const digest = createHash("sha256").update(publicKey).digest();
+  const extensionId = [...digest.subarray(0, 16)]
+    .map((byte) => String.fromCharCode(97 + (byte >> 4), 97 + (byte & 15)))
+    .join("");
+  assert.equal(extensionId, "mfeebfabkhmoaepbcdbbeefpobkedfmp");
   assert.deepEqual(manifest.permissions.sort(), [
     "alarms",
     "nativeMessaging",
