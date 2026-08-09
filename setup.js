@@ -32,14 +32,20 @@ const setupPlatform = detectSetupPlatform(globalThis.navigator);
 const client = createChromeNativeRuntimeClient(chrome);
 const manifest = chrome.runtime.getManifest();
 const productVersion = manifest.version_name || manifest.version;
+const WINDOWS_RUNTIME_INSTALLER_NAME = `AkuBrowserRuntimeSetup-${productVersion}.exe`;
 const MACOS_RUNTIME_INSTALLER_NAME = `AkuBrowserRuntimeSetup-${productVersion}-macos-universal.pkg`;
 const RUNTIME_INSTALLER_URLS = Object.freeze({
   [SETUP_PLATFORMS.WINDOWS]:
-    "https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuBrowserRuntimeSetup.exe",
+    `https://github.com/abangkis/AkuBrowser/releases/download/v${productVersion}/${WINDOWS_RUNTIME_INSTALLER_NAME}`,
   [SETUP_PLATFORMS.MACOS]:
     `https://github.com/abangkis/AkuBrowser/releases/download/v${productVersion}/${MACOS_RUNTIME_INSTALLER_NAME}`,
 });
 const runtimeInstallerURL = RUNTIME_INSTALLER_URLS[setupPlatform] ?? "";
+const runtimeInstallerName = setupPlatform === SETUP_PLATFORMS.WINDOWS
+  ? WINDOWS_RUNTIME_INSTALLER_NAME
+  : setupPlatform === SETUP_PLATFORMS.MACOS
+    ? MACOS_RUNTIME_INSTALLER_NAME
+    : "";
 const runtimeInstallerAvailable = Boolean(runtimeInstallerURL);
 const windowsRuntimeInstallerAvailable = setupPlatform === SETUP_PLATFORMS.WINDOWS;
 const RUNTIME_PORTABLE_BUNDLE_URL = setupPlatform === SETUP_PLATFORMS.MACOS
@@ -217,9 +223,7 @@ async function downloadRuntimeInstaller() {
     summary.textContent = "The runtime installer is downloading.";
     detail.textContent = [
       "Chrome cannot run downloaded applications automatically.",
-      setupPlatform === SETUP_PLATFORMS.MACOS
-        ? `Open ${MACOS_RUNTIME_INSTALLER_NAME}, finish macOS setup, return here, then select Check runtime.`
-        : "Open AkuBrowserRuntimeSetup.exe, finish Windows setup, return here, then select Check runtime.",
+      `Open ${runtimeInstallerName}, finish ${setupPlatform === SETUP_PLATFORMS.MACOS ? "macOS" : "Windows"} setup, return here, then select Check runtime.`,
     ].join(" ");
   } catch {
     summary.textContent = "The runtime installer could not be downloaded.";
@@ -241,6 +245,7 @@ function applyPlatformCopy() {
       "The Windows runtime installer includes AkuSidecar, the Native Messaging Host,",
       "and the C2PA verifier. You install and prepare Codex App separately.",
     ].join(" ");
+    installerStepOpen.innerHTML = `Open <code>${WINDOWS_RUNTIME_INSTALLER_NAME}</code> when the download finishes.`;
     codexPlatformDescription.textContent = [
       "Select Check Codex to inspect this computer.",
       "If Codex is found, confirm that you are signed in and ready. AkuBrowser never receives your Codex credentials.",
@@ -291,13 +296,10 @@ function applyPlatformCopy() {
 
 function configureInstallerGuidance(state, runtimeView) {
   if (!runtimeInstallerAvailable) return;
-  const installerName = setupPlatform === SETUP_PLATFORMS.MACOS
-    ? MACOS_RUNTIME_INSTALLER_NAME
-    : "AkuBrowserRuntimeSetup.exe";
   const platformName = setupPlatform === SETUP_PLATFORMS.MACOS ? "macOS" : "Windows";
   if (state === "runtime_incompatible" && runtimeView.actionKind === RUNTIME_SETUP_ACTIONS.INSTALL) {
     installerNoteTitle.textContent = "Install the matching AkuBrowser Runtime";
-    installerStepOpen.innerHTML = `Open <code>${installerName}</code> after the download finishes.`;
+    installerStepOpen.innerHTML = `Open <code>${runtimeInstallerName}</code> after the download finishes.`;
     installerStepRun.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
       ? "Complete the disclosed unsigned macOS setup to replace or repair the outdated runtime build."
       : "Complete setup to replace or repair the outdated runtime build.";
@@ -312,7 +314,7 @@ function configureInstallerGuidance(state, runtimeView) {
     return;
   }
   installerNoteTitle.textContent = `Run the ${platformName} installer after downloading it`;
-  installerStepOpen.innerHTML = `Open <code>${installerName}</code> when the download finishes.`;
+  installerStepOpen.innerHTML = `Open <code>${runtimeInstallerName}</code> when the download finishes.`;
   installerStepRun.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
     ? "Complete the unsigned macOS setup. If blocked, use Privacy & Security > Open Anyway; do not disable Gatekeeper."
     : `Complete the ${platformName} setup flow.`;
