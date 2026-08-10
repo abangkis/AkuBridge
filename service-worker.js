@@ -38,7 +38,10 @@ import {
   createChromeNativeRuntimeClient,
   probeCompatibleLoopbackRuntime,
 } from "./native-runtime-client.js";
-import { planNativeRuntimeLifecycle } from "./native-runtime-lifecycle.js";
+import {
+  nativeRuntimeDistribution,
+  planNativeRuntimeLifecycle,
+} from "./native-runtime-lifecycle.js";
 import {
   reconcileRegisteredSourceScripts,
   sourceAccessGranted,
@@ -99,6 +102,7 @@ const SOURCE_SCRIPT_FILES = [
   "media-acquisition-engine.js",
   "content-script.js",
 ];
+const NATIVE_RUNTIME_DISTRIBUTION = nativeRuntimeDistribution(chrome.runtime.getManifest());
 
 void resumePendingSelfReload().catch((error) => {
   console.error("AkuBridge could not resume the pending AkuBrowser tab reload.", error);
@@ -113,7 +117,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.runtime.onInstalled.addListener((details) => {
-  const plan = planNativeRuntimeLifecycle("installed", details);
+  const plan = planNativeRuntimeLifecycle("installed", {
+    ...details,
+    distribution: NATIVE_RUNTIME_DISTRIBUTION,
+  });
   if (plan.openSetup) {
     chrome.tabs.create({ url: chrome.runtime.getURL("setup.html"), active: true });
   }
@@ -126,7 +133,9 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  void executeNativeRuntimeLifecycle(planNativeRuntimeLifecycle("startup")).catch(() => {
+  void executeNativeRuntimeLifecycle(planNativeRuntimeLifecycle("startup", {
+    distribution: NATIVE_RUNTIME_DISTRIBUTION,
+  })).catch(() => {
     console.warn("AkuBrowser could not record native runtime startup state.");
   });
   void scheduleSourceAccessReconciliation().catch(() => {

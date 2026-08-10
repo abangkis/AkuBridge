@@ -6,20 +6,24 @@ const INSTALLED_REASONS = new Set([
 ]);
 
 export function planNativeRuntimeLifecycle(event, details = {}) {
+  const distribution = details.distribution ?? "production";
+  if (distribution !== "development" && distribution !== "production") {
+    throw new TypeError(`Unsupported AkuBridge distribution: ${String(distribution)}`);
+  }
   if (event === "installed") {
     const reason = String(details.reason ?? "");
     if (!INSTALLED_REASONS.has(reason)) {
       throw new TypeError(`Unsupported Chrome installation reason: ${reason || "missing"}`);
     }
     return Object.freeze({
-      action: reason === "install" ? "none" : "ensure_runtime",
+      action: reason === "install" || distribution === "development" ? "none" : "ensure_runtime",
       trigger: `installed_${reason}`,
       openSetup: reason === "install",
     });
   }
   if (event === "startup") {
     return Object.freeze({
-      action: "ensure_runtime",
+      action: distribution === "development" ? "none" : "ensure_runtime",
       trigger: "startup",
       openSetup: false,
     });
@@ -32,4 +36,10 @@ export function planNativeRuntimeLifecycle(event, details = {}) {
     });
   }
   throw new TypeError(`Unsupported native runtime lifecycle event: ${String(event)}`);
+}
+
+export function nativeRuntimeDistribution(manifest = {}) {
+  return typeof manifest.key === "string" && manifest.key.trim() !== ""
+    ? "development"
+    : "production";
 }
