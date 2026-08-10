@@ -262,6 +262,7 @@ function runtimeContext(extractCandidates, options = {}) {
   };
   context.globalThis = context;
   const sandbox = vm.createContext(context);
+  runScript(sandbox, "media-post-processor.js");
   runScript(sandbox, "media-acquisition-engine.js");
   return sandbox;
 }

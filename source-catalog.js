@@ -34,7 +34,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "facebook",
     displayName: "Facebook",
-    adapterVersion: "facebook-dom-v17",
+    adapterVersion: "facebook-dom-v18",
     adapterScript: "adapters/facebook-adapter.js",
     supportScripts: Object.freeze([]),
     feedUrl: "https://www.facebook.com/",
@@ -42,6 +42,9 @@ const SOURCE_DEFINITIONS = Object.freeze([
     hostnames: Object.freeze(["www.facebook.com", "facebook.com"]),
     canonicalFeedPath: /^\/$/,
     nativePostPath: /\/(?:posts\/|permalink\/|story\.php|photo|videos\/|reel\/)/,
+    mediaEvidenceAdapterVersion: "facebook-structured-video-v1",
+    structuredMediaCollector: "facebook_structured",
+    structuredMediaPayloadField: "facebookStructuredMediaEvidence",
     hydration: Object.freeze({ defaultTimeoutMs: 25_000, minTimeoutMs: 20_000, maxTimeoutMs: 30_000 }),
     readiness: Object.freeze({ initialTimeoutMs: 25_000 }),
     captureRecovery: Object.freeze({

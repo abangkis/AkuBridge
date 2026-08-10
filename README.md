@@ -1,7 +1,7 @@
 # AkuBridge
 
 Current preview identity: **`0.7.9`** / Chrome manifest
-**`0.7.9.0`** / runtime **`source-adapters-v87`**.
+**`0.7.9.0`** / runtime **`source-adapters-v88`**.
 
 Runtime v73 adds bounded background command dispatch for AkuBrowser Auto
 Update. After a trusted local AkuBrowser page configures the loopback endpoint
@@ -57,18 +57,21 @@ flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
     DOM --> XA["X adapter<br/>x-dom-v21<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
     DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v19<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
-    DOM --> FA["Facebook adapter<br/>facebook-dom-v17<br/>feed posts only"]
+    DOM --> FA["Facebook adapter<br/>facebook-dom-v18<br/>facebook-media-acquisition-v2"]
     XA --> R["Source-adapter registry"]
     LA --> R
     FA --> R
     R --> F["Generic freshness recovery<br/>wake -> reveal -> proof"]
     F --> C["Shared content runtime"]
     C --> Q["Generic evidence admission<br/>social-post-v2"]
-    Q --> M["Generic media acquisition<br/>primary -> structured -> hydrate -> alternate DOM"]
+    Q --> MP["Generic media-post processor<br/>merge poster + structured playback"]
+    MP --> M["Generic media acquisition<br/>primary -> structured -> hydrate -> alternate DOM"]
     DOM --> XE["X DOM media evidence<br/>document-start watcher + MAIN-world resolver"]
     XG["Already-requested X GraphQL responses<br/>3 exact operations"] --> XR["X response evidence adapter<br/>document_start / MAIN world"]
     XE --> XC["Sanitized bounded URL cache<br/>30 min TTL / 128 posts / 4 media"]
     XR --> XC
+    FJ["Facebook bounded JSON payload<br/>progressive MP4 + post identity"] --> FR["Facebook structured resolver<br/>source-specific parser"]
+    FR --> MP
     XR --> AC["Ephemeral avatar cache<br/>30 min TTL / 256 keys"]
     XR --> AP["Sanitized avatar fallback<br/>7 day TTL / 512 status-or-handle keys"]
     AP --> AC

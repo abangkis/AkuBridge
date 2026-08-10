@@ -16,21 +16,25 @@
     '[data-ad-preview="message"] ~ * img[src]',
     'video',
   ].join(", ");
+  const mediaEvidenceRuntime = globalThis.AkuMediaPostProcessor?.createEvidenceRuntime?.({
+    source: "facebook",
+    candidateIdFromContainer: facebookCandidateIdFromContainer,
+    normalizeCandidateId: (value) => facebookPlatformIdFromCandidates([value]),
+    normalizeMedia: normalizeFacebookStructuredMedia,
+    ttlMs: 15 * 60 * 1_000,
+  }) ?? null;
 
   registry.register({
     source: "facebook",
-    version: "facebook-dom-v17",
+    version: "facebook-dom-v18",
     mediaHosts: Object.freeze(["fbcdn.net", "fbsbx.com"]),
-    platformIdFromCandidates: (values) => {
-      for (const value of Array.isArray(values) ? values : []) {
-        const candidate = String(value ?? "");
-        const id = candidate.match(/[?&](?:story_fbid|fbid|photo_id|v)=(\d+)/i)?.[1]
-          ?? candidate.match(/[?&]set=pcb\.(\d+)/i)?.[1]
-          ?? candidate.match(/\/(?:posts|videos|reel)\/(pfbid[A-Za-z0-9]+|\d+)/i)?.[1];
-        if (id) return `facebook:post:${id}`;
-      }
-      return null;
-    },
+    structuredMediaEvidence: Object.freeze({
+      payloadField: "facebookStructuredMediaEvidence",
+      runtime: () => mediaEvidenceRuntime,
+      coverageKey: "facebookStructuredMediaEvidence",
+      label: "Facebook media evidence",
+    }),
+    platformIdFromCandidates: facebookPlatformIdFromCandidates,
     qualityProfile: "social-post-v2",
     evidenceProfile: Object.freeze({
       contentFamily: "feed_post",
@@ -55,11 +59,18 @@
       pendingContentPattern: /^(?:new posts?|see new posts?)$/i,
     }),
     mediaAcquisition: Object.freeze({
-      version: "facebook-media-acquisition-v1",
+      version: "facebook-media-acquisition-v2",
       maxAttempts: 1,
       settleMs: 900,
       quietRecovery: "bounded_dom",
       detectExpectedKinds: (container, helpers) => facebookMediaRoots(container, helpers).map(({ kind }) => kind),
+      extractStructuredCandidates: (container) => (
+        mediaEvidenceRuntime?.lookupContainer?.(container) ?? []
+      ).map((entry) => ({
+        ...entry,
+        trustedMediaRoot: true,
+        urlSource: entry.provenance ?? "facebook_structured_json",
+      })),
       extractCandidates: (container, helpers) => facebookMediaRoots(container, helpers).flatMap(({ root, kind }) =>
         helpers.collectRootCandidates(root, {
           kind,
@@ -250,6 +261,78 @@
       return Boolean(image.closest('a[role="link"]')) && rect.width <= 96 && rect.height <= 96;
     },
   });
+
+  function facebookPlatformIdFromCandidates(values) {
+    for (const value of Array.isArray(values) ? values : []) {
+      const candidate = String(value ?? "");
+      const direct = candidate.match(/^facebook:post:(pfbid[A-Za-z0-9]+|\d+)$/i)?.[1];
+      const id = direct
+        ?? candidate.match(/[?&](?:story_fbid|fbid|photo_id|v)=(\d+)/i)?.[1]
+        ?? candidate.match(/[?&]set=pcb\.(\d+)/i)?.[1]
+        ?? candidate.match(/\/(?:posts|videos|reel)\/(pfbid[A-Za-z0-9]+|\d+)/i)?.[1];
+      if (id) return `facebook:post:${id}`;
+    }
+    return null;
+  }
+
+  function facebookCandidateIdFromContainer(container) {
+    if (!container) return null;
+    const preferredValues = [];
+    const fallbackValues = [
+      container.getAttribute?.("data-id"),
+      container.getAttribute?.("data-ft"),
+      container.getAttribute?.("data-store"),
+    ];
+    for (const anchor of container.querySelectorAll?.("a[href]") ?? []) {
+      const href = anchor.href || anchor.getAttribute?.("href");
+      if (/\/(?:videos|reel)\/|[?&]v=/i.test(String(href ?? ""))) {
+        preferredValues.push(anchor.href, anchor.getAttribute?.("href"));
+      } else {
+        fallbackValues.push(anchor.href, anchor.getAttribute?.("href"));
+      }
+    }
+    return facebookPlatformIdFromCandidates([...preferredValues, ...fallbackValues]);
+  }
+
+  function normalizeFacebookStructuredMedia(value) {
+    if (!value || value.kind !== "video") return null;
+    const posterUrl = safeFacebookMediaUrl(value.posterUrl || value.url, "image");
+    const playbackUrl = safeFacebookMediaUrl(value.playbackUrl, "video");
+    if (!posterUrl || !playbackUrl) return null;
+    return Object.freeze({
+      kind: "video",
+      url: posterUrl,
+      posterUrl,
+      playbackUrl,
+      playbackMode: "inline",
+      width: positiveMediaDimension(value.width),
+      height: positiveMediaDimension(value.height),
+      provenance: String(value.provenance || "facebook_structured_json").slice(0, 60),
+    });
+  }
+
+  function safeFacebookMediaUrl(value, kind) {
+    if (typeof value !== "string") return null;
+    try {
+      const url = new URL(value);
+      const host = url.hostname.toLowerCase();
+      if (
+        url.protocol !== "https:" || url.username || url.password || url.port ||
+        !["fbcdn.net", "fbsbx.com"].some((suffix) => host === suffix || host.endsWith(`.${suffix}`))
+      ) return null;
+      if (kind === "video" && !/\.mp4$/i.test(url.pathname)) return null;
+      if (kind === "image" && !/\.(?:avif|gif|jpe?g|png|webp)$/i.test(url.pathname)) return null;
+      url.hash = "";
+      return url.href;
+    } catch {
+      return null;
+    }
+  }
+
+  function positiveMediaDimension(value) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? Math.min(8_192, Math.round(number)) : 0;
+  }
 
   function facebookPostAdmission(candidate) {
     if (candidate.closest?.('[aria-label="Stories"], [aria-label="Reels"]')) {

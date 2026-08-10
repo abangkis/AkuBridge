@@ -20,7 +20,7 @@ test("source catalog exposes Facebook without changing the X media capability", 
   assert.deepEqual(sourceAdapterVersions(), {
     x: "x-dom-v21",
     linkedin: "linkedin-dom-v19",
-    facebook: "facebook-dom-v17",
+    facebook: "facebook-dom-v18",
   });
   assert.equal(sourceForUrl("https://www.facebook.com/"), "facebook");
   assert.equal(isCanonicalFeed("https://www.facebook.com/", "facebook"), true);
@@ -57,7 +57,7 @@ test("Facebook adapter passes synthetic Home Feed conformance", () => {
   const discovery = adapter.discoverCandidates({ uniqueElements: (items) => [...new Set(items)] });
   const helpers = { compactText, normalizeHttpUrl, structuredText: (element) => element?.innerText ?? "" };
 
-  assert.equal(adapter.version, "facebook-dom-v17");
+  assert.equal(adapter.version, "facebook-dom-v18");
   assert.equal(adapter.captureTuning.scrollStepMultiplier, 2);
   assert.equal(adapter.captureTuning.scrollStrategy, "next_candidate");
   assert.deepEqual([...adapter.evidenceProfile.modalities], ["text", "image", "video", "attachment", "quoted_post"]);

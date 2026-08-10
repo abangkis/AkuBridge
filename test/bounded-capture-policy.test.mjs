@@ -314,6 +314,7 @@ test("the policy is loaded before the source content script", () => {
     "bounded-capture-policy.js",
     "capture-quality-policy.js",
     "source-adapter-runtime.js",
+    "media-post-processor.js",
     "adapters/x-adapter.js",
     "source-freshness-runtime.js",
     "media-acquisition-engine.js",

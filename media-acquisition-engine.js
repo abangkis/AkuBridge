@@ -1,10 +1,12 @@
 (() => {
-  const runtimeRevision = "media-acquisition-engine-v3";
-  const policyVersion = "media-acquisition-v1";
+  const runtimeRevision = "media-acquisition-engine-v4";
+  const policyVersion = "media-acquisition-v2";
   const sourceAdapters = globalThis.AkuSourceAdapters;
   const capturePolicy = globalThis.AkuBoundedCapturePolicy;
+  const mediaPostProcessor = globalThis.AkuMediaPostProcessor;
   if (!sourceAdapters) throw new Error("AkuBridge source-adapter runtime was not loaded.");
   if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
+  if (!mediaPostProcessor) throw new Error("AkuBridge media-post processor was not loaded.");
 
   async function acquire({
     source,
@@ -30,6 +32,7 @@
     const base = {
       policyVersion,
       engineVersion: runtimeRevision,
+      postProcessorVersion: mediaPostProcessor.runtimeRevision,
       strategyVersion: strategy?.version ?? "unsupported",
       source,
       expectedKinds,
@@ -44,22 +47,6 @@
       candidateDiagnostics,
     };
     const primary = normalizeMedia(source, initialMedia);
-    if (primary.length > 0) {
-      return result(primary, {
-        ...base,
-        outcome: "primary_complete",
-        acquisitionStage: "primary_dom",
-        trace: ["primary_complete"],
-      });
-    }
-    if (!mediaRootDetected && expectedKinds.length === 0) {
-      return result([], {
-        ...base,
-        outcome: "not_applicable",
-        trace: ["primary_missing", "media_root_absent"],
-      });
-    }
-
     const structured = normalizeMedia(
       source,
       strategy.extractStructuredCandidates?.(container, {
@@ -69,14 +56,32 @@
       }) ?? [],
     );
     recordDiagnostics(candidateDiagnostics, "structured_state", structured);
-    if (structured.length > 0) {
-      return result(structured, {
+    const processed = mediaPostProcessor.process(source, primary, structured);
+    if (processed.media.length > 0) {
+      const enriched = processed.enrichedCount > 0;
+      const structuredOnly = primary.length === 0 && structured.length > 0;
+      return result(processed.media, {
         ...base,
-        outcome: "recovered",
-        recoveredCount: structured.length,
-        method: "structured_state",
-        acquisitionStage: "structured_state",
-        trace: ["primary_missing", "media_root_detected", "structured_state_complete"],
+        outcome: enriched || structuredOnly ? "recovered" : "primary_complete",
+        recoveredCount: enriched ? processed.enrichedCount : structuredOnly ? processed.media.length : 0,
+        method: enriched ? "structured_enrichment" : structuredOnly ? "structured_state" : "none",
+        acquisitionStage: enriched
+          ? "structured_enrichment"
+          : structuredOnly
+            ? "structured_state"
+            : "primary_dom",
+        trace: enriched
+          ? ["primary_complete", "structured_enrichment_complete"]
+          : structuredOnly
+            ? ["primary_missing", "structured_state_complete"]
+            : ["primary_complete"],
+      });
+    }
+    if (!mediaRootDetected && expectedKinds.length === 0) {
+      return result([], {
+        ...base,
+        outcome: "not_applicable",
+        trace: ["primary_missing", "media_root_absent"],
       });
     }
 

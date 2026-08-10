@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v87";
+  const runtimeRevision = "source-adapters-v88";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -419,9 +419,7 @@
             `${mediaAcquisition.outcomes.unavailable} unavailable, ${mediaAcquisition.attempts} bounded attempt(s), ` +
             `${mediaAcquisition.foregroundRequiredCount} foreground-required.`,
           structuredMediaPolicy
-            ? `${structuredMediaPolicy.label}: ${structuredMediaAcceptedCandidateCount} structured candidate(s) accepted; ` +
-              `${structuredMediaRuntime?.responseDiagnostics?.()?.acceptedCandidateCount ?? 0} response-backed media candidate(s) and ` +
-              `${structuredMediaRuntime?.responseDiagnostics?.()?.acceptedAvatarCandidateCount ?? 0} response-backed avatar candidate(s) accepted into separate bounded caches.`
+            ? `${structuredMediaPolicy.label}: ${structuredMediaAcceptedCandidateCount} structured candidate(s) accepted into the bounded source-media cache.`
             : null,
           payload.tabAcquisition?.opened
             ? "AkuBridge opened one inactive canonical source tab for this initial acquisition."

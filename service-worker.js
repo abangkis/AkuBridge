@@ -46,6 +46,7 @@ import {
   sourcesForGrantedOrigins,
 } from "./source-access-policy.js";
 import { resolveXStructuredMediaInMainWorld } from "./x-main-world-media-resolver.js";
+import { resolveFacebookStructuredMediaInMainWorld } from "./facebook-main-world-media-resolver.js";
 import { createXMediaEvidenceStore } from "./x-media-evidence-store.js";
 import { createXAvatarEvidenceStore } from "./x-avatar-evidence-store.js";
 import {
@@ -80,11 +81,13 @@ const xMediaEvidenceStore = createXMediaEvidenceStore(chrome.storage.local);
 const xAvatarEvidenceStore = createXAvatarEvidenceStore(chrome.storage.local);
 const structuredMediaCollectors = new Map([
   ["x_response", collectXStructuredMediaEvidence],
+  ["facebook_structured", collectFacebookStructuredMediaEvidence],
 ]);
 const SOURCE_SCRIPT_FILES = [
   "bounded-capture-policy.js",
   "capture-quality-policy.js",
   "source-adapter-runtime.js",
+  "media-post-processor.js",
   ...sourceRuntimeScripts(),
   "source-freshness-runtime.js",
   "media-acquisition-engine.js",
@@ -1193,6 +1196,35 @@ async function findOrOpenSourceTab(
     hydrationTimeoutMs: requestedHydrationTimeoutMs,
     lifecycleEvents,
   });
+}
+
+async function collectFacebookStructuredMediaEvidence(tabId) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: resolveFacebookStructuredMediaInMainWorld,
+      args: [{
+        maxCandidates: 16,
+        maxScripts: 32,
+        maxScriptBytes: 256_000,
+        maxTotalBytes: 2_000_000,
+        maxTraversalNodes: 20_000,
+        maxDepth: 40,
+      }],
+    });
+    return results?.[0]?.result ?? null;
+  } catch (error) {
+    return {
+      runtimeRevision: "facebook-main-world-media-resolver-v1",
+      resolverVersion: "facebook-structured-video-v1",
+      candidates: [],
+      diagnostics: {
+        status: "unavailable",
+        reason: String(error?.message ?? error).slice(0, 300),
+      },
+    };
+  }
 }
 
 function assertRecaptureTarget(source, rawUrl) {
