@@ -242,12 +242,12 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
     linkedInAdapter,
     /\[data-testid="mainFeed"\] \[role="listitem"\]/,
   );
-  assert.match(linkedInAdapter, /linkedin-dom-v19/);
+  assert.match(linkedInAdapter, /linkedin-dom-v20/);
   assert.match(contentScript, /platformId/);
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v89/);
+  assert.match(contentScript, /source-adapters-v90/);
   assert.match(contentScript, /candidateDiagnostics: normalizeCandidateDiagnostics/);
   assert.match(contentScript, /function normalizeCandidateDiagnostics/);
   assert.match(contentScript, /plan\.scrollFraction \* scrollStepMultiplier/);
@@ -329,6 +329,7 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
     path.join(projectRoot, "media-acquisition-engine.js"),
     "utf8",
   );
+  const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
 
   assert.match(linkedInAdapter, /"#workspace"/);
   assert.match(contentScript, /isScrollableElement/);
@@ -357,7 +358,10 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
   assert.match(mediaAcquisitionEngine, /quiet_recovery_unsupported/);
   assert.doesNotMatch(mediaAcquisitionEngine, /source\s*===\s*["'](?:x|linkedin)["']/);
   assert.match(xAdapter, /x-media-acquisition-v2/);
-  assert.match(linkedInAdapter, /linkedin-media-acquisition-v1/);
+  assert.match(linkedInAdapter, /linkedin-media-acquisition-v2/);
+  assert.match(linkedInAdapter, /AKU_LINKEDIN_COLLECT_STRUCTURED_MEDIA/);
+  assert.match(mediaAcquisitionEngine, /await strategy\.extractStructuredCandidates/);
+  assert.match(worker, /AKU_LINKEDIN_COLLECT_STRUCTURED_MEDIA/);
   assert.match(contentScript, /mediaAcquisitionEngine\.acquire/);
   assert.match(contentScript, /const captureVisibilityMode =\s*payload\.tabAcquisition\?\.captureVisibilityMode \?\? "same_window"/);
   assert.match(
@@ -523,12 +527,13 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /capabilities: response\.capabilities/);
   const capabilities = createBridgeCapabilities({ version: "0.7.9.0", version_name: "0.7.9", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.7.9");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v89");
-  assert.equal(capabilities.buildId, "aku-bridge-0.7.9-source-adapters-v89");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v90");
+  assert.equal(capabilities.buildId, "aku-bridge-0.7.9-source-adapters-v90");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v21", linkedin: "linkedin-dom-v19", facebook: "facebook-dom-v18" });
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v21", linkedin: "linkedin-dom-v20", facebook: "facebook-dom-v18" });
   assert.deepEqual(capabilities.mediaEvidenceAdapterVersions, {
     x: "x-response-evidence-v2",
+    linkedin: "linkedin-main-world-video-v1",
     facebook: "facebook-structured-video-v1",
   });
   assert.ok(capabilities.actions.includes("reload_self"));

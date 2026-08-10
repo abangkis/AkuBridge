@@ -128,20 +128,26 @@
     const structuredVideos = structured.filter((value) => value.kind === "video");
 
     for (const primaryValue of primary) {
-      if (primaryValue.kind !== "video") {
+      if (primaryValue.kind !== "video" && primaryValue.kind !== "image") {
         combined.push(primaryValue);
         continue;
       }
       const match = structuredVideos.find((value) => (
         unusedStructured.has(value) && (
           samePoster(primaryValue, value) ||
-          primaryVideos.length === 1 && structuredVideos.length === 1
+          primaryValue.kind === "video" &&
+            primaryVideos.length === 1 && structuredVideos.length === 1
         )
       ));
       if (!match) {
         combined.push(primaryValue);
         continue;
       }
+      const materiallyEnriched = primaryValue.kind !== "video" ||
+        primaryValue.playbackMode !== "inline" ||
+        primaryValue.playbackUrl !== match.playbackUrl ||
+        (!primaryValue.width && Boolean(match.width)) ||
+        (!primaryValue.height && Boolean(match.height));
       unusedStructured.delete(match);
       combined.push({
         ...primaryValue,
@@ -151,7 +157,7 @@
         width: primaryValue.width || match.width,
         height: primaryValue.height || match.height,
       });
-      enrichedCount += 1;
+      if (materiallyEnriched) enrichedCount += 1;
     }
 
     for (const value of structured) {

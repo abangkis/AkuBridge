@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "channel": "stable",
   "version": "0.7.9",
-  "runtimeRevision": "source-adapters-v89",
+  "runtimeRevision": "source-adapters-v90",
   "bridgeContractVersion": "aku-browser.bridge.v2",
   "rollbackVersion": null
 }

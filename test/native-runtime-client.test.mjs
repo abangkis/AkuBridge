@@ -32,7 +32,7 @@ test("native runtime request carries only the bounded AkuBrowser identity contra
     extension: {
       product: "AkuBrowser",
       productVersion: "0.7.4",
-      runtimeRevision: "source-adapters-v89",
+      runtimeRevision: "source-adapters-v90",
       bridgeContractVersion: "aku-browser.bridge.v2",
     },
   });

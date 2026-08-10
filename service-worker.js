@@ -49,6 +49,7 @@ import {
   sourcesForGrantedOrigins,
 } from "./source-access-policy.js";
 import { resolveXStructuredMediaInMainWorld } from "./x-main-world-media-resolver.js";
+import { resolveLinkedInStructuredMediaInMainWorld } from "./linkedin-main-world-media-resolver.js";
 import { resolveFacebookStructuredMediaInMainWorld } from "./facebook-main-world-media-resolver.js";
 import {
   captureWithParallelStructuredMedia,
@@ -90,6 +91,7 @@ const xMediaEvidenceStore = createXMediaEvidenceStore(chrome.storage.local);
 const xAvatarEvidenceStore = createXAvatarEvidenceStore(chrome.storage.local);
 const structuredMediaCollectors = new Map([
   ["x_response", collectXStructuredMediaEvidence],
+  ["linkedin_main_world", collectLinkedInStructuredMediaEvidence],
   ["facebook_structured", collectFacebookStructuredMediaEvidence],
 ]);
 const SOURCE_SCRIPT_FILES = [
@@ -283,6 +285,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       Math.min(CAPTURE_DELAY_MAX_MS, Math.trunc(Number(message.milliseconds) || 0)),
     );
     setTimeout(() => sendResponse({ ok: true }), milliseconds);
+    return true;
+  }
+  if (message?.type === "AKU_LINKEDIN_COLLECT_STRUCTURED_MEDIA") {
+    if (!isTrustedSourceContentSender(sender) || sourceForUrl(sender.url) !== "linkedin") {
+      sendResponse({ ok: false, message: "LinkedIn media collection rejected: invalid source tab." });
+      return false;
+    }
+    collectLinkedInStructuredMediaEvidence(sender.tab.id, {
+      candidateIds: message.candidateIds,
+      playerIds: message.playerIds,
+    })
+      .then((evidence) => sendResponse({ ok: true, evidence }))
+      .catch((error) => sendResponse({
+        ok: false,
+        message: String(error?.message ?? error).slice(0, 300),
+      }));
     return true;
   }
   if (message?.type !== "AKU_BROWSER_DISPATCH") return undefined;
@@ -1268,6 +1286,40 @@ async function collectFacebookStructuredMediaEvidence(tabId) {
     return {
       runtimeRevision: "facebook-main-world-media-resolver-v1",
       resolverVersion: "facebook-structured-video-v1",
+      candidates: [],
+      diagnostics: {
+        status: "unavailable",
+        reason: String(error?.message ?? error).slice(0, 300),
+      },
+    };
+  }
+}
+
+async function collectLinkedInStructuredMediaEvidence(tabId, request = {}) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: resolveLinkedInStructuredMediaInMainWorld,
+      args: [{
+        candidateIds: (Array.isArray(request.candidateIds) ? request.candidateIds : [])
+          .filter((value) => /^linkedin:(?:activity|ugcpost|share):\d{5,30}$/i.test(String(value ?? "")))
+          .slice(0, 4),
+        playerIds: (Array.isArray(request.playerIds) ? request.playerIds : [])
+          .map((value) => String(value ?? "").trim().slice(0, 240))
+          .filter(Boolean)
+          .slice(0, 4),
+        maxCandidates: 16,
+        maxPlayers: 16,
+        maxTraversalNodes: 3_000,
+        maxDepth: 10,
+      }],
+    });
+    return results?.[0]?.result ?? null;
+  } catch (error) {
+    return {
+      runtimeRevision: "linkedin-main-world-media-resolver-v1",
+      resolverVersion: "linkedin-main-world-video-v1",
       candidates: [],
       diagnostics: {
         status: "unavailable",

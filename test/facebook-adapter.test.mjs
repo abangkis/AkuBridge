@@ -19,7 +19,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 test("source catalog exposes Facebook without changing the X media capability", () => {
   assert.deepEqual(sourceAdapterVersions(), {
     x: "x-dom-v21",
-    linkedin: "linkedin-dom-v19",
+    linkedin: "linkedin-dom-v20",
     facebook: "facebook-dom-v18",
   });
   assert.equal(sourceForUrl("https://www.facebook.com/"), "facebook");

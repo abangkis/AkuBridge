@@ -11,6 +11,7 @@
   async function acquire({
     source,
     container,
+    candidateId = null,
     excludeRoot = null,
     initialMedia = [],
     mediaRootDetected = false,
@@ -49,7 +50,8 @@
     const primary = normalizeMedia(source, initialMedia);
     const structured = normalizeMedia(
       source,
-      strategy.extractStructuredCandidates?.(container, {
+      await strategy.extractStructuredCandidates?.(container, {
+        candidateId,
         excludeRoot,
         collectRootCandidates,
         uniqueElements,

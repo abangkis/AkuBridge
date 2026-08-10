@@ -35,6 +35,37 @@ test("generic media-post processor enriches an existing poster with structured p
   assert.equal(result.media[0].posterUrl, poster.posterUrl);
 });
 
+test("generic media-post processor promotes an exact LinkedIn poster image to video", () => {
+  const context = processorContext();
+  const processor = context.AkuMediaPostProcessor;
+  const posterUrl = "https://media.licdn.com/dms/image/v2/example/feedshare-shrink_800/example.jpg";
+  const playbackUrl = "https://dms.licdn.com/playlist/vid/example/mp4-720p-30fp-crf28/example.mp4";
+  const primary = {
+    kind: "image",
+    url: posterUrl,
+    width: 1280,
+    height: 720,
+  };
+  const structured = {
+    kind: "video",
+    url: posterUrl,
+    posterUrl,
+    playbackUrl,
+    playbackMode: "inline",
+    provenance: "linkedin_main_world_videojs",
+  };
+
+  const result = processor.process("linkedin", [primary], [structured]);
+
+  assert.equal(result.enrichedCount, 1);
+  assert.equal(result.media.length, 1);
+  assert.equal(result.media[0].kind, "video");
+  assert.equal(result.media[0].playbackMode, "inline");
+  assert.equal(result.media[0].playbackUrl, playbackUrl);
+  assert.equal(result.media[0].posterUrl, posterUrl);
+  assert.equal(result.media[0].width, primary.width);
+});
+
 test("generic evidence runtime keeps source identity and media validation in callbacks", () => {
   let now = 1_000;
   const context = processorContext();
@@ -109,6 +140,43 @@ test("generic post processor enriches captured snapshots after parallel collecti
   assert.deepEqual(
     [...snapshots[0].blocks[0].mediaRecovery.trace],
     ["primary_complete", "structured_deferred_complete"],
+  );
+});
+
+test("deferred evidence does not double-count an already inline video", () => {
+  const processor = processorContext().AkuMediaPostProcessor;
+  const posterUrl = "https://dms.licdn.com/playlist/vid/v2/example/thumbnail-low/example/0/1";
+  const playbackUrl = "https://dms.licdn.com/playlist/vid/v2/example/mp4-720p-30fp-crf28/example/0/1";
+  const media = {
+    kind: "video",
+    url: posterUrl,
+    posterUrl,
+    playbackUrl,
+    playbackMode: "inline",
+    width: 1280,
+    height: 720,
+  };
+  const snapshots = [{ blocks: [{
+    platformId: "linkedin:activity:12345",
+    contentKind: "video",
+    media: [{ ...media }],
+    mediaRecovery: {
+      outcome: "recovered",
+      recoveredCount: 1,
+      method: "structured_enrichment",
+      trace: ["structured_enrichment_complete"],
+    },
+  }] }];
+
+  const result = processor.processSnapshots("linkedin", snapshots, () => [{ ...media }]);
+
+  assert.equal(result.structuredBlockCount, 1);
+  assert.equal(result.enrichedBlockCount, 0);
+  assert.equal(snapshots[0].blocks[0].mediaRecovery.recoveredCount, 1);
+  assert.equal(snapshots[0].blocks[0].mediaRecovery.method, "structured_enrichment");
+  assert.deepEqual(
+    [...snapshots[0].blocks[0].mediaRecovery.trace],
+    ["structured_enrichment_complete", "structured_deferred_complete"],
   );
 });
 

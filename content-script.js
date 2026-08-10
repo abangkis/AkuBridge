@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v89";
+  const runtimeRevision = "source-adapters-v90";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -667,6 +667,7 @@
             mediaRecovery = await mediaAcquisitionEngine.acquire({
               source,
               container,
+              candidateId: block.platformId,
               excludeRoot: quotedRoot,
               initialMedia: block.media,
               mediaRootDetected: true,
@@ -721,6 +722,7 @@
           mediaRecovery = await mediaAcquisitionEngine.acquire({
             source,
             container,
+            candidateId: block.platformId,
             excludeRoot: sourceAdapters.get(source).findQuotedRoot?.(container) ?? null,
             initialMedia: block.media,
             mediaRootDetected: captureQuality.issues.some((issue) => issue.field === "media"),

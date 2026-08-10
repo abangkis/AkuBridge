@@ -27,6 +27,33 @@ test("media acquisition accepts already complete primary media without retry", a
   assert.deepEqual([...result.audit.trace], ["primary_complete"]);
 });
 
+test("media acquisition awaits one source-specific structured media lookup", async () => {
+  let resolved = false;
+  const context = runtimeContext(() => [], {
+    expectedKinds: ["video"],
+    extractStructuredCandidates: async (_container, { candidateId }) => {
+      assert.equal(candidateId, "linkedin:activity:7490315383795568640");
+      await Promise.resolve();
+      resolved = true;
+      return [media("https://media.licdn.com/dms/image/v2/example/videocover-low/poster.jpg", "video")];
+    },
+  });
+  const result = await context.AkuMediaAcquisitionEngine.acquire({
+    source: "linkedin",
+    container: {},
+    candidateId: "linkedin:activity:7490315383795568640",
+    initialMedia: [],
+    mediaRootDetected: true,
+    attemptsAvailable: 0,
+    extractPrimary: () => [],
+    delay: async () => {},
+  });
+  assert.equal(resolved, true);
+  assert.equal(result.audit.outcome, "recovered");
+  assert.equal(result.audit.method, "structured_state");
+  assert.equal(result.media.length, 1);
+});
+
 test("media acquisition retries primary hydration before adapter fallback", async () => {
   const context = runtimeContext(() => {
     throw new Error("adapter fallback must not run after primary hydration");
@@ -249,6 +276,7 @@ function runtimeContext(extractCandidates, options = {}) {
       quietRecovery: options.quietRecovery ?? "bounded_dom",
       foregroundAfterQuietExhaustion: options.foregroundAfterQuietExhaustion === true,
       detectExpectedKinds() { return options.expectedKinds ?? ["image"]; },
+      extractStructuredCandidates: options.extractStructuredCandidates,
       extractCandidates,
     },
   };

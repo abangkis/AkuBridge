@@ -17,10 +17,24 @@
     'a[href*="/school/"] img',
     'a[href*="/showcase/"] img',
   ].join(", ");
+  let lastLiveMediaDiagnostics = null;
+  const baseMediaEvidenceRuntime = globalThis.AkuMediaPostProcessor?.createEvidenceRuntime?.({
+    source: "linkedin",
+    candidateIdFromContainer: linkedinCandidateIdFromContainer,
+    normalizeCandidateId: (value) => linkedinPlatformIdFromCandidates([value]),
+    normalizeMedia: normalizeLinkedInStructuredMedia,
+    ttlMs: 10 * 60 * 1_000,
+  }) ?? null;
+  const mediaEvidenceRuntime = baseMediaEvidenceRuntime ? Object.freeze({
+    ...baseMediaEvidenceRuntime,
+    responseDiagnostics: () => lastLiveMediaDiagnostics,
+  }) : null;
+  let liveMediaScan = null;
+  let liveMediaScanStartedAtMs = 0;
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v19",
+    version: "linkedin-dom-v20",
     maxBlocksPerSnapshot: 8,
     scrollContext: "nearest_scrollable",
     scrollRootSelectors: Object.freeze(['[data-testid="mainFeed"]', "main", "#workspace"]),
@@ -54,16 +68,13 @@
       globalThis.AkuLinkedInTimestampPolicy?.estimateFromRelativeText(timestampText, capturedAt) ?? null,
     recoverPermalinks: recoverLinkedInPermalinks,
     mediaHosts: Object.freeze(["licdn.com"]),
-    platformIdFromCandidates: (values) => {
-      for (const value of Array.isArray(values) ? values : []) {
-        const candidate = String(value ?? "");
-        const urn = candidate.match(/urn:li:(activity|ugcPost|share):(\d+)/i);
-        if (urn) return `linkedin:${urn[1].toLowerCase()}:${urn[2]}`;
-        const activity = candidate.match(/activity[-/:](\d+)/i);
-        if (activity) return `linkedin:activity:${activity[1]}`;
-      }
-      return null;
-    },
+    structuredMediaEvidence: Object.freeze({
+      payloadField: "linkedinStructuredMediaEvidence",
+      runtime: () => mediaEvidenceRuntime,
+      coverageKey: "linkedinStructuredMediaEvidence",
+      label: "LinkedIn media evidence",
+    }),
+    platformIdFromCandidates: linkedinPlatformIdFromCandidates,
     qualityProfile: "social-post-v2",
     evidenceProfile: Object.freeze({
       contentFamily: "feed_post",
@@ -96,11 +107,12 @@
       pendingContentPattern: /^(?:new posts?|show new posts?)$/i,
     }),
     mediaAcquisition: Object.freeze({
-      version: "linkedin-media-acquisition-v1",
+      version: "linkedin-media-acquisition-v2",
       maxAttempts: 1,
       settleMs: 900,
       quietRecovery: "bounded_dom",
       detectExpectedKinds: detectLinkedInExpectedMediaKinds,
+      extractStructuredCandidates: collectLinkedInStructuredMediaCandidates,
       extractCandidates: extractLinkedInRecoveryCandidates,
     }),
     matchesPage: () => window.location.hostname === "www.linkedin.com",
@@ -273,6 +285,146 @@
       .map((button) => compactText(button.getAttribute("aria-label")))
       .find((value) => /^Open control menu for post by\s+/i.test(value));
     return label?.replace(/^Open control menu for post by\s+/i, "").trim() ?? "";
+  }
+
+  function linkedinPlatformIdFromCandidates(values) {
+    for (const value of Array.isArray(values) ? values : []) {
+      const candidate = String(value ?? "");
+      const direct = candidate.match(/^linkedin:(activity|ugcpost|share):(\d{5,30})$/i);
+      if (direct) return `linkedin:${direct[1].toLowerCase()}:${direct[2]}`;
+      const urn = candidate.match(/urn:li:(activity|ugcPost|share):(\d{5,30})/i);
+      if (urn) return `linkedin:${urn[1].toLowerCase()}:${urn[2]}`;
+      const activity = candidate.match(/activity[-/:](\d{5,30})/i);
+      if (activity) return `linkedin:activity:${activity[1]}`;
+    }
+    return null;
+  }
+
+  function linkedinCandidateIdFromContainer(container) {
+    if (!container) return null;
+    const values = [container.getAttribute?.("data-urn"), container.getAttribute?.("data-id")];
+    for (const element of container.querySelectorAll?.("[data-urn], [data-id], a[href]") ?? []) {
+      values.push(
+        element.getAttribute?.("data-urn"),
+        element.getAttribute?.("data-id"),
+        element.href,
+        element.getAttribute?.("href"),
+      );
+    }
+    return linkedinPlatformIdFromCandidates(values);
+  }
+
+  function normalizeLinkedInStructuredMedia(value) {
+    if (!value || value.kind !== "video") return null;
+    const posterUrl = safeLinkedInStructuredMediaURL(value.posterUrl || value.url, "poster");
+    const playbackUrl = safeLinkedInStructuredMediaURL(value.playbackUrl, "video");
+    if (!posterUrl || !playbackUrl) return null;
+    return Object.freeze({
+      kind: "video",
+      url: posterUrl,
+      posterUrl,
+      playbackUrl,
+      playbackMode: "inline",
+      width: positiveMediaDimension(value.width),
+      height: positiveMediaDimension(value.height),
+      provenance: String(value.provenance || "linkedin_main_world_player").slice(0, 60),
+    });
+  }
+
+  async function collectLinkedInStructuredMediaCandidates(container, { candidateId } = {}) {
+    const normalizedCandidateId = linkedinPlatformIdFromCandidates([candidateId]);
+    const cached = () => (
+      normalizedCandidateId
+        ? mediaEvidenceRuntime?.lookup?.(normalizedCandidateId) ?? []
+        : mediaEvidenceRuntime?.lookupContainer?.(container) ?? []
+    ).map((entry) => ({
+      ...entry,
+      trustedMediaRoot: true,
+      urlSource: entry.provenance ?? "linkedin_main_world_player",
+    }));
+    const expectedKinds = detectLinkedInExpectedMediaKinds(container, {
+      excludeRoot: () => false,
+      uniqueElements: (values) => [...new Set(values)],
+    });
+    if (!expectedKinds.includes("video")) return cached();
+    const runtime = globalThis.chrome?.runtime;
+    if (typeof runtime?.sendMessage !== "function") return cached();
+
+    const now = Date.now();
+    if (!liveMediaScan || now - liveMediaScanStartedAtMs > 1_000) {
+      liveMediaScanStartedAtMs = now;
+      const playerIds = [...container.querySelectorAll?.("[data-vjs-player][id]") ?? []]
+        .map((element) => String(element.id ?? "").trim().slice(0, 240))
+        .filter(Boolean)
+        .slice(0, 4);
+      if (!normalizedCandidateId || playerIds.length === 0) return cached();
+      liveMediaScan = boundedLinkedInMediaRequest(runtime, normalizedCandidateId, playerIds).then((outcome) => {
+        const response = outcome.response;
+        lastLiveMediaDiagnostics = Object.freeze({
+          status: outcome.status,
+          elapsedMs: outcome.elapsedMs,
+          ...(response?.evidence?.diagnostics ?? {}),
+          accepted: response?.ok === true,
+        });
+        if (response?.ok && response.evidence) mediaEvidenceRuntime?.ingestStructured?.(response.evidence);
+        return response;
+      }).catch((error) => {
+        lastLiveMediaDiagnostics = Object.freeze({
+          status: "unavailable",
+          reason: String(error?.message ?? error).slice(0, 200),
+        });
+        return null;
+      });
+    }
+    await liveMediaScan;
+    return cached();
+  }
+
+  function boundedLinkedInMediaRequest(runtime, candidateId, playerIds) {
+    const startedAtMs = performance.now();
+    let timer = null;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve({ status: "timeout", response: null }), 220);
+    });
+    const request = Promise.resolve(runtime.sendMessage({
+      type: "AKU_LINKEDIN_COLLECT_STRUCTURED_MEDIA",
+      candidateIds: [candidateId],
+      playerIds,
+    })).then((response) => ({ status: "completed", response }));
+    return Promise.race([request, timeout]).then((outcome) => ({
+      ...outcome,
+      elapsedMs: Math.max(0, Math.round((performance.now() - startedAtMs) * 10) / 10),
+    })).finally(() => {
+      if (timer !== null) clearTimeout(timer);
+    });
+  }
+
+  function safeLinkedInStructuredMediaURL(value, kind) {
+    if (typeof value !== "string") return null;
+    try {
+      const url = new URL(value);
+      const host = url.hostname.toLowerCase();
+      if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
+      if (kind === "poster") {
+        const imagePoster = host === "media.licdn.com" && /^\/dms\/image\//i.test(url.pathname);
+        const playlistPoster = host === "dms.licdn.com" &&
+          /^\/playlist\/vid\//i.test(url.pathname) &&
+          /\/thumbnail(?:-[a-z0-9]+)?\//i.test(url.pathname);
+        if (!imagePoster && !playlistPoster) return null;
+      } else if (
+        host !== "dms.licdn.com" || !/^\/playlist\//i.test(url.pathname) ||
+        !/\/mp4-\d{2,4}p(?:-|\/)/i.test(url.pathname)
+      ) return null;
+      url.hash = "";
+      return url.href;
+    } catch {
+      return null;
+    }
+  }
+
+  function positiveMediaDimension(value) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? Math.min(8_192, Math.round(number)) : 0;
   }
 
   async function recoverLinkedInPermalinks(containers, operationDeadlineAtMs, helpers) {

@@ -1,7 +1,7 @@
 # AkuBridge
 
 Current preview identity: **`0.7.9`** / Chrome manifest
-**`0.7.9.0`** / runtime **`source-adapters-v89`**.
+**`0.7.9.0`** / runtime **`source-adapters-v90`**.
 
 Runtime v73 adds bounded background command dispatch for AkuBrowser Auto
 Update. After a trusted local AkuBrowser page configures the loopback endpoint
@@ -56,7 +56,7 @@ or validate the complete bridge observation by themselves.
 flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
     DOM --> XA["X adapter<br/>x-dom-v21<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
-    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v19<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v1"]
+    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v20<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v2"]
     DOM --> FA["Facebook adapter<br/>facebook-dom-v18<br/>facebook-media-acquisition-v2"]
     XA --> R["Source-adapter registry"]
     LA --> R
@@ -72,6 +72,8 @@ flowchart LR
     XR --> XC
     FJ["Facebook bounded JSON payload<br/>progressive MP4 + post identity"] --> FR["Facebook structured resolver<br/>source-specific parser"]
     FR --> MP
+    LV["LinkedIn visible Video.js player<br/>progressive MP4 only"] --> LR["LinkedIn MAIN-world resolver<br/>exact player ID + native identity"]
+    LR --> MP
     XR --> AC["Ephemeral avatar cache<br/>30 min TTL / 256 keys"]
     XR --> AP["Sanitized avatar fallback<br/>7 day TTL / 512 status-or-handle keys"]
     AP --> AC

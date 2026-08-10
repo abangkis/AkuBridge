@@ -20,7 +20,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "linkedin",
     displayName: "LinkedIn",
-    adapterVersion: "linkedin-dom-v19",
+    adapterVersion: "linkedin-dom-v20",
     adapterScript: "adapters/linkedin-adapter.js",
     supportScripts: Object.freeze(["linkedin-permalink-policy.js", "linkedin-timestamp-policy.js"]),
     feedUrl: "https://www.linkedin.com/feed/",
@@ -28,6 +28,9 @@ const SOURCE_DEFINITIONS = Object.freeze([
     hostnames: Object.freeze(["www.linkedin.com"]),
     canonicalFeedPath: /^\/feed\/?$/,
     nativePostPath: /\/(?:posts\/|feed\/update\/)/,
+    mediaEvidenceAdapterVersion: "linkedin-main-world-video-v1",
+    structuredMediaCollector: "linkedin_main_world",
+    structuredMediaPayloadField: "linkedinStructuredMediaEvidence",
     hydration: Object.freeze({ defaultTimeoutMs: 18_000, minTimeoutMs: 13_000, maxTimeoutMs: 23_000 }),
     readiness: Object.freeze({ initialTimeoutMs: 3_000, retryAfterActivationMs: 15_000 }),
   }),
