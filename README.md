@@ -1,7 +1,7 @@
 # AkuBridge
 
 Current preview identity: **`0.7.9`** / Chrome manifest
-**`0.7.9.0`** / runtime **`source-adapters-v88`**.
+**`0.7.9.0`** / runtime **`source-adapters-v89`**.
 
 Runtime v73 adds bounded background command dispatch for AkuBrowser Auto
 Update. After a trusted local AkuBrowser page configures the loopback endpoint
@@ -299,6 +299,14 @@ URL anchored to a trusted post-media root or structured-state record may be
 accepted when background render geometry is unknown (`0x0`); this does not
 relax host/path allowlists or the four-media ceiling. AkuBridge never downloads
 or transforms media itself.
+
+Structured media discovery now runs beside the DOM capture instead of before
+it. The shared collector runtime gives X or Facebook resolution a 250 ms hard
+budget, records completion/timeout duration telemetry, and delivers the
+media-only envelope to a bounded content-script inbox. The generic media-post
+processor joins it to captured blocks before the observation leaves the tab.
+Timeout, delivery failure, or an unmatched platform identity remains
+poster/native-post fallback and never creates a durable post-capture job.
 
 Source cards may also emit up to three typed `attachments`. The first
 LinkedIn implementation covers native job cards and external link previews,

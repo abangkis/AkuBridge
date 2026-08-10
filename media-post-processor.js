@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "media-post-processor-v1";
+  const runtimeRevision = "media-post-processor-v2";
   const capturePolicy = globalThis.AkuBoundedCapturePolicy;
   if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
 
@@ -161,6 +161,151 @@
     return Object.freeze({ media, enrichedCount, structuredCount: structured.length });
   }
 
+  function processSnapshots(source, snapshots, lookupStructured) {
+    let enrichedBlockCount = 0;
+    let structuredBlockCount = 0;
+    for (const snapshot of Array.isArray(snapshots) ? snapshots : []) {
+      for (const block of Array.isArray(snapshot?.blocks) ? snapshot.blocks : []) {
+        const structured = typeof lookupStructured === "function"
+          ? lookupStructured(block?.platformId)
+          : [];
+        if (!Array.isArray(structured) || structured.length === 0) continue;
+        structuredBlockCount += 1;
+        const previousMedia = Array.isArray(block.media) ? block.media : [];
+        const processed = process(source, previousMedia, structured);
+        if (processed.media.length === 0) continue;
+        block.media = processed.media;
+        if (block.media.some((entry) => entry.kind === "video")) block.contentKind = "video";
+        const recoveredCount = processed.enrichedCount > 0
+          ? processed.enrichedCount
+          : previousMedia.length === 0
+            ? processed.media.length
+            : 0;
+        if (recoveredCount > 0) enrichedBlockCount += 1;
+        const previousAudit = block.mediaRecovery && typeof block.mediaRecovery === "object"
+          ? block.mediaRecovery
+          : {};
+        block.mediaRecovery = {
+          ...previousAudit,
+          postProcessorVersion: runtimeRevision,
+          outcome: recoveredCount > 0 ? "recovered" : previousAudit.outcome,
+          recoveredCount: (Number(previousAudit.recoveredCount) || 0) + recoveredCount,
+          method: recoveredCount > 0 ? "structured_deferred" : previousAudit.method,
+          acquisitionStage: recoveredCount > 0
+            ? "structured_deferred"
+            : previousAudit.acquisitionStage,
+          trace: [...new Set([
+            ...(Array.isArray(previousAudit.trace) ? previousAudit.trace : []),
+            "structured_deferred_complete",
+          ])],
+        };
+      }
+    }
+    return Object.freeze({
+      requested: true,
+      received: true,
+      enrichedBlockCount,
+      structuredBlockCount,
+    });
+  }
+
+  function createDeferredInbox(options = {}) {
+    const now = typeof options.now === "function" ? options.now : () => Date.now();
+    const schedule = typeof options.schedule === "function"
+      ? options.schedule
+      : (callback, delay) => setTimeout(callback, delay);
+    const cancel = typeof options.cancel === "function" ? options.cancel : (timer) => clearTimeout(timer);
+    const maxEntries = clampInteger(options.maxEntries, 1, 32, 8);
+    const ttlMs = clampInteger(options.ttlMs, 250, 10_000, 2_000);
+    const entries = new Map();
+    const counters = { delivered: 0, expired: 0, evicted: 0 };
+
+    function wait(requestId, waitMs = ttlMs) {
+      const key = deferredRequestId(requestId);
+      if (!key) return Promise.resolve(null);
+      purgeExpired();
+      const existing = entries.get(key);
+      if (existing?.payload !== undefined) {
+        entries.delete(key);
+        return Promise.resolve(existing.payload);
+      }
+      if (existing?.promise) return existing.promise;
+      const boundedWaitMs = clampInteger(waitMs, 50, ttlMs, ttlMs);
+      let resolveWait;
+      const promise = new Promise((resolve) => { resolveWait = resolve; });
+      const entry = {
+        expiresAtMs: now() + boundedWaitMs,
+        promise,
+        resolve: resolveWait,
+        timer: null,
+      };
+      entry.timer = schedule(() => expire(key, entry), boundedWaitMs);
+      entries.set(key, entry);
+      enforceBound();
+      return promise;
+    }
+
+    function deliver(requestId, payload) {
+      const key = deferredRequestId(requestId);
+      if (!key || !payload || typeof payload !== "object") return false;
+      purgeExpired();
+      const existing = entries.get(key);
+      if (existing?.resolve) {
+        if (existing.timer !== null) cancel(existing.timer);
+        entries.delete(key);
+        counters.delivered += 1;
+        existing.resolve(payload);
+        return true;
+      }
+      entries.delete(key);
+      entries.set(key, { payload, expiresAtMs: now() + ttlMs });
+      counters.delivered += 1;
+      enforceBound();
+      return true;
+    }
+
+    function expire(key, expected) {
+      if (entries.get(key) !== expected) return;
+      entries.delete(key);
+      counters.expired += 1;
+      expected.resolve?.(null);
+    }
+
+    function purgeExpired() {
+      const current = now();
+      for (const [key, entry] of entries) {
+        if (entry.expiresAtMs > current) continue;
+        if (entry.timer !== null && entry.timer !== undefined) cancel(entry.timer);
+        entries.delete(key);
+        counters.expired += 1;
+        entry.resolve?.(null);
+      }
+    }
+
+    function enforceBound() {
+      while (entries.size > maxEntries) {
+        const key = entries.keys().next().value;
+        const entry = entries.get(key);
+        if (entry?.timer !== null && entry?.timer !== undefined) cancel(entry.timer);
+        entries.delete(key);
+        counters.evicted += 1;
+        entry?.resolve?.(null);
+      }
+    }
+
+    function diagnostics() {
+      purgeExpired();
+      return Object.freeze({ runtimeRevision, entryCount: entries.size, maxEntries, ttlMs, ...counters });
+    }
+
+    return Object.freeze({ wait, deliver, diagnostics });
+  }
+
+  function deferredRequestId(value) {
+    const text = typeof value === "string" ? value.trim() : "";
+    return /^[a-z0-9:_-]{1,160}$/i.test(text) ? text : null;
+  }
+
   function samePoster(left, right) {
     const leftURL = left?.posterUrl || left?.url;
     const rightURL = right?.posterUrl || right?.url;
@@ -191,6 +336,8 @@
   globalThis.AkuMediaPostProcessor = Object.freeze({
     runtimeRevision,
     createEvidenceRuntime,
+    createDeferredInbox,
     process,
+    processSnapshots,
   });
 })();

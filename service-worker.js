@@ -47,6 +47,10 @@ import {
 } from "./source-access-policy.js";
 import { resolveXStructuredMediaInMainWorld } from "./x-main-world-media-resolver.js";
 import { resolveFacebookStructuredMediaInMainWorld } from "./facebook-main-world-media-resolver.js";
+import {
+  captureWithParallelStructuredMedia,
+  collectStructuredMediaWithinBudget,
+} from "./structured-media-collection-runtime.js";
 import { createXMediaEvidenceStore } from "./x-media-evidence-store.js";
 import { createXAvatarEvidenceStore } from "./x-avatar-evidence-store.js";
 import {
@@ -66,6 +70,8 @@ const AKU_BROWSER_ORIGINS = new Set([
   "http://localhost:11122",
 ]);
 const CAPTURE_DELAY_MAX_MS = 2_000;
+const STRUCTURED_MEDIA_COLLECTION_BUDGET_MS = 250;
+const STRUCTURED_MEDIA_DELIVERY_WAIT_MS = 400;
 const PENDING_SELF_RELOAD_KEY = "akuBridgePendingSelfReload";
 const PENDING_SELF_RELOAD_MAX_AGE_MS = 30_000;
 const BACKGROUND_DISPATCH_CONFIG_KEY = "akuBridgeBackgroundDispatch";
@@ -906,15 +912,19 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
   });
   const sourcePolicy = sourceDefinition(command.payload.source);
   const structuredCollector = structuredMediaCollectors.get(sourcePolicy?.structuredMediaCollector);
-  const structuredMediaEvidence = structuredCollector
-    ? await structuredCollector(prepared.tab.id)
+  const structuredMediaRequestId = structuredCollector
+    ? `${command.id}:${sourceTabRecoveryCount}`
     : null;
   const payload = {
     ...command.payload,
     sourceFreshness,
-    ...(sourcePolicy?.structuredMediaPayloadField
-      ? { [sourcePolicy.structuredMediaPayloadField]: structuredMediaEvidence }
-      : {}),
+    ...(structuredMediaRequestId ? {
+      structuredMediaRequest: {
+        requestId: structuredMediaRequestId,
+        waitMs: STRUCTURED_MEDIA_DELIVERY_WAIT_MS,
+        mode: "parallel_deferred",
+      },
+    } : {}),
     sourceReadiness: prepared.readiness,
     tabAcquisition: {
       opened: prepared.opened,
@@ -929,7 +939,21 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
       captureSurface,
     },
   };
-  const response = await collectFromTabWithDeadline(prepared.tab.id, payload);
+  const response = structuredCollector
+    ? (await captureWithParallelStructuredMedia({
+        capture: () => collectFromTabWithDeadline(prepared.tab.id, payload),
+        collect: () => collectStructuredMediaWithinBudget({
+          collector: structuredCollector,
+          tabId: prepared.tab.id,
+          budgetMs: STRUCTURED_MEDIA_COLLECTION_BUDGET_MS,
+        }),
+        deliver: (evidence) => deliverStructuredMediaEvidence(
+          prepared.tab.id,
+          structuredMediaRequestId,
+          evidence,
+        ),
+      })).response
+    : await collectFromTabWithDeadline(prepared.tab.id, payload);
   if (!response?.ok) throw new Error(response?.message || "Source content script failed.");
   await assertTabLease(prepared.lease, "after_capture");
   return response.observation;
@@ -1196,6 +1220,23 @@ async function findOrOpenSourceTab(
     hydrationTimeoutMs: requestedHydrationTimeoutMs,
     lifecycleEvents,
   });
+}
+
+async function deliverStructuredMediaEvidence(tabId, requestId, evidence) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await chrome.tabs.sendMessage(tabId, {
+        type: "AKU_BROWSER_STRUCTURED_MEDIA_READY",
+        requestId,
+        evidence,
+      });
+      if (response?.ok) return true;
+    } catch {
+      // A stale content-script generation may be reinjected by the parallel capture path.
+    }
+    if (attempt === 0) await delay(50);
+  }
+  return false;
 }
 
 async function collectFacebookStructuredMediaEvidence(tabId) {

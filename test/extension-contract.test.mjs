@@ -247,7 +247,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v88/);
+  assert.match(contentScript, /source-adapters-v89/);
   assert.match(contentScript, /candidateDiagnostics: normalizeCandidateDiagnostics/);
   assert.match(contentScript, /function normalizeCandidateDiagnostics/);
   assert.match(contentScript, /plan\.scrollFraction \* scrollStepMultiplier/);
@@ -481,6 +481,24 @@ test("X media enrichment stays passive, bounded, and media-only", () => {
   assert.doesNotMatch(lookupHandler, /chrome\.tabs\.(?:create|update)/);
 });
 
+test("structured media collection runs parallel with a hard failure-soft budget", () => {
+  const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
+  const contentScript = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
+  const processor = fs.readFileSync(path.join(projectRoot, "media-post-processor.js"), "utf8");
+  const runtime = fs.readFileSync(
+    path.join(projectRoot, "structured-media-collection-runtime.js"),
+    "utf8",
+  );
+
+  assert.match(worker, /STRUCTURED_MEDIA_COLLECTION_BUDGET_MS = 250/);
+  assert.match(worker, /captureWithParallelStructuredMedia/);
+  assert.match(worker, /AKU_BROWSER_STRUCTURED_MEDIA_READY/);
+  assert.match(contentScript, /deferredMediaInbox\.wait/);
+  assert.match(contentScript, /processSnapshots/);
+  assert.match(processor, /media-post-processor-v2/);
+  assert.match(runtime, /mode: "parallel_deferred"/);
+});
+
 test("initial stale-tab recovery is bounded and follow-up remains anchored", () => {
   const contentScript = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
   const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
@@ -505,8 +523,8 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /capabilities: response\.capabilities/);
   const capabilities = createBridgeCapabilities({ version: "0.7.9.0", version_name: "0.7.9", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.7.9");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v88");
-  assert.equal(capabilities.buildId, "aku-bridge-0.7.9-source-adapters-v88");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v89");
+  assert.equal(capabilities.buildId, "aku-bridge-0.7.9-source-adapters-v89");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v21", linkedin: "linkedin-dom-v19", facebook: "facebook-dom-v18" });
   assert.deepEqual(capabilities.mediaEvidenceAdapterVersions, {

@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v88";
+  const runtimeRevision = "source-adapters-v89";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -12,11 +12,14 @@
   const sourceAdapters = globalThis.AkuSourceAdapters;
   const freshnessRuntime = globalThis.AkuSourceFreshnessRuntime;
   const mediaAcquisitionEngine = globalThis.AkuMediaAcquisitionEngine;
+  const mediaPostProcessor = globalThis.AkuMediaPostProcessor;
   if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
   if (!qualityPolicy) throw new Error("AkuBridge capture-quality policy was not loaded.");
   if (!sourceAdapters) throw new Error("AkuBridge source-adapter runtime was not loaded.");
   if (!freshnessRuntime) throw new Error("AkuBridge source-freshness runtime was not loaded.");
   if (!mediaAcquisitionEngine) throw new Error("AkuBridge media-acquisition engine was not loaded.");
+  if (!mediaPostProcessor) throw new Error("AkuBridge media-post processor was not loaded.");
+  const deferredMediaInbox = mediaPostProcessor.createDeferredInbox({ maxEntries: 8, ttlMs: 2_000 });
   updateCaptureProgress("idle");
 
   const messageHandler = (message, _sender, sendResponse) => {
@@ -37,6 +40,12 @@
         .then((freshness) => sendResponse({ ok: true, freshness }))
         .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
       return true;
+    }
+    if (message?.type === "AKU_BROWSER_STRUCTURED_MEDIA_READY") {
+      sendResponse({
+        ok: deferredMediaInbox.deliver(message.requestId, message.evidence),
+      });
+      return false;
     }
     if (message?.type !== "AKU_BROWSER_COLLECT_VISIBLE") return undefined;
     collectBoundedObservation(message.payload)
@@ -152,12 +161,19 @@
     }
     const structuredMediaPolicy = sourceAdapters.get(source).structuredMediaEvidence;
     const structuredMediaRuntime = structuredMediaPolicy?.runtime?.() ?? null;
-    const structuredMediaPayload = structuredMediaPolicy?.payloadField
+    let structuredMediaPayload = structuredMediaPolicy?.payloadField
       ? payload[structuredMediaPolicy.payloadField]
       : null;
-    const structuredMediaAcceptedCandidateCount = structuredMediaRuntime?.ingestStructured?.(
+    let structuredMediaAcceptedCandidateCount = structuredMediaRuntime?.ingestStructured?.(
       structuredMediaPayload,
     ) ?? 0;
+    const deferredMediaRequest = payload.structuredMediaRequest;
+    const deferredMediaPromise = deferredMediaRequest?.requestId
+      ? deferredMediaInbox.wait(
+          deferredMediaRequest.requestId,
+          deferredMediaRequest.waitMs,
+        )
+      : Promise.resolve(null);
 
     const plan = capturePolicy.normalizeCapturePlan(payload);
     const captureVisibilityMode =
@@ -290,6 +306,25 @@
       }
     }
 
+    const deferredMediaPayload = await deferredMediaPromise;
+    let deferredMediaEnrichment = Object.freeze({
+      requested: Boolean(deferredMediaRequest?.requestId),
+      received: false,
+      enrichedBlockCount: 0,
+      structuredBlockCount: 0,
+    });
+    if (deferredMediaPayload && structuredMediaRuntime) {
+      structuredMediaPayload = deferredMediaPayload;
+      structuredMediaAcceptedCandidateCount += structuredMediaRuntime.ingestStructured?.(
+        deferredMediaPayload,
+      ) ?? 0;
+      deferredMediaEnrichment = mediaPostProcessor.processSnapshots(
+        source,
+        snapshots,
+        (candidateId) => structuredMediaRuntime.lookup?.(candidateId) ?? [],
+      );
+    }
+
     const candidateCount = uniqueCandidates.size;
     const observedBlockCount = snapshots.reduce((sum, snapshot) => sum + snapshot.blocks.length, 0);
     const fieldCoverage = summarizeFieldCoverage(snapshots);
@@ -343,6 +378,7 @@
           avatarCache: structuredMediaRuntime?.avatarDiagnostics?.() ?? null,
           responseObserver: structuredMediaRuntime?.responseDiagnostics?.() ?? null,
           acceptedCandidateCount: structuredMediaAcceptedCandidateCount,
+          deferred: deferredMediaEnrichment,
         } : null,
         sourceFreshness,
         frontier: {

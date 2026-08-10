@@ -62,8 +62,58 @@ test("generic evidence runtime keeps source identity and media validation in cal
   assert.equal(runtime.diagnostics().expired, 1);
 });
 
+test("deferred evidence inbox joins delivery with an active capture wait", async () => {
+  const processor = processorContext().AkuMediaPostProcessor;
+  const inbox = processor.createDeferredInbox();
+  const waiting = inbox.wait("capture:facebook:1", 250);
+
+  assert.equal(inbox.deliver("capture:facebook:1", { candidates: [{ candidateId: "facebook:post:1" }] }), true);
+  assert.deepEqual(await waiting, { candidates: [{ candidateId: "facebook:post:1" }] });
+  assert.equal(inbox.diagnostics().entryCount, 0);
+});
+
+test("deferred evidence inbox preserves early delivery until capture starts", async () => {
+  const processor = processorContext().AkuMediaPostProcessor;
+  const inbox = processor.createDeferredInbox();
+  assert.equal(inbox.deliver("capture:x:2", { candidates: [] }), true);
+
+  assert.deepEqual(await inbox.wait("capture:x:2", 250), { candidates: [] });
+  assert.equal(inbox.deliver("invalid request id!", {}), false);
+});
+
+test("generic post processor enriches captured snapshots after parallel collection", () => {
+  const processor = processorContext().AkuMediaPostProcessor;
+  const posterUrl = "https://scontent.example.fbcdn.net/poster.jpg";
+  const snapshots = [{ blocks: [{
+    platformId: "facebook:post:123",
+    contentKind: "video",
+    media: [{ kind: "video", url: posterUrl, posterUrl, playbackMode: "native" }],
+    mediaRecovery: { outcome: "primary_complete", trace: ["primary_complete"] },
+  }] }];
+
+  const result = processor.processSnapshots("facebook", snapshots, (candidateId) => (
+    candidateId === "facebook:post:123"
+      ? [{
+          kind: "video",
+          url: posterUrl,
+          posterUrl,
+          playbackUrl: "https://scontent.example.fbcdn.net/video.mp4",
+          playbackMode: "inline",
+        }]
+      : []
+  ));
+
+  assert.equal(result.enrichedBlockCount, 1);
+  assert.equal(snapshots[0].blocks[0].media[0].playbackMode, "inline");
+  assert.equal(snapshots[0].blocks[0].mediaRecovery.method, "structured_deferred");
+  assert.deepEqual(
+    [...snapshots[0].blocks[0].mediaRecovery.trace],
+    ["primary_complete", "structured_deferred_complete"],
+  );
+});
+
 function processorContext() {
-  const context = vm.createContext({ URL, Map, Set, Object, Number, String });
+  const context = vm.createContext({ URL, Map, Set, Object, Number, String, setTimeout, clearTimeout });
   context.globalThis = context;
   context.AkuBoundedCapturePolicy = {
     normalizeMediaCandidates(_source, values) {
