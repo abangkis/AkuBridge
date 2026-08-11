@@ -17,7 +17,7 @@ func TestSignedUpdateManifestAuthenticatesExactUpgrade(t *testing.T) {
 	}
 	expected := ExtensionIdentity{
 		Product: "AkuBrowser", ProductVersion: "0.7.9",
-		RuntimeRevision: "source-adapters-v87", BridgeContractVersion: bridgeContract,
+		RuntimeRevision: "source-adapters-v90", BridgeContractVersion: bridgeContract,
 	}
 	data := signedUpdateManifestForTest(t, privateKey, expected)
 	manifest, err := decodeAndVerifyUpdateManifest(
@@ -40,7 +40,7 @@ func TestSignedUpdateManifestFailsClosedForTamperAndDowngrade(t *testing.T) {
 	}
 	expected := ExtensionIdentity{
 		Product: "AkuBrowser", ProductVersion: "0.7.9",
-		RuntimeRevision: "source-adapters-v87", BridgeContractVersion: bridgeContract,
+		RuntimeRevision: "source-adapters-v90", BridgeContractVersion: bridgeContract,
 	}
 	data := signedUpdateManifestForTest(t, privateKey, expected)
 	tampered := strings.Replace(string(data), `"size":1234`, `"size":1235`, 1)
@@ -66,7 +66,7 @@ func TestUpdateManifestRejectsAnotherReleaseOrigin(t *testing.T) {
 	_, privateKey := updateTestKey()
 	expected := ExtensionIdentity{
 		Product: "AkuBrowser", ProductVersion: "0.7.9",
-		RuntimeRevision: "source-adapters-v87", BridgeContractVersion: bridgeContract,
+		RuntimeRevision: "source-adapters-v90", BridgeContractVersion: bridgeContract,
 	}
 	data := signedUpdateManifestForTest(t, privateKey, expected)
 	var manifest SignedUpdateManifest
@@ -94,7 +94,7 @@ func TestSignedUpdateManifestAcceptsExactMacOSUniversalArtifact(t *testing.T) {
 	}
 	expected := ExtensionIdentity{
 		Product: "AkuBrowser", ProductVersion: "0.7.9",
-		RuntimeRevision: "source-adapters-v87", BridgeContractVersion: bridgeContract,
+		RuntimeRevision: "source-adapters-v90", BridgeContractVersion: bridgeContract,
 	}
 	data := signedUpdateManifestForTest(t, privateKey, expected, "macos-universal")
 	if _, err := decodeAndVerifyUpdateManifest(

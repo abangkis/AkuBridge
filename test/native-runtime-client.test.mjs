@@ -82,7 +82,7 @@ test("a native host held by security software times out instead of hanging setup
       },
     },
     productVersion: "0.7.9",
-    runtimeRevision: "source-adapters-v87",
+    runtimeRevision: "source-adapters-v90",
     now: () => FIXED_NOW,
     randomUUID: () => FIXED_REQUEST_ID,
     nativeMessageTimeoutMs: 1_000,
@@ -116,7 +116,7 @@ test("a native host that rejects this extension requests an installer repair", a
       },
     },
     productVersion: "0.7.9",
-    runtimeRevision: "source-adapters-v87",
+    runtimeRevision: "source-adapters-v90",
     now: () => FIXED_NOW,
     randomUUID: () => FIXED_REQUEST_ID,
   });
@@ -388,7 +388,7 @@ function readyResponse(request, overrides = {}) {
     runtime: {
       version: "0.7.4",
       channel: "stable",
-      runtimeRevision: "source-adapters-v87",
+      runtimeRevision: "source-adapters-v84",
       bridgeContractVersion: "aku-browser.bridge.v2",
       endpoint: "http://127.0.0.1:11122",
       instanceEpoch: "runtime:0001",
