@@ -1,6 +1,6 @@
 {
   "x": {
-    "version": "x-dom-v21",
+    "version": "x-dom-v22",
     "selector": "article[data-testid=\"tweet\"]",
     "strategy": "tweet_testid",
     "contentKind": "post",

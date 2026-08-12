@@ -2,7 +2,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "x",
     displayName: "X",
-    adapterVersion: "x-dom-v21",
+    adapterVersion: "x-dom-v22",
     adapterScript: "adapters/x-adapter.js",
     supportScripts: Object.freeze(["x-media-evidence-runtime.js"]),
     feedUrl: "https://x.com/home",
@@ -10,12 +10,17 @@ const SOURCE_DEFINITIONS = Object.freeze([
     hostnames: Object.freeze(["x.com"]),
     canonicalFeedPath: /^\/home$/,
     nativePostPath: /\/status\//,
+    navigation: Object.freeze({ readinessMode: "tab_complete_or_source_ready" }),
     requiresVisualHydration: true,
     mediaEvidenceAdapterVersion: "x-response-evidence-v2",
     structuredMediaCollector: "x_response",
     structuredMediaPayloadField: "xStructuredMediaEvidence",
     hydration: Object.freeze({ defaultTimeoutMs: 12_000, minTimeoutMs: 7_000, maxTimeoutMs: 17_000 }),
     readiness: Object.freeze({ initialTimeoutMs: 12_000, activateWhenBackground: true }),
+    captureRecovery: Object.freeze({
+      managedLoad: "recreate_managed_once",
+      managedReadiness: "adapter_directed",
+    }),
   }),
   Object.freeze({
     id: "linkedin",
@@ -58,7 +63,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "instagram",
     displayName: "Instagram",
-    adapterVersion: "instagram-dom-v1",
+    adapterVersion: "instagram-dom-v2",
     adapterScript: "adapters/instagram-adapter.js",
     supportScripts: Object.freeze([]),
     feedUrl: "https://www.instagram.com/",
@@ -69,6 +74,10 @@ const SOURCE_DEFINITIONS = Object.freeze([
     navigation: Object.freeze({ readinessMode: "tab_complete_or_source_ready" }),
     hydration: Object.freeze({ defaultTimeoutMs: 15_000, minTimeoutMs: 10_000, maxTimeoutMs: 20_000 }),
     readiness: Object.freeze({ initialTimeoutMs: 10_000, activateWhenBackground: true }),
+    captureRecovery: Object.freeze({
+      managedLoad: "recreate_managed_once",
+      managedReadiness: "adapter_directed",
+    }),
   }),
 ]);
 

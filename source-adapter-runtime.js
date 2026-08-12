@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v15";
+  const runtimeRevision = "source-adapters-v16";
   const supportedContentFamilies = new Set(["feed_post"]);
   const supportedEvidenceModalities = new Set([
     "text",
@@ -7,6 +7,9 @@
     "video",
     "attachment",
     "quoted_post",
+  ]);
+  const supportedReadinessRecoveryActions = new Set([
+    "recreate_managed_surface",
   ]);
 
   const adapters = new Map();
@@ -85,6 +88,9 @@
         `AkuBridge ${adapter.source} adapter has an unsupported scroll strategy.`,
       );
     }
+    if (adapter.assessReadiness !== undefined && typeof adapter.assessReadiness !== "function") {
+      throw new Error(`AkuBridge ${adapter.source} adapter readiness assessment must be a function.`);
+    }
     adapters.set(adapter.source, Object.freeze({ ...adapter }));
   }
 
@@ -107,6 +113,7 @@
       scrollStrategy: adapter.captureTuning?.scrollStrategy ?? "viewport",
       actions: [
         "probe_readiness",
+        ...(typeof adapter.assessReadiness === "function" ? ["diagnose_readiness"] : []),
         ...(typeof adapter.availability === "function" ? ["report_source_availability"] : []),
         "probe_freshness",
         ...(adapter.freshness.revealSupported ? ["reveal_pending_content"] : []),
@@ -121,6 +128,31 @@
         "report_source_events",
       ],
     }));
+  }
+
+  function assessReadiness(source, context) {
+    const adapter = get(source);
+    if (typeof adapter.assessReadiness !== "function") return null;
+    const assessment = adapter.assessReadiness(Object.freeze({ ...context }));
+    if (!assessment || typeof assessment !== "object") {
+      throw new Error(`AkuBridge ${source} adapter returned an invalid readiness assessment.`);
+    }
+    const state = String(assessment.state ?? context?.state ?? "").trim().slice(0, 80);
+    const diagnosis = String(assessment.diagnosis ?? "").trim().slice(0, 120);
+    if (!state || !diagnosis) {
+      throw new Error(`AkuBridge ${source} adapter readiness assessment requires state and diagnosis.`);
+    }
+    let recovery = null;
+    if (assessment.recovery !== undefined && assessment.recovery !== null) {
+      const action = String(assessment.recovery.action ?? "").trim();
+      const reason = String(assessment.recovery.reason ?? diagnosis).trim().slice(0, 120);
+      const maxAttempts = Number(assessment.recovery.maxAttempts ?? 0);
+      if (!supportedReadinessRecoveryActions.has(action) || !reason || maxAttempts !== 1) {
+        throw new Error(`AkuBridge ${source} adapter returned an invalid readiness recovery hint.`);
+      }
+      recovery = Object.freeze({ action, reason, maxAttempts });
+    }
+    return Object.freeze({ state, diagnosis, recovery });
   }
 
   function extractOriginSignals(container, contract = {}) {
@@ -174,6 +206,7 @@
     register,
     get,
     capabilities,
+    assessReadiness,
     extractOriginSignals,
   });
 })();

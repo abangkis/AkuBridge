@@ -18,11 +18,19 @@ test("source adapters register independently behind one contract", () => {
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v21" },
+      { source: "x", version: "x-dom-v22" },
       { source: "linkedin", version: "linkedin-dom-v20" },
       { source: "facebook", version: "facebook-dom-v18" },
-      { source: "instagram", version: "instagram-dom-v1" },
+      { source: "instagram", version: "instagram-dom-v2" },
     ],
+  );
+  assert.equal(
+    context.AkuSourceAdapters.capabilities()[0].actions.includes("diagnose_readiness"),
+    true,
+  );
+  assert.equal(
+    context.AkuSourceAdapters.capabilities()[1].actions.includes("diagnose_readiness"),
+    false,
   );
   assert.equal(context.AkuSourceAdapters.get("x").matchesPage(), true);
   assert.equal(context.AkuSourceAdapters.get("linkedin").matchesPage(), false);
@@ -41,6 +49,40 @@ test("source adapters register independently behind one contract", () => {
     [...context.AkuSourceAdapters.capabilities()[2].evidenceModalities],
     ["text", "image", "video", "attachment", "quoted_post"],
   );
+});
+
+test("X and Instagram diagnose unhydrated feed shells without owning tab lifecycle", () => {
+  const context = createBrowserContext();
+  runScript(context, "source-adapter-runtime.js");
+  runScript(context, path.join("adapters", "x-adapter.js"));
+  runScript(context, path.join("adapters", "instagram-adapter.js"));
+
+  for (const source of ["x", "instagram"]) {
+    const assessment = context.AkuSourceAdapters.assessReadiness(source, {
+      state: "selector_mismatch",
+      feedRootPresent: true,
+      documentReadyState: "complete",
+      selectorCandidateCount: 0,
+      structuralCandidateCount: 0,
+    });
+    assert.equal(assessment.state, "selector_mismatch");
+    assert.equal(assessment.diagnosis, "feed_shell_unhydrated");
+    assert.deepEqual(JSON.parse(JSON.stringify(assessment.recovery)), {
+      action: "recreate_managed_surface",
+      reason: "feed_shell_unhydrated",
+      maxAttempts: 1,
+    });
+  }
+
+  const hydrating = context.AkuSourceAdapters.assessReadiness("instagram", {
+    state: "feed_empty",
+    feedRootPresent: true,
+    documentReadyState: "complete",
+    selectorCandidateCount: 0,
+    structuralCandidateCount: 2,
+  });
+  assert.equal(hydrating.state, "feed_hydrating");
+  assert.equal(hydrating.diagnosis, "post_permalink_unhydrated");
 });
 
 test("adapter registry rejects duplicates and unknown sources", () => {
@@ -146,7 +188,7 @@ test("a reinjected adapter runtime replaces the stale registry generation", () =
   context.AkuSourceAdapters = previous;
   runScript(context, "source-adapter-runtime.js");
   assert.notEqual(context.AkuSourceAdapters, previous);
-  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v15");
+  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v16");
   assert.deepEqual([...context.AkuSourceAdapters.capabilities()], []);
 });
 
@@ -169,10 +211,10 @@ test("the complete adapter bundle can replace its current registry generation", 
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v21" },
+      { source: "x", version: "x-dom-v22" },
       { source: "linkedin", version: "linkedin-dom-v20" },
       { source: "facebook", version: "facebook-dom-v18" },
-      { source: "instagram", version: "instagram-dom-v1" },
+      { source: "instagram", version: "instagram-dom-v2" },
     ],
   );
 });

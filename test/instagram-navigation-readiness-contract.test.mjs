@@ -18,4 +18,7 @@ test("Instagram navigation fallback is passive and final capture readiness remai
   assert.match(worker, /isCanonicalFeedUrl/);
   assert.match(worker, /const prepared = await prepareSourceTab/);
   assert.match(worker, /readiness = await waitForSourceReady/);
+  assert.match(worker, /shouldRecoverManagedSurface/);
+  assert.match(worker, /managed_adapter_readiness_recreated/);
+  assert.match(worker, /recoveryHint/);
 });

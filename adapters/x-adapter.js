@@ -4,7 +4,7 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v21",
+    version: "x-dom-v22",
     mediaHosts: Object.freeze(["pbs.twimg.com", "video.twimg.com"]),
     structuredMediaEvidence: Object.freeze({
       payloadField: "xStructuredMediaEvidence",
@@ -67,6 +67,7 @@
     matchesPage: () => window.location.hostname === "x.com",
     loginRequired: () => false,
     feedRootPresent: () => Boolean(document.querySelector("main")),
+    assessReadiness: assessXReadiness,
     discoverCandidates: ({ uniqueElements }) => {
       const primary = [...document.querySelectorAll('article[data-testid="tweet"]')];
       const fallback = [...document.querySelectorAll("main article")];
@@ -206,6 +207,27 @@
       'a[aria-label][href] img[src*="/card_img/"]',
     ].join(","),
   });
+
+  function assessXReadiness(context) {
+    if (context.state === "selector_mismatch" &&
+        context.feedRootPresent === true &&
+        context.documentReadyState === "complete" &&
+        context.structuralCandidateCount === 0) {
+      return {
+        state: "selector_mismatch",
+        diagnosis: "feed_shell_unhydrated",
+        recovery: {
+          action: "recreate_managed_surface",
+          reason: "feed_shell_unhydrated",
+          maxAttempts: 1,
+        },
+      };
+    }
+    return {
+      state: context.state,
+      diagnosis: context.state === "loading" ? "navigation_incomplete" : "readiness_observed",
+    };
+  }
 
   function engagementCounts(container) {
     const result = {};

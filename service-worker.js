@@ -30,7 +30,7 @@ import {
 } from "./capture-surface-lifecycle-policy.js";
 import {
   managedSurfaceReleaseAllowsRecreate,
-  shouldRecoverManagedLoad,
+  shouldRecoverManagedSurface,
 } from "./managed-load-recovery-policy.js";
 import { navigationReadinessOutcome } from "./navigation-readiness-policy.js";
 import {
@@ -1137,20 +1137,43 @@ async function findOrOpenSourceTab(
               }));
             }
           }
+          if (!targetUrl) {
+            const prepared = await prepareSourceTab(
+              managed.tab,
+              source,
+              managed.opened,
+              {
+                ownership: "managed",
+                captureVisibilityPolicy: visibilityPlan.policy,
+                captureVisibilityMode: "managed_window",
+                workingTabPreserved: true,
+                openedTabDisposition: "close_after_session",
+                requireVisualHydration: true,
+                restoreFocus: managed.verifyFocus,
+                hydrationTimeoutMs: requestedHydrationTimeoutMs,
+                lifecycleEvents: managed.lifecycleEvents,
+              },
+            );
+            prepared.closeOnExit = false;
+            return prepared;
+          }
           break;
         } catch (error) {
-          const recoveryPolicy = sourceDefinition(source)?.captureRecovery?.managedLoad;
-          if (!shouldRecoverManagedLoad({
-            source,
+          const recoveryPolicy = sourceDefinition(source)?.captureRecovery;
+          if (!shouldRecoverManagedSurface({
             error,
             attempt: managedLoadAttempt,
             opened: managed.opened,
             reset: managed.reset,
             policy: recoveryPolicy,
           })) throw error;
+          const adapterRecovery = error?.details?.readiness?.recoveryHint ?? null;
           managedLifecycleEvents.push(captureSurfaceEvent("release_requested", source, {
-            outcome: "managed_navigation_retry",
+            outcome: adapterRecovery
+              ? "managed_adapter_readiness_retry"
+              : "managed_navigation_retry",
             causeCode: error.code,
+            recoveryReason: adapterRecovery?.reason ?? null,
             recoveryAttempt: managedLoadAttempt + 1,
           }));
           const releaseOutcome = await managedCaptureWindow.releaseSource(
@@ -1172,8 +1195,11 @@ async function findOrOpenSourceTab(
             );
           }
           managedLifecycleEvents.push(captureSurfaceEvent("reconciled", source, {
-            outcome: "managed_navigation_recreated",
+            outcome: adapterRecovery
+              ? "managed_adapter_readiness_recreated"
+              : "managed_navigation_recreated",
             causeCode: error.code,
+            recoveryReason: adapterRecovery?.reason ?? null,
             recoveryAttempt: managedLoadAttempt + 1,
           }));
           managedLoadAttempt += 1;
@@ -1444,7 +1470,9 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
         { source },
       );
     }
-    throw new Error(
+    throw new AkuBridgeError(
+      "source_readiness_failed",
+      "readiness",
       `${sourceLabel(source)} source readiness failed: ${readiness.state} ` +
       `(${readiness.selectorCandidateCount} selector candidates, ` +
       `${readiness.visibleSelectorCandidateCount ?? 0} visible, ` +
@@ -1459,6 +1487,7 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
       `loading=${readiness.loadingIndicator}, feedRoot=${readiness.feedRootPresent}, ` +
       `scroll=${readiness.scrollContext ?? "unknown"}, ` +
       `document=${readiness.documentReadyState ?? "unknown"}).`,
+      { source, readiness },
     );
   }
   return {

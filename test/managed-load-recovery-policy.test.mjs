@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   MANAGED_LOAD_RECOVERY_RECREATE_ONCE,
+  MANAGED_READINESS_RECOVERY_ADAPTER_DIRECTED,
   managedSurfaceReleaseAllowsRecreate,
   shouldRecoverManagedLoad,
+  shouldRecoverManagedSurface,
 } from "../managed-load-recovery-policy.js";
 
 test("Facebook may recreate one Bridge-owned managed surface after a load timeout", () => {
@@ -48,5 +50,47 @@ test("managed surface recreation requires a confirmed safe cleanup outcome", () 
   assert.equal(managedSurfaceReleaseAllowsRecreate({
     released: false,
     reason: "no_owned_source_surface",
+  }), false);
+});
+
+test("adapter-directed readiness recovery accepts only one bounded managed recreation", () => {
+  const policy = {
+    managedReadiness: MANAGED_READINESS_RECOVERY_ADAPTER_DIRECTED,
+  };
+  const error = {
+    code: "source_readiness_failed",
+    details: {
+      readiness: {
+        recoveryHint: {
+          action: "recreate_managed_surface",
+          reason: "feed_shell_unhydrated",
+          maxAttempts: 1,
+        },
+      },
+    },
+  };
+  assert.equal(shouldRecoverManagedSurface({
+    error,
+    attempt: 0,
+    opened: false,
+    reset: false,
+    policy,
+  }), true);
+  assert.equal(shouldRecoverManagedSurface({
+    error,
+    attempt: 1,
+    opened: false,
+    reset: false,
+    policy,
+  }), false);
+  assert.equal(shouldRecoverManagedSurface({
+    error: {
+      ...error,
+      details: { readiness: { recoveryHint: { action: "reload_working_tab", maxAttempts: 1 } } },
+    },
+    attempt: 0,
+    opened: false,
+    reset: false,
+    policy,
   }), false);
 });

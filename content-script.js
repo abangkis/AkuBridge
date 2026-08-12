@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v91";
+  const runtimeRevision = "source-adapters-v92";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -81,7 +81,7 @@
     const windowVisibleCandidates = candidates.filter((element) =>
       isVisibleInViewport(element, window),
     );
-    const state = availability?.state
+    const baseState = availability?.state
       ?? (loginRequired
       ? "login_required"
       : visibleCandidates.length > 0
@@ -97,8 +97,18 @@
         : feedRoot
           ? "selector_mismatch"
             : "page_shell");
+    const assessment = sourceAdapters.assessReadiness(source, {
+      state: baseState,
+      loadingIndicator: loading,
+      feedRootPresent: feedRoot,
+      selectorCandidateCount: candidates.length,
+      visibleSelectorCandidateCount: visibleCandidates.length,
+      structuralCandidateCount: readinessCandidates.length,
+      visibleStructuralCandidateCount: visibleReadinessCandidates.length,
+      documentReadyState: document.readyState,
+    });
     return readiness(
-      state,
+      assessment?.state ?? baseState,
       source,
       candidates.length,
       visibleCandidates.length,
@@ -112,6 +122,7 @@
       availability,
       readinessCandidates.length,
       visibleReadinessCandidates.length,
+      assessment,
     );
   }
 
@@ -130,6 +141,7 @@
     availability = null,
     structuralCandidateCount = selectorCandidateCount,
     visibleStructuralCandidateCount = visibleSelectorCandidateCount,
+    assessment = null,
   ) {
     return {
       runtimeRevision,
@@ -147,6 +159,8 @@
       actionAnchoredCandidateCount,
       structuralCandidateCount,
       visibleStructuralCandidateCount,
+      diagnosis: assessment?.diagnosis ?? null,
+      recoveryHint: assessment?.recovery ?? null,
       ...visualHydration,
       availability,
       documentReadyState: document.readyState,

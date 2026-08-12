@@ -22,19 +22,28 @@ test("source hydration timeout is rounded to seconds and bounded by the catalog"
   assert.equal(sourceHydrationTimeout("instagram", 50_000), 20_000);
 });
 
-test("empty observation recovery is explicit and does not alter established adapters", () => {
+test("source recovery remains capability-scoped", () => {
   assert.equal(sourceDefinition("facebook").captureRecovery.emptyObservation, "reload_managed_once_if_unready");
-  assert.equal(sourceDefinition("x").captureRecovery, undefined);
+  assert.deepEqual(sourceDefinition("x").captureRecovery, {
+    managedLoad: "recreate_managed_once",
+    managedReadiness: "adapter_directed",
+  });
   assert.equal(sourceDefinition("linkedin").captureRecovery, undefined);
-  assert.equal(sourceDefinition("instagram").captureRecovery, undefined);
+  assert.deepEqual(sourceDefinition("instagram").captureRecovery, {
+    managedLoad: "recreate_managed_once",
+    managedReadiness: "adapter_directed",
+  });
+  assert.equal(sourceDefinition("facebook").captureRecovery.managedReadiness, undefined);
 });
 
-test("early source-ready navigation is isolated to Instagram", () => {
-  assert.equal(
-    sourceDefinition("instagram").navigation.readinessMode,
-    "tab_complete_or_source_ready",
-  );
-  for (const source of ["x", "linkedin", "facebook"]) {
+test("early source-ready navigation is isolated to X and Instagram", () => {
+  for (const source of ["x", "instagram"]) {
+    assert.equal(
+      sourceDefinition(source).navigation.readinessMode,
+      "tab_complete_or_source_ready",
+    );
+  }
+  for (const source of ["linkedin", "facebook"]) {
     assert.equal(sourceDefinition(source).navigation, undefined);
   }
 });
