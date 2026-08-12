@@ -15,7 +15,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("Instagram is an independently permissioned source with bounded native URLs", () => {
   const definition = sourceDefinition("instagram");
-  assert.equal(definition.adapterVersion, "instagram-dom-v2");
+  assert.equal(definition.adapterVersion, "instagram-dom-v3");
   assert.equal(sourceForUrl("https://www.instagram.com/"), "instagram");
   assert.equal(isCanonicalFeed("https://www.instagram.com/", "instagram"), true);
   assert.equal(isNativePostUrl("https://www.instagram.com/p/ABC_123/", "instagram"), true);
@@ -48,6 +48,8 @@ test("Instagram adapter captures a live-shaped Home Feed article without admitti
   };
   const context = vm.createContext({ document, window, URL });
   context.globalThis = context;
+  run(context, "bounded-capture-policy.js");
+  run(context, "media-post-processor.js");
   run(context, "source-adapter-runtime.js");
   run(context, "adapters/instagram-adapter.js");
 
@@ -58,7 +60,7 @@ test("Instagram adapter captures a live-shaped Home Feed article without admitti
   };
   const discovery = adapter.discoverCandidates({ uniqueElements: (items) => [...new Set(items)] });
 
-  assert.equal(adapter.version, "instagram-dom-v2");
+  assert.equal(adapter.version, "instagram-dom-v3");
   assert.equal(adapter.matchesPage(), true);
   assert.equal(adapter.loginRequired(), false);
   assert.equal(adapter.feedRootPresent(), true);
@@ -81,6 +83,35 @@ test("Instagram adapter captures a live-shaped Home Feed article without admitti
   assert.equal(
     adapter.platformIdFromCandidates(["https://www.instagram.com/p/ABC_123/"]),
     "instagram:p:ABC_123",
+  );
+  assert.equal(adapter.structuredMediaEvidence.payloadField, "instagramStructuredMediaEvidence");
+  assert.equal(adapter.structuredMediaEvidence.runtime().ingestStructured({
+    candidates: [{
+      candidateId: "instagram:post:ABC_123",
+      media: [{
+        kind: "video",
+        posterUrl: "https://instagram.example.fbcdn.net/v/poster.jpg?token=poster",
+        playbackUrl: "https://instagram.example.fbcdn.net/o1/video.mp4?token=video",
+        width: 720,
+        height: 1280,
+        provenance: "instagram_structured_json",
+      }],
+    }],
+  }), 1);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(adapter.mediaAcquisition.extractStructuredCandidates(candidate))),
+    [{
+      kind: "video",
+      url: "https://instagram.example.fbcdn.net/v/poster.jpg?token=poster",
+      posterUrl: "https://instagram.example.fbcdn.net/v/poster.jpg?token=poster",
+      playbackUrl: "https://instagram.example.fbcdn.net/o1/video.mp4?token=video",
+      playbackMode: "inline",
+      width: 720,
+      height: 1280,
+      provenance: "instagram_structured_json",
+      trustedMediaRoot: true,
+      urlSource: "instagram_structured_json",
+    }],
   );
 });
 

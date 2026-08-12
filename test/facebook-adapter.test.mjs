@@ -21,7 +21,7 @@ test("source catalog exposes Facebook without changing the X media capability", 
     x: "x-dom-v22",
     linkedin: "linkedin-dom-v20",
     facebook: "facebook-dom-v18",
-    instagram: "instagram-dom-v2",
+    instagram: "instagram-dom-v3",
   });
   assert.equal(sourceForUrl("https://www.facebook.com/"), "facebook");
   assert.equal(isCanonicalFeed("https://www.facebook.com/", "facebook"), true);

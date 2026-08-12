@@ -60,6 +60,7 @@ import {
 import { resolveXStructuredMediaInMainWorld } from "./x-main-world-media-resolver.js";
 import { resolveLinkedInStructuredMediaInMainWorld } from "./linkedin-main-world-media-resolver.js";
 import { resolveFacebookStructuredMediaInMainWorld } from "./facebook-main-world-media-resolver.js";
+import { resolveInstagramStructuredMediaInMainWorld } from "./instagram-main-world-media-resolver.js";
 import {
   captureWithParallelStructuredMedia,
   collectStructuredMediaWithinBudget,
@@ -112,6 +113,7 @@ const structuredMediaCollectors = new Map([
   ["x_response", collectXStructuredMediaEvidence],
   ["linkedin_main_world", collectLinkedInStructuredMediaEvidence],
   ["facebook_structured", collectFacebookStructuredMediaEvidence],
+  ["instagram_structured", collectInstagramStructuredMediaEvidence],
 ]);
 const SOURCE_SCRIPT_FILES = [
   "bounded-capture-policy.js",
@@ -1350,6 +1352,37 @@ async function collectFacebookStructuredMediaEvidence(tabId) {
     return {
       runtimeRevision: "facebook-main-world-media-resolver-v1",
       resolverVersion: "facebook-structured-video-v1",
+      candidates: [],
+      diagnostics: {
+        status: "unavailable",
+        reason: String(error?.message ?? error).slice(0, 300),
+      },
+    };
+  }
+}
+
+async function collectInstagramStructuredMediaEvidence(tabId) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: resolveInstagramStructuredMediaInMainWorld,
+      args: [{
+        maxCandidates: 16,
+        maxMediaPerCandidate: 4,
+        maxScripts: 48,
+        maxDocumentScripts: 96,
+        maxScriptBytes: 256_000,
+        maxTotalBytes: 2_000_000,
+        maxTraversalNodes: 20_000,
+        maxDepth: 40,
+      }],
+    });
+    return results?.[0]?.result ?? null;
+  } catch (error) {
+    return {
+      runtimeRevision: "instagram-main-world-media-resolver-v1",
+      resolverVersion: "instagram-structured-video-v1",
       candidates: [],
       diagnostics: {
         status: "unavailable",

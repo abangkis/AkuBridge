@@ -12,11 +12,24 @@
     "legal",
     "about",
   ]);
+  const mediaEvidenceRuntime = globalThis.AkuMediaPostProcessor?.createEvidenceRuntime?.({
+    source: "instagram",
+    candidateIdFromContainer: instagramCandidateIdFromContainer,
+    normalizeCandidateId: normalizeInstagramMediaCandidateId,
+    normalizeMedia: normalizeInstagramStructuredMedia,
+    ttlMs: 15 * 60 * 1_000,
+  }) ?? null;
 
   registry.register({
     source: "instagram",
-    version: "instagram-dom-v2",
+    version: "instagram-dom-v3",
     mediaHosts: Object.freeze(["fbcdn.net", "cdninstagram.com"]),
+    structuredMediaEvidence: Object.freeze({
+      payloadField: "instagramStructuredMediaEvidence",
+      runtime: () => mediaEvidenceRuntime,
+      coverageKey: "instagramStructuredMediaEvidence",
+      label: "Instagram media evidence",
+    }),
     platformIdFromCandidates: instagramPlatformIdFromCandidates,
     qualityProfile: "social-post-v2",
     evidenceProfile: Object.freeze({
@@ -40,12 +53,19 @@
       pendingContentPattern: /^(?:new posts?|see new posts?)$/i,
     }),
     mediaAcquisition: Object.freeze({
-      version: "instagram-media-acquisition-v1",
+      version: "instagram-media-acquisition-v2",
       maxAttempts: 1,
       settleMs: 800,
       quietRecovery: "bounded_dom",
       detectExpectedKinds: (container, helpers) => instagramMediaRoots(container, helpers)
         .map(({ kind }) => kind),
+      extractStructuredCandidates: (container) => (
+        mediaEvidenceRuntime?.lookupContainer?.(container) ?? []
+      ).map((entry) => ({
+        ...entry,
+        trustedMediaRoot: true,
+        urlSource: entry.provenance ?? "instagram_structured_json",
+      })),
       extractCandidates: (container, helpers) => instagramMediaRoots(container, helpers)
         .flatMap(({ root, kind }) => helpers.collectRootCandidates(root, {
           kind,
@@ -168,6 +188,59 @@
       return `instagram:${match[1].toLowerCase()}:${match[2]}`;
     }
     return null;
+  }
+
+  function instagramCandidateIdFromContainer(container) {
+    return instagramPlatformIdFromCandidates([instagramPermalink(container)]);
+  }
+
+  function normalizeInstagramMediaCandidateId(value) {
+    if (typeof value !== "string") return null;
+    const direct = value.trim().match(/^instagram:(?:post|p|reel|tv):([A-Za-z0-9_-]+)$/i);
+    if (direct) return `instagram:post:${direct[1]}`;
+    const platformId = instagramPlatformIdFromCandidates([value]);
+    const shortcode = platformId?.match(/^instagram:(?:p|reel|tv):([A-Za-z0-9_-]+)$/i)?.[1];
+    return shortcode ? `instagram:post:${shortcode}` : null;
+  }
+
+  function normalizeInstagramStructuredMedia(value) {
+    if (!value || value.kind !== "video") return null;
+    const posterUrl = safeInstagramMediaUrl(value.posterUrl || value.url, "image");
+    const playbackUrl = safeInstagramMediaUrl(value.playbackUrl, "video");
+    if (!posterUrl || !playbackUrl) return null;
+    return Object.freeze({
+      kind: "video",
+      url: posterUrl,
+      posterUrl,
+      playbackUrl,
+      playbackMode: "inline",
+      width: positiveMediaDimension(value.width),
+      height: positiveMediaDimension(value.height),
+      provenance: String(value.provenance || "instagram_structured_json").slice(0, 60),
+    });
+  }
+
+  function safeInstagramMediaUrl(value, kind) {
+    if (typeof value !== "string") return null;
+    try {
+      const url = new URL(value);
+      const host = url.hostname.toLowerCase();
+      if (
+        url.protocol !== "https:" || url.username || url.password || url.port ||
+        !["fbcdn.net", "cdninstagram.com"].some((suffix) => host === suffix || host.endsWith(`.${suffix}`))
+      ) return null;
+      if (kind === "video" && !/\.mp4$/i.test(url.pathname)) return null;
+      if (kind === "image" && !/\.(?:avif|gif|jpe?g|png|webp)$/i.test(url.pathname)) return null;
+      url.hash = "";
+      return url.href;
+    } catch {
+      return null;
+    }
+  }
+
+  function positiveMediaDimension(value) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? Math.min(8_192, Math.round(number)) : 0;
   }
 
   function instagramPermalink(container) {
