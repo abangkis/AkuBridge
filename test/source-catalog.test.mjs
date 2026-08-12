@@ -28,3 +28,13 @@ test("empty observation recovery is explicit and does not alter established adap
   assert.equal(sourceDefinition("linkedin").captureRecovery, undefined);
   assert.equal(sourceDefinition("instagram").captureRecovery, undefined);
 });
+
+test("early source-ready navigation is isolated to Instagram", () => {
+  assert.equal(
+    sourceDefinition("instagram").navigation.readinessMode,
+    "tab_complete_or_source_ready",
+  );
+  for (const source of ["x", "linkedin", "facebook"]) {
+    assert.equal(sourceDefinition(source).navigation, undefined);
+  }
+});

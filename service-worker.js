@@ -1,4 +1,8 @@
-import { chooseSourceTab, expectedFeedUrl } from "./source-tab-policy.js";
+import {
+  chooseSourceTab,
+  expectedFeedUrl,
+  isCanonicalFeedUrl,
+} from "./source-tab-policy.js";
 import { shouldRetrySourceTab } from "./tab-recovery-policy.js";
 import {
   emptyCaptureDiagnostics,
@@ -28,6 +32,7 @@ import {
   managedSurfaceReleaseAllowsRecreate,
   shouldRecoverManagedLoad,
 } from "./managed-load-recovery-policy.js";
+import { navigationReadinessOutcome } from "./navigation-readiness-policy.js";
 import {
   BRIDGE_CONTRACT_VERSION,
   BRIDGE_ID,
@@ -1073,10 +1078,17 @@ async function findOrOpenSourceTab(
         );
         try {
           if (managed.opened || managed.reset) {
-            await waitForTabComplete(managed.tab.id, 20_000, {
+            const navigation = await waitForTabComplete(managed.tab.id, 20_000, {
               source,
               phase: managed.reset ? "canonical_feed_reset" : "managed_surface_created",
             });
+            if (navigation.reason === "source_ready") {
+              managedLifecycleEvents.push(captureSurfaceEvent("reconciled", source, {
+                outcome: "navigation_source_ready",
+                elapsedMs: navigation.elapsedMs,
+                tabStatus: navigation.tabStatus,
+              }));
+            }
           }
           break;
         } catch (error) {
@@ -1627,35 +1639,113 @@ async function collectFromTabWithDeadline(tabId, payload) {
 async function waitForTabComplete(tabId, timeoutMs, options = {}) {
   const startedAt = Date.now();
   const existing = await chrome.tabs.get(tabId);
-  if (existing.status === "complete") return;
-  await new Promise((resolve, reject) => {
-    const timeout = setTimeout(async () => {
-      chrome.tabs.onUpdated.removeListener(listener);
-      const latest = await chrome.tabs.get(tabId).catch(() => null);
-      reject(new AkuBridgeError(
-        "tab_load_timeout",
-        "navigation",
-        "Source tab did not finish loading in time.",
-        {
-          source: sourceIds().includes(options.source) ? options.source : null,
-          phase: String(options.phase ?? "source_navigation").slice(0, 80),
-          elapsedMs: Date.now() - startedAt,
-          status: latest?.status ?? "closed",
-          canonicalFeed: latest
-            ? isCanonicalFeedUrl(latest.url, options.source)
-            : false,
-          observedSource: latest ? sourceForUrl(latest.url) : null,
-        },
-      ));
-    }, timeoutMs);
-    function listener(updatedTabId, changeInfo) {
-      if (updatedTabId !== tabId || changeInfo.status !== "complete") return;
+  if (existing.status === "complete") return tabNavigationReady("tab_complete", startedAt, existing);
+  const sourcePolicy = sourceDefinition(options.source);
+  const navigationMode = sourcePolicy?.navigation?.readinessMode;
+  if (navigationMode) {
+    return waitForTabCompleteOrSourceReady(tabId, timeoutMs, {
+      ...options,
+      startedAt,
+      navigationMode,
+      expectedAdapterVersion: sourcePolicy.adapterVersion,
+    });
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       chrome.tabs.onUpdated.removeListener(listener);
-      resolve();
+      callback();
+    };
+    const timeout = setTimeout(() => {
+      void chrome.tabs.get(tabId)
+        .catch(() => null)
+        .then((latest) => finish(() => reject(tabLoadTimeoutError(latest, startedAt, options))));
+    }, timeoutMs);
+    function listener(updatedTabId, changeInfo, updatedTab) {
+      if (updatedTabId !== tabId || changeInfo.status !== "complete") return;
+      finish(() => resolve(tabNavigationReady("tab_complete", startedAt, updatedTab)));
     }
     chrome.tabs.onUpdated.addListener(listener);
+    // Close the get-before-listener race without changing established source behavior.
+    void chrome.tabs.get(tabId).then((latest) => {
+      if (latest.status === "complete") {
+        finish(() => resolve(tabNavigationReady("tab_complete", startedAt, latest)));
+      }
+    }).catch((error) => finish(() => reject(error)));
   });
+}
+
+async function waitForTabCompleteOrSourceReady(
+  tabId,
+  timeoutMs,
+  {
+    source,
+    phase,
+    startedAt,
+    navigationMode,
+    expectedAdapterVersion,
+  },
+) {
+  const expectedRuntimeRevision = bridgeCapabilities().runtimeRevision;
+  let latest = await chrome.tabs.get(tabId);
+  while (Date.now() - startedAt < timeoutMs) {
+    if (latest.status === "complete") {
+      return tabNavigationReady("tab_complete", startedAt, latest);
+    }
+    const readiness = await probeRegisteredSourceReadiness(tabId, source);
+    latest = await chrome.tabs.get(tabId);
+    const outcome = navigationReadinessOutcome({
+      mode: navigationMode,
+      tabStatus: latest.status,
+      readiness,
+      expectedSource: source,
+      expectedAdapterVersion,
+      expectedRuntimeRevision,
+      canonicalFeed: isCanonicalFeedUrl(latest.url, source),
+    });
+    if (outcome.ready) return tabNavigationReady(outcome.reason, startedAt, latest);
+    await delay(Math.min(250, Math.max(0, timeoutMs - (Date.now() - startedAt))));
+  }
+  throw tabLoadTimeoutError(latest, startedAt, { source, phase });
+}
+
+async function probeRegisteredSourceReadiness(tabId, source) {
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, {
+      type: "AKU_BROWSER_PROBE_SOURCE_READY",
+      source,
+    });
+    return response?.ok ? response.readiness ?? null : null;
+  } catch {
+    return null;
+  }
+}
+
+function tabNavigationReady(reason, startedAt, tab) {
+  return {
+    reason,
+    elapsedMs: Date.now() - startedAt,
+    tabStatus: tab?.status ?? "closed",
+  };
+}
+
+function tabLoadTimeoutError(latest, startedAt, options = {}) {
+  return new AkuBridgeError(
+    "tab_load_timeout",
+    "navigation",
+    "Source tab did not finish loading in time.",
+    {
+      source: sourceIds().includes(options.source) ? options.source : null,
+      phase: String(options.phase ?? "source_navigation").slice(0, 80),
+      elapsedMs: Date.now() - startedAt,
+      status: latest?.status ?? "closed",
+      canonicalFeed: latest ? isCanonicalFeedUrl(latest.url, options.source) : false,
+      observedSource: latest ? sourceForUrl(latest.url) : null,
+    },
+  );
 }
 
 function assertEndpoint(endpoint) {
