@@ -21,8 +21,16 @@ test("Chrome and PC restart reconcile a stopped or crashed runtime", () => {
   });
 });
 
-test("every Chrome extension update reason reconciles the compatible tuple", () => {
-  for (const reason of ["update", "chrome_update", "shared_module_update"]) {
+test("an AkuBridge package update checks the signed Sidecar feed immediately", () => {
+  assert.deepEqual(planNativeRuntimeLifecycle("installed", { reason: "update", distribution: "production" }), {
+    action: "ensure_runtime",
+    trigger: "installed_update",
+    openSetup: false,
+  });
+});
+
+test("Chrome and shared-module updates only reconcile the compatible runtime", () => {
+  for (const reason of ["chrome_update", "shared_module_update"]) {
     assert.deepEqual(planNativeRuntimeLifecycle("installed", { reason, distribution: "production" }), {
       action: "reconcile_runtime",
       trigger: `installed_${reason}`,

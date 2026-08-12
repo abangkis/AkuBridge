@@ -33,6 +33,12 @@ and one exact v1 migration fallback. It derives all runtime paths from
 installer-owned local metadata. See
 `native-host/README.md` for its build and filesystem contract.
 
+Production Store installs persist a 24-hour Sidecar update cadence anchored to
+the local installation time, so routine GitHub release checks remain naturally
+distributed across users. A later AkuBridge package update checks the signed
+Sidecar feed immediately, then returns to that original daily anchor instead of
+moving every user to the Bridge publication time.
+
 ## OpenAI Build Week role
 
 During OpenAI Build Week, AkuBridge expanded from the early X/LinkedIn

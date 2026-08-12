@@ -9,15 +9,16 @@ import {
 
 const NOW = Date.parse("2026-08-12T05:00:00.000Z");
 
-test("runtime scheduler restores one persisted future alarm", async () => {
+test("runtime scheduler migrates one persisted future alarm without bunching users", async () => {
   const future = new Date(NOW + 60_000).toISOString();
   const { alarms, created } = alarmRecorder();
   let checks = 0;
+  const storage = memoryStorage({
+    [NATIVE_RUNTIME_SCHEDULE_KEY]: { schemaVersion: 1, nextCheckAt: future },
+  });
   const scheduler = createNativeRuntimeScheduler({
     alarms,
-    storage: memoryStorage({
-      [NATIVE_RUNTIME_SCHEDULE_KEY]: { schemaVersion: 1, nextCheckAt: future },
-    }),
+    storage,
     check: async () => {
       checks += 1;
       return { state: "runtime_ready" };
@@ -28,9 +29,11 @@ test("runtime scheduler restores one persisted future alarm", async () => {
   assert.equal(await scheduler.restore(), NOW + 60_000);
   assert.deepEqual(created, [{ name: NATIVE_RUNTIME_CHECK_ALARM, when: NOW + 60_000 }]);
   assert.equal(checks, 0, "startup restore must not bypass the persisted update cadence");
+  assert.equal(storage.value[NATIVE_RUNTIME_SCHEDULE_KEY].schemaVersion, 2);
+  assert.equal(storage.value[NATIVE_RUNTIME_SCHEDULE_KEY].anchorAt, future);
 });
 
-test("successful scheduled check persists a jittered next check", async () => {
+test("successful scheduled check persists the next 24-hour installation anchor", async () => {
   const storage = memoryStorage();
   const { alarms, created } = alarmRecorder();
   const triggers = [];
@@ -51,9 +54,13 @@ test("successful scheduled check persists a jittered next check", async () => {
   assert.equal(storage.value[NATIVE_RUNTIME_SCHEDULE_KEY].failureCount, 0);
   assert.equal(
     storage.value[NATIVE_RUNTIME_SCHEDULE_KEY].nextCheckAt,
-    new Date(NOW + (12 * 60 * 60 * 1_000)).toISOString(),
+    new Date(NOW + (24 * 60 * 60 * 1_000)).toISOString(),
   );
-  assert.equal(created.at(-1).when, NOW + (12 * 60 * 60 * 1_000));
+  assert.equal(created.at(-1).when, NOW + (24 * 60 * 60 * 1_000));
+  assert.equal(
+    storage.value[NATIVE_RUNTIME_SCHEDULE_KEY].anchorAt,
+    new Date(NOW).toISOString(),
+  );
 });
 
 test("runtime scheduler initializes missing state at the normal interval", async () => {
@@ -67,9 +74,10 @@ test("runtime scheduler initializes missing state at the normal interval", async
     random: () => 0.5,
   });
 
-  assert.equal(await scheduler.restore(), NOW + (12 * 60 * 60 * 1_000));
-  assert.equal(created.at(-1).when, NOW + (12 * 60 * 60 * 1_000));
+  assert.equal(await scheduler.restore(), NOW + (24 * 60 * 60 * 1_000));
+  assert.equal(created.at(-1).when, NOW + (24 * 60 * 60 * 1_000));
   assert.equal(storage.value[NATIVE_RUNTIME_SCHEDULE_KEY].lastCheckAt, null);
+  assert.equal(storage.value[NATIVE_RUNTIME_SCHEDULE_KEY].anchorAt, new Date(NOW).toISOString());
 });
 
 test("fresh install schedules the first background check at the normal interval", async () => {
@@ -85,9 +93,44 @@ test("fresh install schedules the first background check at the normal interval"
 
   const scheduledAt = await scheduler.scheduleInitial();
 
-  assert.equal(scheduledAt, NOW + (12 * 60 * 60 * 1_000));
+  assert.equal(scheduledAt, NOW + (24 * 60 * 60 * 1_000));
   assert.equal(created.at(-1).when, scheduledAt);
   assert.equal(storage.value[NATIVE_RUNTIME_SCHEDULE_KEY].lastCheckAt, null);
+});
+
+test("an immediate Bridge update check returns to the original install-time anchor", async () => {
+  const installedAt = NOW - (6 * 60 * 60 * 1_000);
+  const nextDailyCheck = installedAt + (24 * 60 * 60 * 1_000);
+  const storage = memoryStorage({
+    [NATIVE_RUNTIME_SCHEDULE_KEY]: {
+      schemaVersion: 2,
+      anchorAt: new Date(installedAt).toISOString(),
+      failureCount: 0,
+      lastCheckAt: null,
+      nextCheckAt: new Date(nextDailyCheck).toISOString(),
+      lastTrigger: "schedule_initialized",
+    },
+  });
+  const { alarms, created } = alarmRecorder();
+  const triggers = [];
+  const scheduler = createNativeRuntimeScheduler({
+    alarms,
+    storage,
+    check: async (trigger) => {
+      triggers.push(trigger);
+      return { state: "runtime_ready", update: { phase: "idle" } };
+    },
+    now: () => NOW,
+  });
+
+  await scheduler.checkNow("installed_update");
+
+  assert.deepEqual(triggers, ["installed_update"]);
+  assert.equal(created.at(-1).when, nextDailyCheck);
+  assert.equal(
+    storage.value[NATIVE_RUNTIME_SCHEDULE_KEY].anchorAt,
+    new Date(installedAt).toISOString(),
+  );
 });
 
 test("pending updates retry soon and retryable failures back off with a cap", () => {
@@ -130,7 +173,7 @@ test("nonretryable update failures return to the normal check interval", () => {
         update: { phase },
       },
       random: () => 0.5,
-    }), 12 * 60 * 60 * 1_000);
+    }), 24 * 60 * 60 * 1_000);
   }
 });
 

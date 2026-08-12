@@ -15,8 +15,13 @@ export function planNativeRuntimeLifecycle(event, details = {}) {
     if (!INSTALLED_REASONS.has(reason)) {
       throw new TypeError(`Unsupported Chrome installation reason: ${reason || "missing"}`);
     }
+    const action = reason === "install" || distribution === "development"
+      ? "none"
+      : reason === "update"
+        ? "ensure_runtime"
+        : "reconcile_runtime";
     return Object.freeze({
-      action: reason === "install" || distribution === "development" ? "none" : "reconcile_runtime",
+      action,
       trigger: `installed_${reason}`,
       openSetup: reason === "install",
     });

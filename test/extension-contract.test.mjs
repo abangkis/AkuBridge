@@ -116,6 +116,7 @@ test("AkuBridge checks the bounded native runtime lifecycle without gating captu
   assert.match(worker, /nativeRuntimeClient\.reconcileRuntime/);
   assert.match(worker, /nativeRuntimeClient\.status/);
   assert.match(worker, /scheduleNext:\s*details\.reason !== "install"/);
+  assert.match(worker, /checkNow\(plan\.trigger\)/);
   assert.match(worker, /chrome\.runtime\.getURL\("setup\.html"\)/);
   assert.doesNotMatch(worker, /chrome\.action\.onClicked/);
   assert.match(nativeClient, /com\.akubrowser\.runtime/);
