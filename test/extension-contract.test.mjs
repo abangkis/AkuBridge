@@ -5,7 +5,10 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createBridgeCapabilities } from "../bridge-capabilities.js";
-import { registeredScriptsForSources } from "../source-access-policy.js";
+import {
+  registeredScriptsForSources,
+  sourceAccessDefinitions,
+} from "../source-access-policy.js";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -54,6 +57,13 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     "http://localhost:11122/*",
   ]);
   assert.equal(manifest.content_scripts.length, 1);
+  assert.equal(manifest.action.default_popup, "popup.html");
+  const popupHtml = fs.readFileSync(path.join(projectRoot, "popup.html"), "utf8");
+  const popupScript = fs.readFileSync(path.join(projectRoot, "popup.js"), "utf8");
+  assert.match(popupHtml, /Open AkuBrowser/);
+  assert.match(popupHtml, /Setup &amp; source access|Setup & source access/);
+  assert.match(popupScript, /chrome\.runtime\.getURL\("setup\.html"\)/);
+  assert.match(popupScript, /AKU_BROWSER_LOOPBACK_ORIGIN/);
 
   const source = [
     "service-worker.js",
@@ -102,7 +112,7 @@ test("AkuBridge checks the bounded native runtime lifecycle without gating captu
   assert.match(worker, /nativeRuntimeClient\.ensureRuntime/);
   assert.match(worker, /nativeRuntimeClient\.status/);
   assert.match(worker, /chrome\.runtime\.getURL\("setup\.html"\)/);
-  assert.match(worker, /probeCompatibleLoopbackRuntime/);
+  assert.doesNotMatch(worker, /chrome\.action\.onClicked/);
   assert.match(nativeClient, /com\.akubrowser\.runtime/);
   assert.match(nativeClient, /runtime\.sendNativeMessage/);
   assert.doesNotMatch(nativeClient, /runtime\.connectNative/);
@@ -118,6 +128,13 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
 
   assert.equal(manifest.options_page, "setup.html");
   assert.equal(manifest.options_ui, undefined);
+  for (const source of sourceAccessDefinitions()) {
+    assert.match(
+      setupHtml,
+      new RegExp(`input[^>]+type=["']checkbox["'][^>]+value=["']${source.id}["']`),
+      `setup consent must expose ${source.id}`,
+    );
+  }
   assert.match(setupHtml, /setup\.css/);
   assert.match(setupHtml, /setup\.js/);
   assert.match(setupHtml, /rel="icon" type="image\/svg\+xml" href="icons\/setup-favicon\.svg"/);
@@ -225,6 +242,13 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.match(setupScript, /chrome\.permissions\.request/);
   assert.match(setupScript, /chrome\.permissions\.remove/);
   assert.match(setupScript, /sourceSelectionRecorded/);
+  assert.match(setupHtml, /id="open-anyway-dialog"/);
+  assert.match(setupHtml, /Fix setup first/);
+  assert.match(setupHtml, /Open anyway/);
+  assert.doesNotMatch(setupHtml, /id="open"[^>]+disabled/);
+  assert.doesNotMatch(setupScript, /open\.disabled\s*=/);
+  assert.match(setupScript, /incompleteSetupItems/);
+  assert.match(setupScript, /openAnywayDialog\.showModal/);
 });
 
 test("AkuBridge recognizes the current LinkedIn feed container", () => {

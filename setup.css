@@ -408,6 +408,15 @@ h3 {
   padding-left: 22px;
 }
 
+.setup-issues {
+  margin: 12px 0;
+  padding: 12px 14px 12px 34px;
+  border: 1px solid #e0b65d;
+  border-radius: 10px;
+  color: #5b3b00;
+  background: #fff6d8;
+}
+
 .runtime-process-identity {
   display: grid;
   gap: 3px;
@@ -529,7 +538,7 @@ legend {
 
 .source-options-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 

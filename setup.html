@@ -275,6 +275,10 @@
                   <input type="checkbox" value="facebook">
                   <span><strong>Facebook</strong><small>The main feed you see</small></span>
                 </label>
+                <label class="source-option">
+                  <input type="checkbox" value="instagram">
+                  <span><strong>Instagram</strong><small>Your home feed</small></span>
+                </label>
               </div>
             </fieldset>
             <p class="consent-copy">
@@ -310,7 +314,7 @@
                 Complete the required components and choose at least one source.
               </p>
             </div>
-            <button id="open" class="primary" type="button" disabled>Open AkuBrowser</button>
+            <button id="open" class="primary" type="button">Open AkuBrowser</button>
           </section>
         </li>
       </ol>
@@ -345,6 +349,23 @@
         <div class="dialog-actions">
           <button id="runtime-conflict-cancel" type="button">Cancel</button>
           <button id="runtime-conflict-check" class="primary" type="button">I've stopped it — check again</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="open-anyway-dialog" class="runtime-conflict-dialog" aria-labelledby="open-anyway-dialog-title">
+      <div class="dialog-content">
+        <p class="step-label">Setup incomplete</p>
+        <h2 id="open-anyway-dialog-title">AkuBrowser may not work completely yet</h2>
+        <p>These setup items still need attention:</p>
+        <ul id="open-anyway-issues" class="setup-issues"></ul>
+        <p>
+          You can return to setup now, or open the local timeline anyway and
+          accept that capture or AI features may be unavailable.
+        </p>
+        <div class="dialog-actions">
+          <button id="open-anyway-fix" class="secondary" type="button">Fix setup first</button>
+          <button id="open-anyway-confirm" class="primary" type="button">Open anyway</button>
         </div>
       </div>
     </dialog>

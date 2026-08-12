@@ -6,6 +6,7 @@
   "type": "module",
   "description": "AkuBridge read-only Chrome extension for AkuBrowser",
   "scripts": {
+    "pretest": "node --check popup.js",
     "test": "node --test --test-isolation=none",
     "native:test": "cd native-host && go test -count=1 ./...",
     "version:patch": "node scripts/bump-version.mjs",

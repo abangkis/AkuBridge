@@ -5,9 +5,11 @@ import {
 } from "./native-runtime-client.js";
 import {
   SOURCE_ACCESS_SELECTION_KEY,
+  SOURCE_ACCESS_SELECTION_SCHEMA_VERSION,
   originsForSources,
   setupSelectedSources,
   sourceAccessDefinitions,
+  sourceAccessSelectionNeedsDefaultMigration,
   sourcesForGrantedOrigins,
 } from "./source-access-policy.js";
 import { simulatedRuntimeOutcome } from "./setup-runtime-simulation.js";
@@ -86,6 +88,10 @@ const runtimeConflictNote = document.querySelector("#runtime-conflict-note");
 const runtimeConflictDialog = document.querySelector("#runtime-conflict-dialog");
 const runtimeConflictCancel = document.querySelector("#runtime-conflict-cancel");
 const runtimeConflictCheck = document.querySelector("#runtime-conflict-check");
+const openAnywayDialog = document.querySelector("#open-anyway-dialog");
+const openAnywayIssues = document.querySelector("#open-anyway-issues");
+const openAnywayFix = document.querySelector("#open-anyway-fix");
+const openAnywayConfirm = document.querySelector("#open-anyway-confirm");
 const codexConfirmation = document.querySelector("#codex-confirmation");
 const codexStatusBadge = document.querySelector("#codex-status-badge");
 const permissionStep = document.querySelector("#step-permissions");
@@ -113,8 +119,11 @@ runtimeAction.addEventListener("click", () => void performRuntimeAction());
 runtimeConflictCancel.addEventListener("click", () => runtimeConflictDialog.close());
 runtimeConflictCheck.addEventListener("click", () => void checkAfterManualConflictStop());
 codexAction.addEventListener("click", () => void performCodexAction());
-open.addEventListener("click", () => {
-  chrome.tabs.create({ url: `${AKU_BROWSER_LOOPBACK_ORIGIN}/`, active: true });
+open.addEventListener("click", handleOpenAkuBrowser);
+openAnywayFix.addEventListener("click", returnToIncompleteSetup);
+openAnywayConfirm.addEventListener("click", () => {
+  openAnywayDialog.close();
+  void openAkuBrowser();
 });
 codexConfirmation.addEventListener("change", () => void saveCodexConfirmation());
 sourceOptions.addEventListener("change", updateSourceAccessButton);
@@ -395,11 +404,13 @@ async function renderSourceAccess() {
     chrome.storage.local.get(SOURCE_ACCESS_SELECTION_KEY),
   ]);
   const granted = new Set(sourcesForGrantedOrigins(permissions.origins));
-  sourceSelectionRecorded = stored?.[SOURCE_ACCESS_SELECTION_KEY]?.schemaVersion === 1
-    && Array.isArray(stored[SOURCE_ACCESS_SELECTION_KEY].selectedSources);
+  const savedSelection = stored?.[SOURCE_ACCESS_SELECTION_KEY];
+  sourceSelectionRecorded = [1, SOURCE_ACCESS_SELECTION_SCHEMA_VERSION].includes(savedSelection?.schemaVersion)
+    && Array.isArray(savedSelection.selectedSources)
+    && !sourceAccessSelectionNeedsDefaultMigration(savedSelection);
   const selected = new Set(setupSelectedSources(
     [...granted],
-    stored?.[SOURCE_ACCESS_SELECTION_KEY],
+    savedSelection,
   ));
   grantedSourceIds = granted;
   for (const input of sourceOptions.querySelectorAll("input[type=checkbox]")) {
@@ -494,12 +505,45 @@ function updateTimelineState() {
   permissionStatusBadge.classList.toggle("is-ready", permissionsReady);
 
   const ready = componentsReady && permissionsReady;
-  open.disabled = !ready;
   finishDetail.textContent = ready
     ? "All components are ready and your source access is saved."
     : !componentsReady
       ? "Finish the runtime check, check Codex, and confirm that you are signed in."
       : "Choose at least one source to start building your timeline.";
+}
+
+function incompleteSetupItems() {
+  const items = [];
+  if (!runtimeReady) items.push({ message: "The AkuBrowser runtime has not been confirmed ready.", target: runtimeAction });
+  if (!codexAvailable) items.push({ message: "Codex App availability has not been confirmed.", target: codexAction });
+  if (codexAvailable && !codexConfirmed) items.push({ message: "Codex sign-in has not been confirmed.", target: codexConfirmation });
+  if (grantedSourceIds.size === 0) items.push({ message: "No social source access has been enabled.", target: sourceOptions });
+  return items;
+}
+
+function handleOpenAkuBrowser() {
+  const incomplete = incompleteSetupItems();
+  if (incomplete.length === 0) {
+    void openAkuBrowser();
+    return;
+  }
+  openAnywayIssues.replaceChildren(...incomplete.map(({ message }) => {
+    const item = document.createElement("li");
+    item.textContent = message;
+    return item;
+  }));
+  openAnywayDialog.showModal();
+}
+
+function returnToIncompleteSetup() {
+  const target = incompleteSetupItems()[0]?.target;
+  openAnywayDialog.close();
+  target?.scrollIntoView({ behavior: "smooth", block: "center" });
+  target?.focus({ preventScroll: true });
+}
+
+async function openAkuBrowser() {
+  await chrome.tabs.create({ url: `${AKU_BROWSER_LOOPBACK_ORIGIN}/`, active: true });
 }
 
 async function saveSelectedSourceAccess() {
@@ -527,7 +571,7 @@ async function saveSelectedSourceAccess() {
     if (!response?.ok) throw new Error(response?.message || "Source access reconciliation failed.");
     await chrome.storage.local.set({
       [SOURCE_ACCESS_SELECTION_KEY]: {
-        schemaVersion: 1,
+        schemaVersion: SOURCE_ACCESS_SELECTION_SCHEMA_VERSION,
         selectedSources: selected,
         confirmedAt: new Date().toISOString(),
       },

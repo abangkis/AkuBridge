@@ -1,5 +1,6 @@
 export const SOURCE_ACCESS_STATE_KEY = "akuBrowserSourceAccess";
 export const SOURCE_ACCESS_SELECTION_KEY = "akuBrowserSourceAccessSelection";
+export const SOURCE_ACCESS_SELECTION_SCHEMA_VERSION = 2;
 export const SOURCE_DISCLOSURE_VERSION = 1;
 
 const SOURCE_ACCESS = Object.freeze({
@@ -93,7 +94,7 @@ const SOURCE_ACCESS = Object.freeze({
   }),
   instagram: Object.freeze({
     displayName: "Instagram",
-    defaultSelected: false,
+    defaultSelected: true,
     origins: Object.freeze([
       "https://www.instagram.com/*",
       "https://instagram.com/*",
@@ -129,11 +130,28 @@ export function sourceAccessDefinitions() {
 
 export function setupSelectedSources(grantedSources, savedSelection) {
   const allSources = Object.keys(SOURCE_ACCESS);
-  if (!savedSelection || savedSelection.schemaVersion !== 1 || !Array.isArray(savedSelection.selectedSources)) {
+  if (!savedSelection || ![1, SOURCE_ACCESS_SELECTION_SCHEMA_VERSION].includes(savedSelection.schemaVersion) || !Array.isArray(savedSelection.selectedSources)) {
+    return allSources.filter((source) => SOURCE_ACCESS[source].defaultSelected !== false);
+  }
+  if (legacyDefaultSelection(savedSelection)) {
     return allSources.filter((source) => SOURCE_ACCESS[source].defaultSelected !== false);
   }
   const selected = new Set(normalizeSources(savedSelection.selectedSources));
   return normalizeSources(grantedSources).filter((source) => selected.has(source));
+}
+
+export function sourceAccessSelectionNeedsDefaultMigration(savedSelection) {
+  return legacyDefaultSelection(savedSelection);
+}
+
+function legacyDefaultSelection(savedSelection) {
+  const selected = savedSelection?.selectedSources;
+  return savedSelection?.schemaVersion === 1
+    && Array.isArray(selected)
+    && selected.length === 3
+    && selected[0] === "x"
+    && selected[1] === "linkedin"
+    && selected[2] === "facebook";
 }
 
 export function originsForSources(sources) {

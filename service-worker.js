@@ -36,7 +36,6 @@ import {
 import {
   AKU_BROWSER_LOOPBACK_ORIGIN,
   createChromeNativeRuntimeClient,
-  probeCompatibleLoopbackRuntime,
 } from "./native-runtime-client.js";
 import {
   nativeRuntimeDistribution,
@@ -151,12 +150,6 @@ chrome.permissions.onAdded.addListener(() => {
 
 chrome.permissions.onRemoved.addListener(() => {
   void reconcileSourceAccessAndRefreshHeartbeat();
-});
-
-chrome.action.onClicked.addListener(() => {
-  void openAkuBrowserOrSetup().catch(() => {
-    chrome.tabs.create({ url: chrome.runtime.getURL("setup.html"), active: true });
-  });
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -476,20 +469,6 @@ function isTrustedExtensionPage(sender) {
   return sender?.id === chrome.runtime.id
     && typeof sender.url === "string"
     && sender.url.startsWith(extensionOrigin);
-}
-
-async function openAkuBrowserOrSetup() {
-  const plan = planNativeRuntimeLifecycle("action");
-  const outcome = await executeNativeRuntimeLifecycle(plan);
-  const manifest = chrome.runtime.getManifest();
-  const portableRuntimeReady = outcome.state !== "runtime_ready"
-    && await probeCompatibleLoopbackRuntime({
-      productVersion: manifest.version_name || manifest.version,
-    });
-  const url = outcome.state === "runtime_ready" || portableRuntimeReady
-    ? `${AKU_BROWSER_ORIGIN}/`
-    : chrome.runtime.getURL("setup.html");
-  await chrome.tabs.create({ url, active: true });
 }
 
 async function rememberBackgroundLease(endpoint, token, leaseId) {

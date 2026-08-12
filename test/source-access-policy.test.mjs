@@ -6,13 +6,17 @@ import {
   reconcileRegisteredSourceScripts,
   registeredScriptsForSources,
   setupSelectedSources,
+  sourceAccessSelectionNeedsDefaultMigration,
   sourceAccessGranted,
   sourceAccessReadiness,
   sourcesForGrantedOrigins,
 } from "../source-access-policy.js";
 
-test("setup retains established defaults while Instagram remains explicit opt-in", () => {
-  assert.deepEqual(setupSelectedSources([], undefined), ["x", "linkedin", "facebook"]);
+test("setup preselects every registered source by default", () => {
+  assert.deepEqual(setupSelectedSources([], undefined), ["x", "linkedin", "facebook", "instagram"]);
+  const legacyDefaults = { schemaVersion: 1, selectedSources: ["x", "linkedin", "facebook"] };
+  assert.equal(sourceAccessSelectionNeedsDefaultMigration(legacyDefaults), true);
+  assert.deepEqual(setupSelectedSources(["x", "linkedin", "facebook"], legacyDefaults), ["x", "linkedin", "facebook", "instagram"]);
   assert.deepEqual(
     setupSelectedSources(["x", "linkedin"], { schemaVersion: 1, selectedSources: ["linkedin"] }),
     ["linkedin"],
