@@ -29,10 +29,11 @@ func resolveRuntimePlatform(executablePath string) (RuntimePlatform, error) {
 	}
 	installRoot := filepath.Dir(filepath.Dir(executablePath))
 	return RuntimePlatform{
-		Architecture:      architecture,
-		RuntimeExecutable: "AkuSidecar",
-		RuntimeRoot:       filepath.Join(installRoot, "runtime"),
-		DataRoot:          filepath.Join(dataHome, "AkuBrowser", "data"),
-		UpdateManifestURL: platformUpdateManifestURL(architecture),
+		Architecture:            architecture,
+		RuntimeExecutable:       "AkuSidecar",
+		RuntimeRoot:             filepath.Join(installRoot, "runtime"),
+		DataRoot:                filepath.Join(dataHome, "AkuBrowser", "data"),
+		UpdateManifestURL:       platformUpdateManifestURL(architecture),
+		LegacyUpdateManifestURL: legacyPlatformUpdateManifestURL(architecture),
 	}, nil
 }

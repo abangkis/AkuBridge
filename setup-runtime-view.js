@@ -40,6 +40,26 @@ export function runtimeSetupView(outcome, {
     });
   }
 
+  if (outcome?.hostUpgradeRequired === true) {
+    const runtimeReady = state === "runtime_ready";
+    return view({
+      badge: "Updater refresh required",
+      badgeState: "warning",
+      summary: "AkuSidecar's update helper is from the migration release.",
+      detail: runtimeReady
+        ? "The current runtime remains usable. Run this Bridge release's compatible companion installer once so future Sidecar-only updates can apply automatically."
+        : "Run this Bridge release's compatible companion installer once to refresh the update helper and enable future Sidecar-only updates.",
+      runtimeReady,
+      actionKind: installerAvailable
+        ? RUNTIME_SETUP_ACTIONS.INSTALL
+        : RUNTIME_SETUP_ACTIONS.NONE,
+      actionLabel: installerAvailable ? "Refresh update helper" : "Installer unavailable",
+      actionDisabled: !installerAvailable,
+      showInstallerNote: installerAvailable,
+      showSecurityNotice: runtimePlatform === "windows",
+    });
+  }
+
   if (state === "runtime_ready") {
     if (outcome?.runtimeSource === "loopback") {
       return view({
@@ -93,7 +113,7 @@ export function runtimeSetupView(outcome, {
       badgeState: "warning",
       summary: "AkuBrowser Runtime is not installed.",
       detail: installerAvailable
-        ? "Install the latest runtime on this device. Setup will detect it when you return."
+        ? "Install the compatible Sidecar companion packaged for this AkuBridge release. Setup will detect it when you return."
         : "Install a compatible runtime using the platform release instructions.",
       actionKind: installerAvailable
         ? RUNTIME_SETUP_ACTIONS.INSTALL
@@ -171,7 +191,7 @@ export function runtimeSetupView(outcome, {
     detail: repairWithInstaller
       ? forbiddenHost
         ? "The installed Native Messaging Host does not allow this AkuBrowser extension. Run the matching installer to repair its allowed extension identity."
-        : "Run the latest installer again to repair the local runtime."
+        : "Run the matching installer again to repair the local runtime."
       : runtimePlatform === "windows"
       ? "Review the Windows security notice, then try again or use the manual bundle."
       : "Try again. If the problem continues, repair the companion runtime.",
@@ -246,6 +266,10 @@ function runtimeExecutableLocationHint(runtimePlatform) {
 function normalizedUpdate(outcome, requiredVersion, requiredRevision) {
   const reported = outcome?.response?.update ?? null;
   if (reported?.currentVersion && reported?.targetVersion) return reported;
+  // Protocol v2 makes the host's update target authoritative. A missing target
+  // means no Sidecar update is being offered, even when the independently
+  // released Bridge has a different product version.
+  if (outcome?.response?.schemaVersion >= 2) return reported;
   const runtime = outcome?.response?.runtime;
   const currentVersion = reported?.currentVersion ?? runtime?.version ?? null;
   const releaseMismatch = currentVersion && requiredVersion && currentVersion !== requiredVersion;

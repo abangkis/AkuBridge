@@ -39,6 +39,20 @@ func TestHostPreservesRequestCorrelationAndStructuredDiagnostics(t *testing.T) {
 	}
 }
 
+func TestHostRoutesV2ReconcileWithoutRunningUpdater(t *testing.T) {
+	root := writeActiveRuntime(t, activeFixture())
+	updater := &recordingRuntimeUpdater{}
+	controller := testController(root, &sequenceProber{results: []probeStep{{result: readyProbe()}}}, &recordingLauncher{})
+	controller.Updater = updater
+	request := validV2Request("reconcile_runtime")
+
+	response := (Host{Controller: controller}).Handle(context.Background(), request)
+
+	if response.Status != "ready" || response.Action != "reconcile_runtime" || updater.updateCalls != 0 {
+		t.Fatalf("reconcile response=%+v updateCalls=%d", response, updater.updateCalls)
+	}
+}
+
 func TestHostRejectsUnknownActionWithoutRuntimeAuthority(t *testing.T) {
 	prober := &sequenceProber{}
 	launcher := &recordingLauncher{}

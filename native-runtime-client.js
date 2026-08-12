@@ -1,10 +1,13 @@
 import {
   BRIDGE_CONTRACT_VERSION,
+  BRIDGE_PROTOCOL_MAJOR,
   BRIDGE_RUNTIME_REVISION,
+  createBridgeCapabilities,
 } from "./bridge-capabilities.js";
 
 export const NATIVE_RUNTIME_HOST = "com.akubrowser.runtime";
-export const NATIVE_RUNTIME_PROTOCOL_VERSION = 1;
+export const NATIVE_RUNTIME_PROTOCOL_VERSION = 2;
+export const NATIVE_RUNTIME_LEGACY_PROTOCOL_VERSION = 1;
 export const NATIVE_RUNTIME_STATE_KEY = "akuBrowserNativeRuntimeState";
 export const NATIVE_CODEX_STATE_KEY = "akuBrowserNativeCodexState";
 export const AKU_BROWSER_LOOPBACK_ORIGIN = "http://127.0.0.1:11122";
@@ -28,6 +31,7 @@ export const NATIVE_RUNTIME_CLIENT_STATES = Object.freeze({
 const ALLOWED_ACTIONS = new Set([
   "status",
   "ensure_runtime",
+  "reconcile_runtime",
   "shutdown_if_idle",
   "check_codex",
 ]);
@@ -52,16 +56,22 @@ const UPDATE_PHASES = new Set([
   "downloading",
   "verifying",
   "staging",
+  "staged",
   "waiting_for_idle",
+  "applying",
   "swapping",
   "health_check",
+  "validating",
+  "complete",
   "rolling_back",
+  "rolled_back",
 ]);
 const ERROR_CODES = new Set([
   "invalid_request",
   "unauthorized_extension",
   "protocol_incompatible",
   "runtime_incompatible",
+  "host_upgrade_required",
   "runtime_busy",
   "runtime_start_failed",
   "update_check_failed",
@@ -92,6 +102,12 @@ const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/;
 const REVISION_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{16,80}$/;
 const INSTANCE_EPOCH_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
+const CAPABILITY_PATTERN = /^[a-z][a-z0-9._-]{1,79}$/;
+const DEFAULT_NATIVE_CAPABILITIES = Object.freeze([
+  ...ALLOWED_ACTIONS,
+  "authority.read_only_bounded",
+  "capture.bounded",
+]);
 
 export function createNativeRuntimeClient({
   runtime,
@@ -99,6 +115,7 @@ export function createNativeRuntimeClient({
   productVersion,
   runtimeRevision = BRIDGE_RUNTIME_REVISION,
   bridgeContractVersion = BRIDGE_CONTRACT_VERSION,
+  capabilities = DEFAULT_NATIVE_CAPABILITIES,
   hostName = NATIVE_RUNTIME_HOST,
   now = () => Date.now(),
   randomUUID = defaultRandomUUID,
@@ -116,6 +133,7 @@ export function createNativeRuntimeClient({
   if (bridgeContractVersion !== BRIDGE_CONTRACT_VERSION) {
     throw new TypeError("Native runtime client received an unsupported bridge contract.");
   }
+  const nativeCapabilities = normalizeCapabilities(capabilities);
 
   async function request(action, {
     trigger = "manual",
@@ -128,19 +146,6 @@ export function createNativeRuntimeClient({
       throw new TypeError("Native runtime request timeout must be positive.");
     }
 
-    const requestId = normalizeRequestId(randomUUID());
-    const nativeRequest = {
-      schemaVersion: NATIVE_RUNTIME_PROTOCOL_VERSION,
-      kind: "request",
-      requestId,
-      action,
-      extension: {
-        product: "AkuBrowser",
-        productVersion,
-        runtimeRevision,
-        bridgeContractVersion,
-      },
-    };
     const stateKey = action === "check_codex"
       ? NATIVE_CODEX_STATE_KEY
       : NATIVE_RUNTIME_STATE_KEY;
@@ -153,14 +158,53 @@ export function createNativeRuntimeClient({
       observedAt: new Date(now()).toISOString(),
     });
 
-    let response;
-    try {
-      response = await sendNativeMessage(runtime, hostName, nativeRequest, timeoutMs);
-    } catch (error) {
+    let exchange = await exchangeNativeMessage({
+      runtime,
+      hostName,
+      action,
+      productVersion,
+      runtimeRevision,
+      bridgeContractVersion,
+      capabilities: nativeCapabilities,
+      protocolVersion: NATIVE_RUNTIME_PROTOCOL_VERSION,
+      randomUUID,
+      timeoutMs,
+    });
+    if (shouldRetryWithLegacyProtocol(exchange)) {
+      const legacyAction = action === "reconcile_runtime" ? "status" : action;
+      exchange = await exchangeNativeMessage({
+        runtime,
+        hostName,
+        action: legacyAction,
+        productVersion,
+        runtimeRevision,
+        bridgeContractVersion,
+        capabilities: nativeCapabilities,
+        protocolVersion: NATIVE_RUNTIME_LEGACY_PROTOCOL_VERSION,
+        randomUUID,
+        timeoutMs,
+      });
+      if (action === "reconcile_runtime" && legacyStatusNeedsStart(exchange)) {
+        exchange = await exchangeNativeMessage({
+          runtime,
+          hostName,
+          action: "ensure_runtime",
+          productVersion,
+          runtimeRevision,
+          bridgeContractVersion,
+          capabilities: nativeCapabilities,
+          protocolVersion: NATIVE_RUNTIME_LEGACY_PROTOCOL_VERSION,
+          randomUUID,
+          timeoutMs,
+        });
+      }
+    }
+    if (exchange.error) {
+      const error = exchange.error;
       const missingHost = isMissingNativeHostError(error);
       const forbiddenHost = isForbiddenNativeHostError(error);
       const outcome = {
-        schemaVersion: NATIVE_RUNTIME_PROTOCOL_VERSION,
+        schemaVersion: exchange.protocolVersion,
         state: missingHost
           ? NATIVE_RUNTIME_CLIENT_STATES.INSTALL_REQUIRED
           : NATIVE_RUNTIME_CLIENT_STATES.FAILED,
@@ -182,11 +226,12 @@ export function createNativeRuntimeClient({
       return outcome;
     }
 
+    const { response, request: nativeRequest } = exchange;
     try {
       assertValidResponse(response, nativeRequest);
     } catch {
       const outcome = {
-        schemaVersion: NATIVE_RUNTIME_PROTOCOL_VERSION,
+        schemaVersion: exchange.protocolVersion,
         state: NATIVE_RUNTIME_CLIENT_STATES.FAILED,
         trigger: normalizeTrigger(trigger),
         observedAt: new Date(now()).toISOString(),
@@ -207,6 +252,7 @@ export function createNativeRuntimeClient({
     request,
     status: (options) => request("status", options),
     ensureRuntime: (options) => request("ensure_runtime", options),
+    reconcileRuntime: (options) => request("reconcile_runtime", options),
     shutdownIfIdle: (options) => request("shutdown_if_idle", options),
     checkCodex: (options) => request("check_codex", options),
   });
@@ -214,10 +260,16 @@ export function createNativeRuntimeClient({
 
 export function createChromeNativeRuntimeClient(chromeApi) {
   const manifest = chromeApi.runtime.getManifest();
+  const bridge = createBridgeCapabilities(manifest);
   return createNativeRuntimeClient({
     runtime: chromeApi.runtime,
     storage: chromeApi.storage?.local,
     productVersion: manifest.version_name || manifest.version,
+    capabilities: [
+      ...bridge.actions,
+      `authority.${bridge.authority}`,
+      "capture.bounded",
+    ],
   });
 }
 
@@ -239,12 +291,24 @@ export async function probeCompatibleLoopbackRuntime({
     });
     if (!response.ok) return false;
     const health = await response.json();
-    return health?.status === "ok"
-      && health.version === productVersion
-      && health.runtime === "go"
-      && health.bridgeContractVersion === bridgeContractVersion
-      && typeof health.instanceEpoch === "string"
-      && health.instanceEpoch.length >= 8;
+    if (health?.status !== "ok"
+        || !VERSION_PATTERN.test(health.version ?? "")
+        || health.runtime !== "go"
+        || health.bridgeContractVersion !== bridgeContractVersion
+        || typeof health.instanceEpoch !== "string"
+        || health.instanceEpoch.length < 8) {
+      return false;
+    }
+    const protocol = health.softwareUpdate?.bridgeProtocol;
+    if (protocol?.name === "aku-browser.bridge"
+        && Number.isInteger(protocol.minVersion)
+        && Number.isInteger(protocol.maxVersion)) {
+      return BRIDGE_PROTOCOL_MAJOR >= protocol.minVersion
+        && BRIDGE_PROTOCOL_MAJOR <= protocol.maxVersion;
+    }
+    // Old Sidecars advertised no compatibility range and remain safe only
+    // under the exact release tuple they were built to serve.
+    return health.version === productVersion;
   } catch {
     return false;
   } finally {
@@ -265,7 +329,7 @@ export function assertValidResponse(response, request) {
   ];
   if (request.action === "check_codex") expectedKeys.push("codex");
   assertExactKeys(response, expectedKeys, "response");
-  if (response.schemaVersion !== NATIVE_RUNTIME_PROTOCOL_VERSION) {
+  if (response.schemaVersion !== request.schemaVersion) {
     throw new TypeError("Native response protocol version is incompatible.");
   }
   if (response.kind !== "response") throw new TypeError("Native response kind is invalid.");
@@ -279,7 +343,7 @@ export function assertValidResponse(response, request) {
     throw new TypeError("Native response status is invalid.");
   }
   assertRuntimeState(response.runtime);
-  assertUpdateState(response.update);
+  assertUpdateState(response.update, response.schemaVersion);
   assertErrorState(response.error);
   if (request.action === "check_codex") assertCodexState(response.codex);
   return true;
@@ -293,7 +357,7 @@ function stateFromResponse(response, trigger, now) {
         ? NATIVE_RUNTIME_CLIENT_STATES.CODEX_NOT_FOUND
         : NATIVE_RUNTIME_CLIENT_STATES.CODEX_FAILED;
     const outcome = {
-      schemaVersion: NATIVE_RUNTIME_PROTOCOL_VERSION,
+      schemaVersion: response.schemaVersion,
       state: codexState,
       trigger: normalizeTrigger(trigger),
       observedAt: new Date(now()).toISOString(),
@@ -316,7 +380,7 @@ function stateFromResponse(response, trigger, now) {
     ? NATIVE_RUNTIME_CLIENT_STATES.STOPPED
     : stateByStatus[response.status];
   const outcome = {
-    schemaVersion: NATIVE_RUNTIME_PROTOCOL_VERSION,
+    schemaVersion: response.schemaVersion,
     state,
     trigger: normalizeTrigger(trigger),
     observedAt: new Date(now()).toISOString(),
@@ -324,8 +388,24 @@ function stateFromResponse(response, trigger, now) {
     retryable: response.error?.retryable ?? ["updating", "busy"].includes(response.status),
     remediation: response.error?.remediation
       ?? (response.status === "restart_required" ? "restart_chrome" : "none"),
+    update: normalizedUpdateState(response.update),
   };
-  if (response.error) outcome.errorCode = response.error.code;
+  if (response.error) {
+    outcome.errorCode = response.error.code;
+    outcome.silentError = response.status === "ready"
+      && response.runtime?.processState === "ready"
+      && ["runtime_busy", "update_check_failed", "download_failed"]
+        .includes(response.error.code);
+    if (response.error.code === "host_upgrade_required") {
+      outcome.hostUpgradeRequired = true;
+    }
+  }
+  if (response.schemaVersion === NATIVE_RUNTIME_LEGACY_PROTOCOL_VERSION) {
+    // A v1 host can keep the current Sidecar usable, but it cannot participate
+    // in independently-versioned Sidecar updates. Surface one bounded repair
+    // path instead of silently leaving the machine on the migration lane.
+    outcome.hostUpgradeRequired = true;
+  }
   return outcome;
 }
 
@@ -357,13 +437,16 @@ function assertRuntimeState(runtimeState) {
   }
 }
 
-function assertUpdateState(updateState) {
-  assertExactKeys(updateState, [
+function assertUpdateState(updateState, protocolVersion) {
+  const optionalKeys = protocolVersion === NATIVE_RUNTIME_PROTOCOL_VERSION
+    ? ["urgency", "deadline"]
+    : [];
+  assertAllowedKeys(updateState, [
     "phase",
     "currentVersion",
     "targetVersion",
     "rollbackAvailable",
-  ], "update");
+  ], optionalKeys, "update");
   if (!UPDATE_PHASES.has(updateState.phase)) throw new TypeError("Update phase is invalid.");
   for (const version of [updateState.currentVersion, updateState.targetVersion]) {
     if (version !== null && !VERSION_PATTERN.test(version ?? "")) {
@@ -372,6 +455,15 @@ function assertUpdateState(updateState) {
   }
   if (typeof updateState.rollbackAvailable !== "boolean") {
     throw new TypeError("Update rollback flag is invalid.");
+  }
+  if (updateState.urgency !== undefined
+      && !["routine", "recommended", "required", "security"].includes(updateState.urgency)) {
+    throw new TypeError("Update urgency is invalid.");
+  }
+  if (updateState.deadline !== undefined
+      && (!Number.isFinite(Date.parse(updateState.deadline))
+        || !["required", "security"].includes(updateState.urgency))) {
+    throw new TypeError("Update deadline is invalid.");
   }
 }
 
@@ -434,6 +526,120 @@ function sendNativeMessage(runtime, hostName, request, timeoutMs) {
       finish(reject, error);
     }
   });
+}
+
+function assertAllowedKeys(value, required, optional, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`Native ${label} must be an object.`);
+  }
+  const actual = new Set(Object.keys(value));
+  for (const key of required) {
+    if (!actual.has(key)) {
+      throw new TypeError(`Native ${label} contains missing or unexpected fields.`);
+    }
+  }
+  const allowed = new Set([...required, ...optional]);
+  if ([...actual].some((key) => !allowed.has(key))) {
+    throw new TypeError(`Native ${label} contains missing or unexpected fields.`);
+  }
+}
+
+async function exchangeNativeMessage({
+  runtime,
+  hostName,
+  action,
+  productVersion,
+  runtimeRevision,
+  bridgeContractVersion,
+  capabilities,
+  protocolVersion,
+  randomUUID,
+  timeoutMs,
+}) {
+  const extension = {
+    product: "AkuBrowser",
+    productVersion,
+    runtimeRevision,
+    bridgeContractVersion,
+  };
+  if (protocolVersion === NATIVE_RUNTIME_PROTOCOL_VERSION) {
+    extension.bridgeProtocol = {
+      name: "aku-browser.bridge",
+      version: BRIDGE_PROTOCOL_MAJOR,
+    };
+    extension.capabilities = [...capabilities];
+  }
+  const request = {
+    schemaVersion: protocolVersion,
+    kind: "request",
+    requestId: normalizeRequestId(randomUUID()),
+    action,
+    extension,
+  };
+  try {
+    const response = await sendNativeMessage(runtime, hostName, request, timeoutMs);
+    return { protocolVersion, request, response, error: null };
+  } catch (error) {
+    return { protocolVersion, request, response: null, error };
+  }
+}
+
+function shouldRetryWithLegacyProtocol(exchange) {
+  if (exchange.protocolVersion !== NATIVE_RUNTIME_PROTOCOL_VERSION) return false;
+  if (exchange.error) return isLikelyLegacyProtocolTransportError(exchange.error);
+  const response = exchange.response;
+  return response?.schemaVersion === NATIVE_RUNTIME_LEGACY_PROTOCOL_VERSION
+    && response?.requestId === exchange.request.requestId
+    && response?.action === exchange.request.action
+    && ["protocol_incompatible", "invalid_request"].includes(response?.error?.code);
+}
+
+function legacyStatusNeedsStart(exchange) {
+  if (exchange.error || exchange.protocolVersion !== NATIVE_RUNTIME_LEGACY_PROTOCOL_VERSION) {
+    return false;
+  }
+  try {
+    assertValidResponse(exchange.response, exchange.request);
+  } catch {
+    return false;
+  }
+  const response = exchange.response;
+  return response.action === "status"
+    && response.runtime?.processState === "stopped"
+    && (response.status === "ready"
+      || (response.status === "error"
+        && response.error?.code === "runtime_start_failed"
+        && response.error.retryable === true));
+}
+
+function isLikelyLegacyProtocolTransportError(error) {
+  if (isMissingNativeHostError(error) || isForbiddenNativeHostError(error)) return false;
+  return /native host has exited|native messaging host.*exited|message port closed|disconnected.*response|no response/i
+    .test(String(error?.message ?? error));
+}
+
+function normalizeCapabilities(values) {
+  if (!Array.isArray(values)) {
+    throw new TypeError("Native runtime capabilities must be an array.");
+  }
+  const normalized = [...new Set(values.map((value) => String(value ?? "").trim()))].sort();
+  if (normalized.length < 1 || normalized.length > 64
+      || normalized.some((value) => !CAPABILITY_PATTERN.test(value))) {
+    throw new TypeError("Native runtime capabilities are invalid.");
+  }
+  return Object.freeze(normalized);
+}
+
+function normalizedUpdateState(value) {
+  const normalized = {
+    phase: value.phase,
+    currentVersion: value.currentVersion,
+    targetVersion: value.targetVersion,
+    rollbackAvailable: value.rollbackAvailable,
+  };
+  if (value.urgency !== undefined) normalized.urgency = value.urgency;
+  if (value.deadline !== undefined) normalized.deadline = value.deadline;
+  return Object.freeze(normalized);
 }
 
 function assertCodexState(codexState) {

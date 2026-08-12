@@ -134,6 +134,15 @@ func (controller RuntimeController) Status(ctx context.Context, identity Extensi
 	if updateRequired {
 		return readyUpdateOutcome(active, probe.Health, identity.ProductVersion)
 	}
+	if controller.Updater != nil && identity.BridgeProtocol != nil {
+		prepared := controller.Updater.Prepared(ctx, active, identity)
+		if prepared.Code != "" {
+			return readyUpdateAttemptOutcome(active, probe.Health, prepared)
+		}
+		if prepared.Phase != "idle" {
+			return readyUpdateAttemptOutcome(active, probe.Health, prepared)
+		}
+	}
 	return readyOutcome(active, probe.Health)
 }
 
@@ -142,7 +151,26 @@ func (controller RuntimeController) Ensure(ctx context.Context, identity Extensi
 	if err != nil {
 		return controller.metadataFailure(err)
 	}
-	if runtimeUpdateRequired(active, identity) {
+	var updateWarning *RuntimeUpdateAttempt
+	if controller.Updater != nil && identity.BridgeProtocol != nil {
+		attempt := controller.Updater.Update(ctx, active, identity)
+		if !attempt.Succeeded() {
+			// Retryable discovery/download failures must not prevent an installed,
+			// compatible Sidecar from starting. Preserve the warning and reconcile
+			// the active runtime before returning it to the Bridge.
+			if attempt.Retryable && (attempt.Code == "update_check_failed" || attempt.Code == "download_failed") {
+				updateWarning = &attempt
+			} else {
+				probe, probeErr := controller.Prober.Probe(ctx)
+				if probeErr == nil && probe.Reachable && validateHealth(probe.Health, active) == nil {
+					return readyUpdateAttemptOutcome(active, probe.Health, attempt)
+				}
+				return updateFailureOutcome(active, attemptTargetVersion(active.Version, attempt), attempt)
+			}
+		} else {
+			active = attempt.Active
+		}
+	} else if runtimeUpdateRequired(active, identity) {
 		if controller.Updater == nil {
 			return updateRequiredOutcome(active, identity)
 		}
@@ -155,6 +183,26 @@ func (controller RuntimeController) Ensure(ctx context.Context, identity Extensi
 			return updateRequiredOutcome(active, identity)
 		}
 	}
+	return controller.reconcileActive(ctx, active, identity, updateWarning)
+}
+
+// Reconcile starts or validates only the already-installed active Sidecar. It
+// intentionally never reads the update feed, so Chrome/extension startup does
+// not bypass the persisted update cadence.
+func (controller RuntimeController) Reconcile(ctx context.Context, identity ExtensionIdentity) Outcome {
+	active, err := controller.loadActiveRuntime()
+	if err != nil {
+		return controller.metadataFailure(err)
+	}
+	return controller.reconcileActive(ctx, active, identity, nil)
+}
+
+func (controller RuntimeController) reconcileActive(
+	ctx context.Context,
+	active ActiveRuntime,
+	identity ExtensionIdentity,
+	updateWarning *RuntimeUpdateAttempt,
+) Outcome {
 	activationPending := controller.Updater != nil && controller.Updater.ActivationPending(active)
 	probe, err := controller.Prober.Probe(ctx)
 	if err != nil {
@@ -189,7 +237,7 @@ func (controller RuntimeController) Ensure(ctx context.Context, identity Extensi
 				})
 			}
 		}
-		return readyOutcome(active, probe.Health)
+		return readyOutcomeWithUpdateWarning(active, probe.Health, updateWarning)
 	}
 
 	executablePath, workingDirectory, configPath, databasePath := controller.runtimePaths(active)
@@ -227,7 +275,7 @@ func (controller RuntimeController) Ensure(ctx context.Context, identity Extensi
 					})
 				}
 			}
-			return readyOutcome(active, probe.Health)
+			return readyOutcomeWithUpdateWarning(active, probe.Health, updateWarning)
 		}
 		if time.Now().After(deadline) {
 			if activationPending {
@@ -239,6 +287,13 @@ func (controller RuntimeController) Ensure(ctx context.Context, identity Extensi
 			return startFailureOutcome(active)
 		}
 	}
+}
+
+func readyOutcomeWithUpdateWarning(active ActiveRuntime, health Health, warning *RuntimeUpdateAttempt) Outcome {
+	if warning != nil {
+		return readyUpdateAttemptOutcome(active, health, *warning)
+	}
+	return readyOutcome(active, health)
 }
 
 func (controller RuntimeController) rollbackPendingOutcome(ctx context.Context, failed ActiveRuntime, target string) Outcome {
@@ -272,9 +327,17 @@ func updateFailureOutcome(active ActiveRuntime, target string, attempt RuntimeUp
 		Update: UpdateState{
 			Phase: attempt.Phase, CurrentVersion: &current, TargetVersion: &target,
 			RollbackAvailable: active.RollbackVersion != nil,
+			Urgency:           attempt.Urgency, Deadline: attempt.Deadline,
 		},
 		Error: protocolError(attempt.Code, attempt.Message, attempt.Retryable, attempt.Remediation),
 	}
+}
+
+func attemptTargetVersion(fallback string, attempt RuntimeUpdateAttempt) string {
+	if versionPattern.MatchString(attempt.TargetVersion) {
+		return attempt.TargetVersion
+	}
+	return fallback
 }
 
 func (controller RuntimeController) runtimeControlToken() (string, error) {
@@ -422,9 +485,34 @@ func (controller RuntimeController) metadataFailure(_ error) Outcome {
 }
 
 func runtimeUpdateRequired(active ActiveRuntime, identity ExtensionIdentity) bool {
+	if identity.BridgeProtocol != nil {
+		return false
+	}
 	comparison := compareVersions(active.Version, identity.ProductVersion)
 	return comparison < 0 ||
 		(comparison == 0 && active.RuntimeRevision != identity.RuntimeRevision)
+}
+
+func readyUpdateAttemptOutcome(active ActiveRuntime, health Health, attempt RuntimeUpdateAttempt) Outcome {
+	current := active.Version
+	target := attemptTargetVersion(current, attempt)
+	return Outcome{
+		Status:  "ready",
+		Runtime: runtimeState(active, health.InstanceEpoch, "ready"),
+		Update: UpdateState{
+			Phase: attempt.Phase, CurrentVersion: &current, TargetVersion: &target,
+			RollbackAvailable: active.RollbackVersion != nil,
+			Urgency:           attempt.Urgency, Deadline: attempt.Deadline,
+		},
+		Error: attemptErrorIfActionable(attempt),
+	}
+}
+
+func attemptErrorIfActionable(attempt RuntimeUpdateAttempt) *ErrorState {
+	if attempt.Code == "runtime_busy" {
+		return nil
+	}
+	return protocolError(attempt.Code, attempt.Message, attempt.Retryable, attempt.Remediation)
 }
 
 func validateHealth(health Health, active ActiveRuntime) error {

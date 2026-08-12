@@ -108,6 +108,48 @@ func TestEnsureStartsFixedInstalledSidecarAndWaitsForHealth(t *testing.T) {
 	}
 }
 
+func TestReconcileStartsInstalledSidecarWithoutUpdateDiscovery(t *testing.T) {
+	root := writeActiveRuntime(t, activeFixture())
+	prober := &sequenceProber{results: []probeStep{
+		{result: ProbeResult{Reachable: false}},
+		{result: readyProbe()},
+	}}
+	launcher := &recordingLauncher{}
+	updater := &recordingRuntimeUpdater{attempt: RuntimeUpdateAttempt{
+		Active: activeFixture(), Phase: "checking", Code: "update_check_failed",
+	}}
+	controller := testController(root, prober, launcher)
+	controller.Updater = updater
+
+	outcome := controller.Reconcile(context.Background(), validV2Request("reconcile_runtime").Extension)
+
+	if outcome.Status != "ready" || launcher.calls != 1 || updater.updateCalls != 0 {
+		t.Fatalf("reconcile outcome=%+v launches=%d updateCalls=%d", outcome, launcher.calls, updater.updateCalls)
+	}
+}
+
+func TestEnsureStartsStoppedRuntimeWhenUpdateFeedIsOffline(t *testing.T) {
+	root := writeActiveRuntime(t, activeFixture())
+	prober := &sequenceProber{results: []probeStep{
+		{result: ProbeResult{Reachable: false}},
+		{result: readyProbe()},
+	}}
+	launcher := &recordingLauncher{}
+	updater := &recordingRuntimeUpdater{attempt: RuntimeUpdateAttempt{
+		Active: activeFixture(), Phase: "checking", TargetVersion: "0.8.1",
+		Code: "update_check_failed", Message: "feed unavailable", Retryable: true, Remediation: "retry",
+	}}
+	controller := testController(root, prober, launcher)
+	controller.Updater = updater
+
+	outcome := controller.Ensure(context.Background(), validV2Request("ensure_runtime").Extension)
+
+	if outcome.Status != "ready" || launcher.calls != 1 || outcome.Error == nil ||
+		outcome.Error.Code != "update_check_failed" || outcome.Runtime.ProcessState != "ready" {
+		t.Fatalf("offline ensure outcome=%+v launches=%d", outcome, launcher.calls)
+	}
+}
+
 func TestEnsureRejectsIncompatibleTupleWithoutLaunching(t *testing.T) {
 	root := writeActiveRuntime(t, activeFixture())
 	prober := &sequenceProber{}
@@ -172,6 +214,36 @@ func TestEnsureDelegatesExactIncompatibleTupleToSignedUpdater(t *testing.T) {
 
 	if outcome.Status != "ready" || outcome.Runtime.Version != "0.7.9" || updater.updateCalls != 1 {
 		t.Fatalf("updated outcome=%+v calls=%d", outcome, updater.updateCalls)
+	}
+}
+
+func TestEnsureKeepsCompatibleRuntimeReadyAndReportsRetryableUpdateCheck(t *testing.T) {
+	root := writeActiveRuntime(t, activeFixture())
+	updater := &recordingRuntimeUpdater{attempt: RuntimeUpdateAttempt{
+		Active: activeFixture(), Phase: "checking", TargetVersion: "0.8.1",
+		Code: "update_check_failed", Message: "feed unavailable", Retryable: true, Remediation: "retry",
+	}}
+	prober := &sequenceProber{results: []probeStep{{result: ProbeResult{
+		Reachable: true,
+		Health: Health{
+			Status: "ok", Version: "0.7.4", Runtime: "go",
+			BridgeContractVersion: bridgeContract, InstanceEpoch: "current-runtime",
+		},
+	}}}}
+	controller := testController(root, prober, &recordingLauncher{})
+	controller.Updater = updater
+	identity := validV2Request("ensure_runtime").Extension
+
+	outcome := controller.Ensure(context.Background(), identity)
+
+	if outcome.Status != "ready" || outcome.Runtime == nil || outcome.Runtime.Version != "0.7.4" {
+		t.Fatalf("compatible runtime was not preserved: %+v", outcome)
+	}
+	if outcome.Error == nil || outcome.Error.Code != "update_check_failed" || !outcome.Error.Retryable {
+		t.Fatalf("retryable update failure was not surfaced: %+v", outcome.Error)
+	}
+	if outcome.Update.Phase != "checking" || outcome.Update.TargetVersion == nil || *outcome.Update.TargetVersion != "0.8.1" {
+		t.Fatalf("update state=%+v", outcome.Update)
 	}
 }
 
@@ -391,6 +463,9 @@ type recordingRuntimeUpdater struct {
 func (updater *recordingRuntimeUpdater) Update(context.Context, ActiveRuntime, ExtensionIdentity) RuntimeUpdateAttempt {
 	updater.updateCalls++
 	return updater.attempt
+}
+func (updater *recordingRuntimeUpdater) Prepared(_ context.Context, active ActiveRuntime, _ ExtensionIdentity) RuntimeUpdateAttempt {
+	return RuntimeUpdateAttempt{Active: active, Phase: "idle", TargetVersion: active.Version}
 }
 func (updater *recordingRuntimeUpdater) ActivationPending(ActiveRuntime) bool {
 	return updater.pending

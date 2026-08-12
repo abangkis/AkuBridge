@@ -7,6 +7,18 @@ import {
 export const BRIDGE_RUNTIME_REVISION = "source-adapters-v91";
 export const BRIDGE_ID = "aku-bridge-chrome-mv3-v0";
 export const BRIDGE_CONTRACT_VERSION = "aku-browser.bridge.v2";
+export const BRIDGE_PROTOCOL_MAJOR = 2;
+export const BRIDGE_PROTOCOL_MINOR = 0;
+// Setup bootstrap authority is deliberately independent from the Chrome Web
+// Store version. Release packaging updates this companion version only after
+// the matching host + Sidecar installer has passed the Bridge contract checks.
+export const SIDECAR_BOOTSTRAP_VERSION = "0.7.9";
+export const BRIDGE_UPDATE_CAPABILITIES = Object.freeze([
+  "background_check",
+  "staged_apply",
+  "idle_deferral",
+  "rollback_status",
+]);
 
 export function createBridgeCapabilities(manifest) {
   const extensionVersion = manifest.version_name || manifest.version;
@@ -15,6 +27,9 @@ export function createBridgeCapabilities(manifest) {
     extensionVersion,
     runtimeRevision: BRIDGE_RUNTIME_REVISION,
     buildId: `aku-bridge-${extensionVersion}-${BRIDGE_RUNTIME_REVISION}`,
+    protocolMajor: BRIDGE_PROTOCOL_MAJOR,
+    protocolMinor: BRIDGE_PROTOCOL_MINOR,
+    updateCapabilities: [...BRIDGE_UPDATE_CAPABILITIES],
     adapterVersions: sourceAdapterVersions(),
     mediaEvidenceAdapterVersions: mediaEvidenceAdapterVersions(),
     contractVersion: BRIDGE_CONTRACT_VERSION,
@@ -46,4 +61,15 @@ export function createBridgeCapabilities(manifest) {
     authority: "read_only_bounded",
     captureLimits: { maxScrolls: 6, maxSnapshots: 7, maxBlocksPerSnapshot: 20 },
   };
+}
+
+export function bridgeCapabilitiesForProtocol(capabilities, protocolMajor) {
+  if (protocolMajor === BRIDGE_PROTOCOL_MAJOR) return capabilities;
+  const {
+    protocolMajor: _protocolMajor,
+    protocolMinor: _protocolMinor,
+    updateCapabilities: _updateCapabilities,
+    ...legacyCapabilities
+  } = capabilities;
+  return legacyCapabilities;
 }

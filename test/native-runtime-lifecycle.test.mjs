@@ -15,7 +15,7 @@ test("first Store install opens setup without contacting the native host", () =>
 
 test("Chrome and PC restart reconcile a stopped or crashed runtime", () => {
   assert.deepEqual(planNativeRuntimeLifecycle("startup", { distribution: "production" }), {
-    action: "ensure_runtime",
+    action: "reconcile_runtime",
     trigger: "startup",
     openSetup: false,
   });
@@ -24,7 +24,7 @@ test("Chrome and PC restart reconcile a stopped or crashed runtime", () => {
 test("every Chrome extension update reason reconciles the compatible tuple", () => {
   for (const reason of ["update", "chrome_update", "shared_module_update"]) {
     assert.deepEqual(planNativeRuntimeLifecycle("installed", { reason, distribution: "production" }), {
-      action: "ensure_runtime",
+      action: "reconcile_runtime",
       trigger: `installed_${reason}`,
       openSetup: false,
     });

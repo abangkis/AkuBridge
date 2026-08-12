@@ -17,7 +17,15 @@ import {
   detectSetupPlatform,
   SETUP_PLATFORMS,
 } from "./setup-platform.js";
-import { BRIDGE_RUNTIME_REVISION } from "./bridge-capabilities.js";
+import {
+  companionInstallerVersion,
+  runtimeInstallerDownload,
+  runtimePortableFallbackURL,
+} from "./setup-runtime-installer.js";
+import {
+  BRIDGE_RUNTIME_REVISION,
+  SIDECAR_BOOTSTRAP_VERSION,
+} from "./bridge-capabilities.js";
 import {
   RUNTIME_SETUP_ACTIONS,
   runtimeCheckTimeoutMs,
@@ -34,29 +42,16 @@ const setupPlatform = detectSetupPlatform(globalThis.navigator);
 const client = createChromeNativeRuntimeClient(chrome);
 const manifest = chrome.runtime.getManifest();
 const productVersion = manifest.version_name || manifest.version;
-const WINDOWS_RUNTIME_INSTALLER_NAME = `AkuBrowserRuntimeSetup-${productVersion}.exe`;
-const MACOS_RUNTIME_INSTALLER_NAME = `AkuBrowserRuntimeSetup-${productVersion}-macos-universal.pkg`;
-const RUNTIME_INSTALLER_URLS = Object.freeze({
-  [SETUP_PLATFORMS.WINDOWS]:
-    `https://github.com/abangkis/AkuBrowser/releases/download/v${productVersion}/${WINDOWS_RUNTIME_INSTALLER_NAME}`,
-  [SETUP_PLATFORMS.MACOS]:
-    `https://github.com/abangkis/AkuBrowser/releases/download/v${productVersion}/${MACOS_RUNTIME_INSTALLER_NAME}`,
+const pinnedRuntimeInstaller = runtimeInstallerDownload({
+  platform: setupPlatform,
+  sidecarBootstrapVersion: SIDECAR_BOOTSTRAP_VERSION,
 });
-const runtimeInstallerURL = RUNTIME_INSTALLER_URLS[setupPlatform] ?? "";
-const runtimeInstallerName = setupPlatform === SETUP_PLATFORMS.WINDOWS
-  ? WINDOWS_RUNTIME_INSTALLER_NAME
-  : setupPlatform === SETUP_PLATFORMS.MACOS
-    ? MACOS_RUNTIME_INSTALLER_NAME
-    : "";
-const runtimeInstallerAvailable = Boolean(runtimeInstallerURL);
+const runtimeInstallerAvailable = Boolean(pinnedRuntimeInstaller.url);
 const windowsRuntimeInstallerAvailable = setupPlatform === SETUP_PLATFORMS.WINDOWS;
 const WINDOWS_INSTALLER_COMPLETION_GUIDANCE = [
   "Complete one Windows Setup flow.",
   "If Avast opens another Setup window, select No or Cancel; do not run Repair twice.",
 ].join(" ");
-const RUNTIME_PORTABLE_BUNDLE_URL = setupPlatform === SETUP_PLATFORMS.MACOS
-  ? `https://github.com/abangkis/AkuBrowser/releases/download/v${productVersion}/AkuBrowser-${productVersion}-macos-universal.zip`
-  : `https://github.com/abangkis/AkuBrowser/releases/download/v${productVersion}/AkuBrowser-${productVersion}-windows-x64.zip`;
 const summary = document.querySelector("#summary");
 const detail = document.querySelector("#detail");
 const runtimeAction = document.querySelector("#runtime-action");
@@ -112,6 +107,7 @@ let runtimeInstallerAttempted = globalThis.sessionStorage.getItem(RUNTIME_INSTAL
 let currentRuntimeAction = RUNTIME_SETUP_ACTIONS.NONE;
 let currentRuntimeActionRetries = false;
 let runtimeRetryAttempts = 0;
+let currentRuntimeOutcome = simulatedOutcome ?? { state: "runtime_unchecked" };
 
 applyPlatformCopy();
 
@@ -227,7 +223,14 @@ async function downloadRuntimeInstaller() {
   runtimeAction.disabled = true;
   try {
     manualRuntimeFallback.hidden = true;
-    await chrome.tabs.create({ url: runtimeInstallerURL, active: true });
+    const installer = runtimeInstallerDownload({
+      platform: setupPlatform,
+      sidecarBootstrapVersion: companionInstallerVersion({
+        sidecarBootstrapVersion: SIDECAR_BOOTSTRAP_VERSION,
+        outcome: currentRuntimeOutcome,
+      }),
+    });
+    await chrome.tabs.create({ url: installer.url, active: true });
     runtimeInstallerAttempted = true;
     globalThis.sessionStorage.setItem(RUNTIME_INSTALLER_ATTEMPT_KEY, "1");
     currentRuntimeAction = RUNTIME_SETUP_ACTIONS.CHECK;
@@ -236,7 +239,7 @@ async function downloadRuntimeInstaller() {
     summary.textContent = "The runtime installer is downloading.";
     detail.textContent = [
       "Chrome cannot run downloaded applications automatically.",
-      `Open ${runtimeInstallerName}, finish ${setupPlatform === SETUP_PLATFORMS.MACOS ? "macOS" : "Windows"} setup, return here, then select Check runtime.`,
+      `Open ${installer.name}, finish ${setupPlatform === SETUP_PLATFORMS.MACOS ? "macOS" : "Windows"} setup, return here, then select Check runtime.`,
       setupPlatform === SETUP_PLATFORMS.WINDOWS
         ? "If Avast opens another Setup window, select No or Cancel; do not run Repair twice."
         : "",
@@ -255,13 +258,18 @@ async function downloadRuntimeInstaller() {
 function applyPlatformCopy() {
   document.documentElement.dataset.platform = setupPlatform;
   windowsAntivirusNote.hidden = !windowsRuntimeInstallerAvailable;
-  manualBundleDownload.href = RUNTIME_PORTABLE_BUNDLE_URL;
+  // Every bootstrap and repair lane stays pinned to the companion version
+  // packaged with this Bridge. The update feed is the only "latest" authority.
+  manualBundleDownload.href = runtimePortableFallbackURL({
+    platform: setupPlatform,
+    sidecarBootstrapVersion: SIDECAR_BOOTSTRAP_VERSION,
+  });
   if (setupPlatform === SETUP_PLATFORMS.WINDOWS) {
     runtimePlatformDescription.textContent = [
       "The Windows runtime installer includes AkuSidecar, the Native Messaging Host,",
       "and the C2PA verifier. You install and prepare Codex App separately.",
     ].join(" ");
-    installerStepOpen.innerHTML = `Open <code>${WINDOWS_RUNTIME_INSTALLER_NAME}</code> when the download finishes.`;
+    installerStepOpen.innerHTML = `Open <code>${pinnedRuntimeInstaller.name}</code> when the download finishes.`;
     installerStepRun.textContent = WINDOWS_INSTALLER_COMPLETION_GUIDANCE;
     codexPlatformDescription.textContent = [
       "Select Check Codex to inspect this computer.",
@@ -277,7 +285,7 @@ function applyPlatformCopy() {
       "and the C2PA verifier for Intel and Apple silicon. You install and prepare Codex App separately.",
     ].join(" ");
     installerNoteTitle.textContent = "Run the macOS installer after downloading it";
-    installerStepOpen.innerHTML = `Open <code>${MACOS_RUNTIME_INSTALLER_NAME}</code> when the download finishes.`;
+    installerStepOpen.innerHTML = `Open <code>${pinnedRuntimeInstaller.name}</code> when the download finishes.`;
     installerStepRun.textContent = "This stable package is unsigned and not notarized. Verify its SHA-256; if macOS blocks it, use System Settings > Privacy & Security > Open Anyway. Never disable Gatekeeper globally.";
     installerStepCheck.textContent = "Return here and select Check runtime.";
     codexPlatformDescription.textContent = "Select Check Codex to inspect this computer. If Codex is found, confirm that you are signed in and ready. AkuBrowser never receives your credentials.";
@@ -314,9 +322,16 @@ function applyPlatformCopy() {
 function configureInstallerGuidance(state, runtimeView) {
   if (!runtimeInstallerAvailable) return;
   const platformName = setupPlatform === SETUP_PLATFORMS.MACOS ? "macOS" : "Windows";
+  const installer = runtimeInstallerDownload({
+    platform: setupPlatform,
+    sidecarBootstrapVersion: companionInstallerVersion({
+      sidecarBootstrapVersion: SIDECAR_BOOTSTRAP_VERSION,
+      outcome: currentRuntimeOutcome,
+    }),
+  });
   if (state === "runtime_incompatible" && runtimeView.actionKind === RUNTIME_SETUP_ACTIONS.INSTALL) {
     installerNoteTitle.textContent = "Install the matching AkuBrowser Runtime";
-    installerStepOpen.innerHTML = `Open <code>${runtimeInstallerName}</code> after the download finishes.`;
+    installerStepOpen.innerHTML = `Open <code>${installer.name}</code> after the download finishes.`;
     installerStepRun.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
       ? "Complete the disclosed unsigned macOS setup to replace or repair the outdated runtime build."
       : WINDOWS_INSTALLER_COMPLETION_GUIDANCE;
@@ -331,7 +346,7 @@ function configureInstallerGuidance(state, runtimeView) {
     return;
   }
   installerNoteTitle.textContent = `Run the ${platformName} installer after downloading it`;
-  installerStepOpen.innerHTML = `Open <code>${runtimeInstallerName}</code> when the download finishes.`;
+  installerStepOpen.innerHTML = `Open <code>${installer.name}</code> when the download finishes.`;
   installerStepRun.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
     ? "Complete the unsigned macOS setup. If blocked, use Privacy & Security > Open Anyway; do not disable Gatekeeper."
     : WINDOWS_INSTALLER_COMPLETION_GUIDANCE;
@@ -359,6 +374,14 @@ function setChecking(timeoutMs, { stopping = false } = {}) {
 }
 
 function renderOutcome(outcome) {
+  currentRuntimeOutcome = outcome;
+  manualBundleDownload.href = runtimePortableFallbackURL({
+    platform: setupPlatform,
+    sidecarBootstrapVersion: companionInstallerVersion({
+      sidecarBootstrapVersion: SIDECAR_BOOTSTRAP_VERSION,
+      outcome,
+    }),
+  });
   if (outcome.state === "runtime_ready") {
     runtimeRetryAttempts = 0;
     runtimeInstallerAttempted = false;
@@ -369,7 +392,7 @@ function renderOutcome(outcome) {
     installerAvailable: runtimeInstallerAvailable,
     runtimePlatform: setupPlatform,
     runtimeInstallerAttempted,
-    requiredRuntimeVersion: productVersion,
+    requiredRuntimeVersion: SIDECAR_BOOTSTRAP_VERSION,
     requiredRuntimeRevision: BRIDGE_RUNTIME_REVISION,
   });
   runtimeReady = runtimeView.runtimeReady;

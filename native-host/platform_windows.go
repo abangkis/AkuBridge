@@ -15,10 +15,11 @@ func resolveRuntimePlatform(executablePath string) (RuntimePlatform, error) {
 	}
 	installRoot := filepath.Dir(filepath.Dir(executablePath))
 	return RuntimePlatform{
-		Architecture:      legacyWindowsArchitecture,
-		RuntimeExecutable: "AkuSidecar.exe",
-		RuntimeRoot:       filepath.Join(installRoot, "runtime"),
-		DataRoot:          filepath.Join(localAppData, "AkuBrowser", "data"),
-		UpdateManifestURL: platformUpdateManifestURL(legacyWindowsArchitecture),
+		Architecture:            legacyWindowsArchitecture,
+		RuntimeExecutable:       "AkuSidecar.exe",
+		RuntimeRoot:             filepath.Join(installRoot, "runtime"),
+		DataRoot:                filepath.Join(localAppData, "AkuBrowser", "data"),
+		UpdateManifestURL:       platformUpdateManifestURL(legacyWindowsArchitecture),
+		LegacyUpdateManifestURL: legacyPlatformUpdateManifestURL(legacyWindowsArchitecture),
 	}, nil
 }

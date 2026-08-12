@@ -8,6 +8,7 @@
   ]);
   const allowedOrigin = window.location.origin;
   if (!allowedOrigins.has(allowedOrigin)) return;
+  let sidecarProtocolMajor = 0;
 
   window.addEventListener("message", async (event) => {
     if (event.source !== window || event.origin !== allowedOrigin) return;
@@ -15,6 +16,7 @@
     if (!message || typeof message !== "object") return;
 
     if (message.type === "AKU_BROWSER_BRIDGE_PING") {
+      sidecarProtocolMajor = message.protocolMajor === 2 ? 2 : 0;
       try {
         const response = await chrome.runtime.sendMessage({
           type: "AKU_BRIDGE_GET_CAPABILITIES",
@@ -25,7 +27,10 @@
         window.postMessage(
           {
             type: "AKU_BROWSER_BRIDGE_READY",
-            capabilities: response.capabilities,
+            capabilities: capabilitiesForSidecar(
+              response.capabilities,
+              sidecarProtocolMajor,
+            ),
             extensionOrigin: chrome.runtime.getURL("").replace(/\/$/, ""),
           },
           allowedOrigin,
@@ -158,6 +163,7 @@
           type: "AKU_BRIDGE_CONFIGURE_BACKGROUND_DISPATCH",
           endpoint: message.endpoint,
           token: message.token,
+          protocolMajor: sidecarProtocolMajor,
         });
         if (!response?.ok) throw new Error(response?.message || "AkuBridge rejected background dispatch configuration.");
       } catch (error) {
@@ -201,4 +207,15 @@
       );
     }
   });
+
+  function capabilitiesForSidecar(capabilities, protocolMajor) {
+    if (protocolMajor === 2) return capabilities;
+    const {
+      protocolMajor: _protocolMajor,
+      protocolMinor: _protocolMinor,
+      updateCapabilities: _updateCapabilities,
+      ...legacyCapabilities
+    } = capabilities;
+    return legacyCapabilities;
+  }
 })();

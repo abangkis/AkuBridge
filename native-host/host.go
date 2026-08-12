@@ -43,7 +43,7 @@ func (host Host) Handle(ctx context.Context, request Request) Response {
 			"status": status,
 		})
 		return Response{
-			SchemaVersion: protocolVersion,
+			SchemaVersion: responseProtocolVersion(request),
 			Kind:          "response",
 			RequestID:     request.RequestID,
 			Action:        request.Action,
@@ -61,6 +61,8 @@ func (host Host) Handle(ctx context.Context, request Request) Response {
 		outcome = host.Controller.Status(ctx, request.Extension)
 	case "ensure_runtime":
 		outcome = host.Controller.Ensure(ctx, request.Extension)
+	case "reconcile_runtime":
+		outcome = host.Controller.Reconcile(ctx, request.Extension)
 	case "shutdown_if_idle":
 		outcome = host.Controller.ShutdownIfIdle(ctx, request.Extension)
 	}
@@ -73,7 +75,7 @@ func (host Host) Handle(ctx context.Context, request Request) Response {
 	}
 	host.log("info", "request_completed", fields)
 	return Response{
-		SchemaVersion: protocolVersion,
+		SchemaVersion: responseProtocolVersion(request),
 		Kind:          "response",
 		RequestID:     request.RequestID,
 		Action:        request.Action,

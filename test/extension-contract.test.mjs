@@ -4,7 +4,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { createBridgeCapabilities } from "../bridge-capabilities.js";
+import {
+  bridgeCapabilitiesForProtocol,
+  createBridgeCapabilities,
+} from "../bridge-capabilities.js";
 import {
   registeredScriptsForSources,
   sourceAccessDefinitions,
@@ -110,7 +113,9 @@ test("AkuBridge checks the bounded native runtime lifecycle without gating captu
   assert.match(worker, /chrome\.runtime\.onInstalled\.addListener/);
   assert.match(worker, /chrome\.runtime\.onStartup\.addListener/);
   assert.match(worker, /nativeRuntimeClient\.ensureRuntime/);
+  assert.match(worker, /nativeRuntimeClient\.reconcileRuntime/);
   assert.match(worker, /nativeRuntimeClient\.status/);
+  assert.match(worker, /scheduleNext:\s*details\.reason !== "install"/);
   assert.match(worker, /chrome\.runtime\.getURL\("setup\.html"\)/);
   assert.doesNotMatch(worker, /chrome\.action\.onClicked/);
   assert.match(nativeClient, /com\.akubrowser\.runtime/);
@@ -125,6 +130,10 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   const setupFavicon = fs.readFileSync(path.join(projectRoot, "icons", "setup-favicon.svg"), "utf8");
   const setupScript = fs.readFileSync(path.join(projectRoot, "setup.js"), "utf8");
   const setupRuntimeView = fs.readFileSync(path.join(projectRoot, "setup-runtime-view.js"), "utf8");
+  const setupRuntimeInstaller = fs.readFileSync(
+    path.join(projectRoot, "setup-runtime-installer.js"),
+    "utf8",
+  );
 
   assert.equal(manifest.options_page, "setup.html");
   assert.equal(manifest.options_ui, undefined);
@@ -182,7 +191,7 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.doesNotMatch(setupScript, /visibilitychange/);
   assert.match(setupScript, /Chrome cannot run downloaded applications automatically/);
   assert.match(setupScript, /Download started — run the installer next/);
-  assert.match(setupScript, /v\$\{productVersion\}\/\$\{MACOS_RUNTIME_INSTALLER_NAME\}/);
+  assert.match(setupScript, /runtimeInstallerDownload/);
   assert.match(setupScript, /stable package is unsigned and not notarized/);
   assert.match(setupScript, /Never disable Gatekeeper globally/);
   assert.match(setupScript, /detectSetupPlatform/);
@@ -207,28 +216,17 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.match(setupHtml, /Do not end <code>AkuBrowserRuntimeHost\.exe<\/code>/);
   assert.match(setupScript, /RUNTIME_SETUP_ACTIONS\.RESOLVE_CONFLICT/);
   assert.match(setupScript, /runtimeConflictDialog\.showModal/);
-  assert.match(setupScript, /AkuBrowser-\$\{productVersion\}-windows-x64\.zip/);
+  assert.match(setupScript, /runtimePortableFallbackURL/);
   assert.match(setupScript, /windowsAntivirusNote\.hidden = !windowsRuntimeInstallerAvailable/);
   assert.match(setupScript, /runtimeInstallerAttempted\.v1/);
   assert.match(setupScript, /runtimeInstallerAttempted/);
-  assert.match(
-    setupScript,
-    /https:\/\/github\.com\/abangkis\/AkuBrowser\/releases\/download\/v\$\{productVersion\}\/\$\{WINDOWS_RUNTIME_INSTALLER_NAME\}/,
-  );
-  assert.match(
-    setupScript,
-    /https:\/\/github\.com\/abangkis\/AkuBrowser\/releases\/download\/v\$\{productVersion\}\/\$\{MACOS_RUNTIME_INSTALLER_NAME\}/,
-  );
-  assert.match(setupScript, /AkuBrowser-\$\{productVersion\}-macos-universal\.zip/);
+  assert.match(setupScript, /SIDECAR_BOOTSTRAP_VERSION/);
+  assert.match(setupRuntimeInstaller, /download\/v\$\{sidecarBootstrapVersion\}\/\$\{name\}/);
+  assert.doesNotMatch(setupRuntimeInstaller, /latest(?:\/download)?/);
+  assert.doesNotMatch(setupScript, /hostUpgradeRequired:\s*currentRuntimeOutcome/);
   assert.match(setupScript, /installerAvailable:\s*runtimeInstallerAvailable/);
-  assert.equal(
-    setupScript.match(/https:\/\/github\.com\/abangkis\/AkuBrowser\/releases\/download\/v\$\{productVersion\}\/\$\{WINDOWS_RUNTIME_INSTALLER_NAME\}/g)?.length,
-    1,
-  );
-  assert.doesNotMatch(
-    setupScript,
-    /releases\/latest\/download\/AkuBrowserRuntimeSetup\.exe/,
-  );
+  assert.match(setupRuntimeInstaller, /AkuBrowserRuntimeSetup-\$\{version\}\.exe/);
+  assert.match(setupRuntimeInstaller, /AkuBrowserRuntimeSetup-\$\{version\}-macos-universal\.pkg/);
   assert.match(
     setupHtml,
     /https:\/\/get\.microsoft\.com\/installer\/download\/9PLM9XGG6VKS\?cid=website_cta_psi/,
@@ -560,12 +558,30 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(worker, /chrome\.runtime\.getURL\("setup\.html"\)/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
   assert.match(tabBridge, /AKU_BROWSER_MEDIA_RECAPTURE/);
-  assert.match(tabBridge, /capabilities: response\.capabilities/);
+  assert.match(tabBridge, /capabilitiesForSidecar/);
+  assert.match(tabBridge, /response\.capabilities/);
+  assert.match(tabBridge, /if \(protocolMajor === 2\) return capabilities/);
+  assert.match(tabBridge, /updateCapabilities: _updateCapabilities/);
+  assert.match(tabBridge, /protocolMajor: sidecarProtocolMajor/);
   const capabilities = createBridgeCapabilities({ version: "0.7.9.0", version_name: "0.7.9", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.7.9");
   assert.equal(capabilities.runtimeRevision, "source-adapters-v91");
   assert.equal(capabilities.buildId, "aku-bridge-0.7.9-source-adapters-v91");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
+  assert.equal(capabilities.protocolMajor, 2);
+  assert.equal(capabilities.protocolMinor, 0);
+  assert.deepEqual(capabilities.updateCapabilities, [
+    "background_check",
+    "staged_apply",
+    "idle_deferral",
+    "rollback_status",
+  ]);
+  assert.equal(bridgeCapabilitiesForProtocol(capabilities, 2), capabilities);
+  const legacyCapabilities = bridgeCapabilitiesForProtocol(capabilities, 0);
+  assert.equal("protocolMajor" in legacyCapabilities, false);
+  assert.equal("protocolMinor" in legacyCapabilities, false);
+  assert.equal("updateCapabilities" in legacyCapabilities, false);
+  assert.equal(legacyCapabilities.contractVersion, "aku-browser.bridge.v2");
   assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v21", linkedin: "linkedin-dom-v20", facebook: "facebook-dom-v18", instagram: "instagram-dom-v1" });
   assert.deepEqual(capabilities.mediaEvidenceAdapterVersions, {
     x: "x-response-evidence-v2",
@@ -587,6 +603,8 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(worker, /rememberBackgroundLease/);
   assert.match(worker, /releaseTerminalBackgroundLease/);
   assert.match(worker, /refreshBackgroundHeartbeat/);
+  assert.match(worker, /bridgeCapabilitiesForProtocol/);
+  assert.match(worker, /config\.sidecarProtocolMajor/);
   assert.match(worker, /bridgeCapabilitiesWithSourceAccess/);
   assert.match(worker, /grantedSources: sourcesForGrantedOrigins/);
   assert.match(worker, /activeLeaseId/);

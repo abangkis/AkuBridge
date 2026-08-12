@@ -19,18 +19,22 @@ import (
 )
 
 type RuntimeUpdateAttempt struct {
-	Active      ActiveRuntime
-	Phase       string
-	Code        string
-	Message     string
-	Retryable   bool
-	Remediation string
+	Active        ActiveRuntime
+	Phase         string
+	TargetVersion string
+	Urgency       string
+	Deadline      string
+	Code          string
+	Message       string
+	Retryable     bool
+	Remediation   string
 }
 
 func (attempt RuntimeUpdateAttempt) Succeeded() bool { return attempt.Code == "" }
 
 type RuntimeUpdater interface {
 	Update(context.Context, ActiveRuntime, ExtensionIdentity) RuntimeUpdateAttempt
+	Prepared(context.Context, ActiveRuntime, ExtensionIdentity) RuntimeUpdateAttempt
 	ActivationPending(ActiveRuntime) bool
 	ConfirmActivation(ActiveRuntime) error
 	RollbackPending(context.Context, ActiveRuntime) error
@@ -48,7 +52,13 @@ type RuntimeUpdateControl interface {
 }
 
 type CandidateProbe interface {
-	Probe(context.Context, string, string, ExtensionIdentity) error
+	Probe(context.Context, string, string, CandidateExpectation) error
+}
+
+type CandidateExpectation struct {
+	Version               string
+	BridgeContractVersion string
+	DatabaseSchemaVersion int
 }
 
 type SignedRuntimeUpdater struct {
@@ -57,6 +67,7 @@ type SignedRuntimeUpdater struct {
 	Architecture      string
 	RuntimeExecutable string
 	ManifestURL       string
+	LegacyManifestURL string
 	PublicKey         string
 	Transport         UpdateTransport
 	Control           RuntimeUpdateControl
@@ -67,55 +78,113 @@ type SignedRuntimeUpdater struct {
 	Now               func() time.Time
 	ActivationWait    time.Duration
 	PollInterval      time.Duration
+	IdleQuietPeriod   time.Duration
+}
+
+const preparedUpdateSchemaVersion = 1
+
+var errRuntimeUpdateLocked = errors.New("runtime update lock is already held")
+
+type PreparedUpdateState struct {
+	SchemaVersion         int    `json:"schemaVersion"`
+	ManifestSchemaVersion int    `json:"manifestSchemaVersion"`
+	TargetVersion         string `json:"targetVersion"`
+	RuntimeRevision       string `json:"runtimeRevision"`
+	BridgeContractVersion string `json:"bridgeContractVersion"`
+	Architecture          string `json:"architecture"`
+	ArtifactSize          int64  `json:"artifactSize"`
+	ArtifactSHA256        string `json:"artifactSha256"`
+	Urgency               string `json:"urgency"`
+	Deadline              string `json:"deadline,omitempty"`
+	PreparedAt            string `json:"preparedAt"`
 }
 
 func (updater SignedRuntimeUpdater) Update(ctx context.Context, active ActiveRuntime, expected ExtensionIdentity) RuntimeUpdateAttempt {
+	targetVersion := active.Version
+	urgency := ""
+	deadline := ""
 	fail := func(phase, code, message string, retryable bool, remediation string) RuntimeUpdateAttempt {
-		updater.audit(active.Version, expected.ProductVersion, phase, code)
+		updater.audit(active.Version, targetVersion, phase, code)
 		return RuntimeUpdateAttempt{
-			Active: active, Phase: phase, Code: code, Message: message,
+			Active: active, Phase: phase, TargetVersion: targetVersion,
+			Urgency: urgency, Deadline: deadline, Code: code, Message: message,
 			Retryable: retryable, Remediation: remediation,
 		}
 	}
+	releaseLock, lockErr := acquireUpdateLock(updater.RuntimeRoot)
+	if lockErr != nil {
+		if !errors.Is(lockErr, errRuntimeUpdateLocked) {
+			return fail(
+				"staging",
+				"internal_error",
+				"AkuBrowser could not establish the Sidecar update lock.",
+				true,
+				"retry",
+			)
+		}
+		return fail(
+			"waiting_for_idle",
+			"runtime_busy",
+			"Another AkuSidecar update check is already active.",
+			true,
+			"wait",
+		)
+	}
+	defer releaseLock()
 	now := time.Now()
 	if updater.Now != nil {
 		now = updater.Now()
 	}
-	manifestURL := updater.ManifestURL
-	if manifestURL == "" {
-		manifestURL = platformUpdateManifestURL(architectureOrDefault(updater.Architecture))
-	}
-	manifestData, err := updater.Transport.Read(ctx, manifestURL, maxUpdateManifestBytes)
-	if err != nil {
-		return fail("checking", "update_check_failed", "AkuBrowser could not read the signed runtime update manifest.", true, "retry")
-	}
 	architecture := architectureOrDefault(updater.Architecture)
-	manifest, err := decodeAndVerifyUpdateManifest(manifestData, updater.PublicKey, expected, active, now.UTC(), architecture)
-	if err != nil {
-		return fail("verifying", "signature_invalid", "The runtime update manifest could not be authenticated.", false, "contact_support")
+	manifestURL := updater.ManifestURL
+	legacyRequest := expected.BridgeProtocol == nil
+	if legacyRequest {
+		manifestURL = updater.LegacyManifestURL
+		if manifestURL == "" {
+			manifestURL = legacyPlatformUpdateManifestURL(architecture)
+		}
+	} else if manifestURL == "" {
+		manifestURL = platformUpdateManifestURL(architecture)
+	}
+	manifestData, readErr := updater.Transport.Read(ctx, manifestURL, maxUpdateManifestBytes)
+	manifest, manifestErr := updater.decodeManifest(manifestData, expected, active, now.UTC(), architecture, legacyRequest)
+	loadedPrepared := false
+	if readErr != nil {
+		var preparedErr error
+		manifest, manifestData, loadedPrepared, preparedErr = updater.loadPreparedUpdate(expected, active, now.UTC(), architecture, legacyRequest)
+		if preparedErr != nil || !loadedPrepared {
+			return fail("checking", "update_check_failed", "AkuBrowser could not read the signed Sidecar update manifest.", true, "retry")
+		}
+	} else if manifestErr != nil {
+		if errors.Is(manifestErr, errHostUpgradeRequired) {
+			targetVersion, urgency, deadline = manifest.Version, manifest.Urgency, manifest.Deadline
+			return fail("verifying", "host_upgrade_required", "The native update helper must be refreshed before this Sidecar update can apply.", false, "reinstall_runtime")
+		}
+		return fail("verifying", "signature_invalid", "The Sidecar update manifest could not be authenticated.", false, "contact_support")
+	}
+	targetVersion, urgency, deadline = manifest.Version, manifest.Urgency, manifest.Deadline
+	if compareVersions(manifest.Version, active.Version) <= 0 {
+		updater.clearPreparedUpdate()
+		updater.audit(active.Version, manifest.Version, "idle", "")
+		return RuntimeUpdateAttempt{Active: active, Phase: "idle", TargetVersion: manifest.Version}
 	}
 
-	downloadsRoot := filepath.Join(updater.RuntimeRoot, "downloads")
 	candidatesRoot := filepath.Join(updater.RuntimeRoot, "candidates")
-	if err := os.MkdirAll(downloadsRoot, 0o700); err != nil {
-		return fail("downloading", "download_failed", "AkuBrowser could not prepare the update download.", true, "retry")
-	}
 	if err := os.MkdirAll(candidatesRoot, 0o700); err != nil {
 		return fail("staging", "download_failed", "AkuBrowser could not prepare update staging.", true, "retry")
 	}
-	archive, err := os.CreateTemp(downloadsRoot, ".aku-runtime-*.zip")
-	if err != nil {
-		return fail("downloading", "download_failed", "AkuBrowser could not prepare the update download.", true, "retry")
-	}
-	archivePath := archive.Name()
-	_ = archive.Close()
-	defer os.Remove(archivePath)
-	if err := updater.Transport.Download(ctx, manifest.Artifact, archivePath); err != nil {
-		code := "download_failed"
-		if errors.Is(err, errUpdateChecksum) {
-			code = "checksum_invalid"
+	archivePath := updater.preparedArchivePath()
+	if !loadedPrepared {
+		if existing, _, ok, _ := updater.loadPreparedUpdate(expected, active, now.UTC(), architecture, legacyRequest); ok &&
+			existing.Version == manifest.Version && existing.Artifact == manifest.Artifact {
+			loadedPrepared = true
+		} else if err := updater.prepareUpdate(ctx, manifestData, manifest, architecture); err != nil {
+			code := "download_failed"
+			if errors.Is(err, errUpdateChecksum) {
+				code = "checksum_invalid"
+			}
+			return fail("downloading", code, "The Sidecar update artifact failed verification.", code == "download_failed", "retry")
 		}
-		return fail("downloading", code, "The runtime update artifact failed verification.", code == "download_failed", "retry")
 	}
 
 	candidateRoot, err := os.MkdirTemp(candidatesRoot, ".aku-candidate-")
@@ -130,7 +199,14 @@ func (updater SignedRuntimeUpdater) Update(ctx context.Context, active ActiveRun
 	}
 	candidateExecutable := filepath.Join(candidateRoot, executableName)
 	candidateConfig := filepath.Join(candidateRoot, "config", "sidecar.json")
-	if err := updater.Probe.Probe(ctx, candidateExecutable, candidateConfig, expected); err != nil {
+	databaseSchemaVersion := 0
+	if !legacyRequest {
+		databaseSchemaVersion = currentDatabaseSchemaVersion
+	}
+	if err := updater.Probe.Probe(ctx, candidateExecutable, candidateConfig, CandidateExpectation{
+		Version: manifest.Version, BridgeContractVersion: manifest.BridgeContractVersion,
+		DatabaseSchemaVersion: databaseSchemaVersion,
+	}); err != nil {
 		return fail("health_check", "candidate_health_failed", "The candidate runtime did not pass its isolated health probe.", false, "contact_support")
 	}
 	activeProbe, probeErr := updater.Health.Probe(ctx)
@@ -147,6 +223,18 @@ func (updater SignedRuntimeUpdater) Update(ctx context.Context, active ActiveRun
 		}
 		if !ready {
 			return fail("waiting_for_idle", "runtime_busy", "Active AkuBrowser work is blocking the runtime update.", true, "wait")
+		}
+		if updater.IdleQuietPeriod > 0 {
+			timer := time.NewTimer(updater.IdleQuietPeriod)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return fail("waiting_for_idle", "runtime_busy", "The idle update handoff was interrupted.", true, "wait")
+			case <-timer.C:
+			}
+			if ready, _, readinessErr = updater.Control.Readiness(ctx); readinessErr != nil || !ready {
+				return fail("waiting_for_idle", "runtime_busy", "New activity postponed the Sidecar update.", true, "wait")
+			}
 		}
 		if err := updater.Control.ShutdownIfIdle(ctx, updater.ControlToken); err != nil {
 			return fail("waiting_for_idle", "runtime_busy", "The active runtime did not enter the update handoff.", true, "wait")
@@ -190,14 +278,215 @@ func (updater SignedRuntimeUpdater) Update(ctx context.Context, active ActiveRun
 			return fail("health_check", "internal_error", "The runtime started but activation confirmation could not be persisted.", true, "retry")
 		}
 		updater.cleanupVersions(newActive)
+		updater.clearPreparedUpdate()
 		updater.audit(active.Version, newActive.Version, "idle", "")
-		return RuntimeUpdateAttempt{Active: newActive, Phase: "idle"}
+		return RuntimeUpdateAttempt{Active: newActive, Phase: "idle", TargetVersion: newActive.Version, Urgency: urgency, Deadline: deadline}
 	}
 
 	if rollbackErr := updater.RollbackPending(ctx, newActive); rollbackErr != nil {
 		return fail("rolling_back", "rollback_failed", "The candidate failed and the previous runtime could not be restarted.", false, "reinstall_runtime")
 	}
 	return fail("rolling_back", "candidate_health_failed", "The candidate failed its activation health gate; the previous runtime was restored.", true, "retry")
+}
+
+func acquireUpdateLock(runtimeRoot string) (func(), error) {
+	if err := os.MkdirAll(runtimeRoot, 0o700); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(runtimeRoot, "update.lock")
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := lockUpdateFile(file); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	release := func() {
+		_ = unlockUpdateFile(file)
+		_ = file.Close()
+	}
+	if err := file.Truncate(0); err != nil {
+		release()
+		return nil, err
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		release()
+		return nil, err
+	}
+	if _, err := fmt.Fprintf(file, "%d\n", os.Getpid()); err != nil {
+		release()
+		return nil, err
+	}
+	if err := file.Sync(); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
+func (updater SignedRuntimeUpdater) Prepared(_ context.Context, active ActiveRuntime, expected ExtensionIdentity) RuntimeUpdateAttempt {
+	if expected.BridgeProtocol == nil {
+		return RuntimeUpdateAttempt{Active: active, Phase: "idle", TargetVersion: active.Version}
+	}
+	now := time.Now().UTC()
+	if updater.Now != nil {
+		now = updater.Now().UTC()
+	}
+	manifest, _, ok, err := updater.loadPreparedUpdate(
+		expected, active, now, architectureOrDefault(updater.Architecture), false,
+	)
+	if err != nil {
+		return RuntimeUpdateAttempt{
+			Active: active, Phase: "verifying", TargetVersion: active.Version,
+			Code: "signature_invalid", Message: "The prepared Sidecar update is invalid.",
+			Retryable: false, Remediation: "contact_support",
+		}
+	}
+	if !ok || compareVersions(manifest.Version, active.Version) <= 0 {
+		return RuntimeUpdateAttempt{Active: active, Phase: "idle", TargetVersion: active.Version}
+	}
+	return RuntimeUpdateAttempt{
+		Active: active, Phase: "waiting_for_idle", TargetVersion: manifest.Version,
+		Urgency: manifest.Urgency, Deadline: manifest.Deadline,
+	}
+}
+
+func (updater SignedRuntimeUpdater) decodeManifest(data []byte, expected ExtensionIdentity, active ActiveRuntime, now time.Time, architecture string, legacy bool) (VerifiedUpdateManifest, error) {
+	if legacy {
+		manifest, err := decodeAndVerifyUpdateManifest(data, updater.PublicKey, expected, active, now, architecture)
+		if err != nil {
+			return VerifiedUpdateManifest{}, err
+		}
+		return VerifiedUpdateManifest{
+			SchemaVersion: manifest.SchemaVersion, Channel: manifest.Channel,
+			Version: manifest.Version, RuntimeRevision: manifest.RuntimeRevision,
+			BridgeContractVersion: manifest.BridgeContractVersion,
+			PublishedAt:           manifest.PublishedAt, Artifact: manifest.Artifact,
+		}, nil
+	}
+	return decodeAndVerifySidecarUpdateManifest(data, updater.PublicKey, expected, active, now, architecture)
+}
+
+func (updater SignedRuntimeUpdater) preparedRoot() string {
+	return filepath.Join(updater.RuntimeRoot, "prepared")
+}
+
+func (updater SignedRuntimeUpdater) preparedArchivePath() string {
+	return filepath.Join(updater.preparedRoot(), "artifact.zip")
+}
+
+func (updater SignedRuntimeUpdater) prepareUpdate(ctx context.Context, manifestData []byte, manifest VerifiedUpdateManifest, architecture string) error {
+	root := updater.preparedRoot()
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(root, ".aku-sidecar-download-*.zip")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	_ = temporary.Close()
+	defer os.Remove(temporaryPath)
+	if err := updater.Transport.Download(ctx, manifest.Artifact, temporaryPath); err != nil {
+		return err
+	}
+	if err := verifyUpdateArtifactFile(temporaryPath, manifest.Artifact); err != nil {
+		return err
+	}
+	archivePath := updater.preparedArchivePath()
+	if err := replaceFileAtomic(temporaryPath, archivePath); err != nil {
+		return err
+	}
+	if err := writePrivateFileAtomic(filepath.Join(root, "manifest.json"), manifestData); err != nil {
+		updater.clearPreparedUpdate()
+		return err
+	}
+	now := time.Now().UTC()
+	if updater.Now != nil {
+		now = updater.Now().UTC()
+	}
+	state := PreparedUpdateState{
+		SchemaVersion: preparedUpdateSchemaVersion, ManifestSchemaVersion: manifest.SchemaVersion,
+		TargetVersion: manifest.Version, RuntimeRevision: manifest.RuntimeRevision,
+		BridgeContractVersion: manifest.BridgeContractVersion, Architecture: architecture,
+		ArtifactSize: manifest.Artifact.Size, ArtifactSHA256: manifest.Artifact.SHA256,
+		Urgency: manifest.Urgency, Deadline: manifest.Deadline, PreparedAt: now.Format(time.RFC3339Nano),
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		updater.clearPreparedUpdate()
+		return err
+	}
+	if err := writePrivateFileAtomic(filepath.Join(root, "state.json"), append(data, '\n')); err != nil {
+		updater.clearPreparedUpdate()
+		return err
+	}
+	updater.audit("", manifest.Version, "staging", "")
+	return nil
+}
+
+func (updater SignedRuntimeUpdater) loadPreparedUpdate(expected ExtensionIdentity, active ActiveRuntime, now time.Time, architecture string, legacy bool) (VerifiedUpdateManifest, []byte, bool, error) {
+	root := updater.preparedRoot()
+	stateData, err := readBoundedFile(filepath.Join(root, "state.json"), 16*1024)
+	if errors.Is(err, os.ErrNotExist) {
+		return VerifiedUpdateManifest{}, nil, false, nil
+	}
+	if err != nil {
+		return VerifiedUpdateManifest{}, nil, false, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(stateData))
+	decoder.DisallowUnknownFields()
+	var state PreparedUpdateState
+	if err := decoder.Decode(&state); err != nil || ensureJSONEOF(decoder) != nil {
+		return VerifiedUpdateManifest{}, nil, false, errors.New("prepared update state is invalid")
+	}
+	if state.SchemaVersion != preparedUpdateSchemaVersion || state.Architecture != architecture ||
+		!versionPattern.MatchString(state.TargetVersion) || !revisionPattern.MatchString(state.RuntimeRevision) ||
+		state.BridgeContractVersion != bridgeContract || state.ArtifactSize <= 0 ||
+		state.ArtifactSize > maxUpdateArtifactBytes || !sha256Pattern.MatchString(state.ArtifactSHA256) {
+		return VerifiedUpdateManifest{}, nil, false, errors.New("prepared update state metadata is invalid")
+	}
+	manifestData, err := readBoundedFile(filepath.Join(root, "manifest.json"), maxUpdateManifestBytes)
+	if err != nil {
+		return VerifiedUpdateManifest{}, nil, false, err
+	}
+	manifest, err := updater.decodeManifest(manifestData, expected, active, now, architecture, legacy)
+	if err != nil {
+		return VerifiedUpdateManifest{}, nil, false, err
+	}
+	if manifest.SchemaVersion != state.ManifestSchemaVersion || manifest.Version != state.TargetVersion ||
+		manifest.RuntimeRevision != state.RuntimeRevision || manifest.BridgeContractVersion != state.BridgeContractVersion ||
+		manifest.Artifact.Size != state.ArtifactSize || manifest.Artifact.SHA256 != state.ArtifactSHA256 ||
+		manifest.Urgency != state.Urgency || manifest.Deadline != state.Deadline {
+		return VerifiedUpdateManifest{}, nil, false, errors.New("prepared update state does not match its signed manifest")
+	}
+	if err := verifyUpdateArtifactFile(updater.preparedArchivePath(), manifest.Artifact); err != nil {
+		return VerifiedUpdateManifest{}, nil, false, err
+	}
+	return manifest, manifestData, true, nil
+}
+
+func (updater SignedRuntimeUpdater) clearPreparedUpdate() {
+	_ = os.RemoveAll(updater.preparedRoot())
+}
+
+func verifyUpdateArtifactFile(path string, artifact UpdateArtifact) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() != artifact.Size {
+		return errUpdateChecksum
+	}
+	hash := sha256.New()
+	count, err := io.Copy(hash, io.LimitReader(file, artifact.Size+1))
+	if err != nil || count != artifact.Size || hex.EncodeToString(hash.Sum(nil)) != artifact.SHA256 {
+		return errUpdateChecksum
+	}
+	return nil
 }
 
 func (updater SignedRuntimeUpdater) ActivationPending(active ActiveRuntime) bool {
@@ -461,10 +750,16 @@ func (control HTTPRuntimeUpdateControl) WaitStopped(ctx context.Context) error {
 
 type OSCandidateProbe struct{}
 
-func (OSCandidateProbe) Probe(ctx context.Context, executable, config string, expected ExtensionIdentity) error {
+func (OSCandidateProbe) Probe(ctx context.Context, executable, config string, expected CandidateExpectation) error {
 	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	command := exec.CommandContext(probeCtx, executable, "-config", config, "-runtime-candidate-probe")
+	command := exec.CommandContext(
+		probeCtx,
+		executable,
+		"-config", config,
+		"-runtime-candidate-probe",
+		"-runtime-candidate-probe-schema", "2",
+	)
 	command.Dir = filepath.Dir(executable)
 	output, err := command.Output()
 	if err != nil || len(output) > 16*1024 {
@@ -476,14 +771,16 @@ func (OSCandidateProbe) Probe(ctx context.Context, executable, config string, ex
 		Runtime               string `json:"runtime"`
 		BridgeContractVersion string `json:"bridgeContractVersion"`
 		ConfigVersion         int    `json:"configVersion"`
+		DatabaseSchemaVersion int    `json:"databaseSchemaVersion"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(output))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&value); err != nil || ensureJSONEOF(decoder) != nil {
 		return errors.New("candidate probe response is invalid")
 	}
-	if value.Status != "ok" || value.Version != expected.ProductVersion || value.Runtime != "go" ||
-		value.BridgeContractVersion != expected.BridgeContractVersion || value.ConfigVersion != 1 {
+	if value.Status != "ok" || value.Version != expected.Version || value.Runtime != "go" ||
+		value.BridgeContractVersion != expected.BridgeContractVersion || value.ConfigVersion != 1 ||
+		(expected.DatabaseSchemaVersion > 0 && value.DatabaseSchemaVersion != expected.DatabaseSchemaVersion) {
 		return errors.New("candidate probe compatibility mismatch")
 	}
 	return nil

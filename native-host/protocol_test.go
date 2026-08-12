@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -16,12 +17,12 @@ func TestNativeMessageFrameRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read request: %v", err)
 	}
-	if decoded != request {
+	if !reflect.DeepEqual(decoded, request) {
 		t.Fatalf("decoded request differs: %#v", decoded)
 	}
 
 	response := Response{
-		SchemaVersion: protocolVersion,
+		SchemaVersion: responseProtocolVersion(request),
 		Kind:          "response",
 		RequestID:     request.RequestID,
 		Action:        request.Action,
@@ -39,6 +40,8 @@ func TestNativeMessageFrameRoundTrip(t *testing.T) {
 			Phase:             "idle",
 			CurrentVersion:    stringPointer("0.7.4"),
 			RollbackAvailable: true,
+			Urgency:           "security",
+			Deadline:          "2026-08-15T00:00:00Z",
 		},
 	}
 	var output bytes.Buffer
@@ -57,6 +60,22 @@ func TestNativeMessageFrameRoundTrip(t *testing.T) {
 		t.Fatalf("response correlation failed: %#v", decodedResponse)
 	}
 	assertSchemaResponse(t, payload)
+	var update map[string]json.RawMessage
+	if err := json.Unmarshal(decodedResponseJSON(t, payload, "update"), &update); err != nil {
+		t.Fatal(err)
+	}
+	if len(update) != 4 || update["urgency"] != nil || update["deadline"] != nil {
+		t.Fatalf("legacy response update shape changed: %s", payload)
+	}
+}
+
+func decodedResponseJSON(t *testing.T, payload []byte, key string) json.RawMessage {
+	t.Helper()
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &root); err != nil {
+		t.Fatal(err)
+	}
+	return root[key]
 }
 
 func TestNativeMessageRejectsOversizedAndUnknownInput(t *testing.T) {
@@ -86,7 +105,7 @@ func TestRequestValidationFailsClosed(t *testing.T) {
 	}{
 		{
 			name: "protocol",
-			edit: func(request *Request) { request.SchemaVersion = 2 },
+			edit: func(request *Request) { request.SchemaVersion = 3 },
 			code: "protocol_incompatible",
 		},
 		{
@@ -114,6 +133,50 @@ func TestRequestValidationFailsClosed(t *testing.T) {
 				t.Fatalf("unexpected validation result: %#v", state)
 			}
 		})
+	}
+}
+
+func TestProtocolV2NegotiatesBoundedBridgeCapabilities(t *testing.T) {
+	request := validV2Request("ensure_runtime")
+	if state := validateRequest(request); state != nil {
+		t.Fatalf("valid v2 request rejected: %#v", state)
+	}
+	request.Extension.Capabilities = []string{"authority.read_only_bounded"}
+	if state := validateRequest(request); state == nil || state.Code != "protocol_incompatible" {
+		t.Fatalf("missing bounded-capture capability was accepted: %#v", state)
+	}
+}
+
+func TestReconcileRuntimeIsV2Only(t *testing.T) {
+	if state := validateRequest(validV2Request("reconcile_runtime")); state != nil {
+		t.Fatalf("valid v2 reconcile request rejected: %#v", state)
+	}
+	if state := validateRequest(validRequest("reconcile_runtime")); state == nil || state.Code != "invalid_request" {
+		t.Fatalf("legacy reconcile request was accepted: %#v", state)
+	}
+}
+
+func TestProtocolV2ResponsePreservesBoundedUpdatePolicy(t *testing.T) {
+	request := validV2Request("status")
+	response := errorResponse(request, "ready", nil, UpdateState{
+		Phase:    "waiting_for_idle",
+		Urgency:  "required",
+		Deadline: "2026-08-15T00:00:00Z",
+	}, nil)
+	var output bytes.Buffer
+	if err := writeResponse(&output, response); err != nil {
+		t.Fatalf("write response: %v", err)
+	}
+	payload, err := readFrame(&output, maxResponseBytes)
+	if err != nil {
+		t.Fatalf("read response frame: %v", err)
+	}
+	var update map[string]any
+	if err := json.Unmarshal(decodedResponseJSON(t, payload, "update"), &update); err != nil {
+		t.Fatal(err)
+	}
+	if update["urgency"] != "required" || update["deadline"] != "2026-08-15T00:00:00Z" {
+		t.Fatalf("v2 update policy was not preserved: %s", payload)
 	}
 }
 
@@ -157,7 +220,7 @@ func framedJSON(t *testing.T, value any) []byte {
 
 func validRequest(action string) Request {
 	return Request{
-		SchemaVersion: protocolVersion,
+		SchemaVersion: legacyProtocolVersion,
 		Kind:          "request",
 		RequestID:     "request-20260728-0001",
 		Action:        action,
@@ -168,6 +231,14 @@ func validRequest(action string) Request {
 			BridgeContractVersion: bridgeContract,
 		},
 	}
+}
+
+func validV2Request(action string) Request {
+	request := validRequest(action)
+	request.SchemaVersion = protocolVersion
+	request.Extension.BridgeProtocol = &BridgeProtocol{Name: bridgeProtocolName, Version: bridgeProtocolVersion}
+	request.Extension.Capabilities = []string{"authority.read_only_bounded", "capture.bounded"}
+	return request
 }
 
 func stringPointer(value string) *string {

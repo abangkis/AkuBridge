@@ -28,8 +28,9 @@ and builds as `AkuBrowserRuntimeHost.exe` on Windows or a universal
 `AkuBrowserRuntimeHost` on macOS; it is not included in the Chrome extension
 package.
 
-The host accepts only the bounded Native Messaging v1 actions and derives all
-runtime paths from installer-owned local metadata. See
+The host accepts the bounded, capability-negotiated Native Messaging v2 actions
+and one exact v1 migration fallback. It derives all runtime paths from
+installer-owned local metadata. See
 `native-host/README.md` for its build and filesystem contract.
 
 ## OpenAI Build Week role

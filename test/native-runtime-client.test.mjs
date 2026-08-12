@@ -25,7 +25,7 @@ test("native runtime request carries only the bounded AkuBrowser identity contra
 
   assert.equal(observedHost, NATIVE_RUNTIME_HOST);
   assert.deepEqual(observedRequest, {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "request",
     requestId: FIXED_REQUEST_ID,
     action: "ensure_runtime",
@@ -34,18 +34,34 @@ test("native runtime request carries only the bounded AkuBrowser identity contra
       productVersion: "0.7.4",
       runtimeRevision: "source-adapters-v91",
       bridgeContractVersion: "aku-browser.bridge.v2",
+      bridgeProtocol: { name: "aku-browser.bridge", version: 2 },
+      capabilities: [
+        "authority.read_only_bounded",
+        "capture.bounded",
+        "check_codex",
+        "ensure_runtime",
+        "reconcile_runtime",
+        "shutdown_if_idle",
+        "status",
+      ],
     },
   });
   assert.equal(outcome.state, NATIVE_RUNTIME_CLIENT_STATES.READY);
   assert.equal(storageWrites.length, 2);
   assert.deepEqual(storageWrites.at(-1)[NATIVE_RUNTIME_STATE_KEY], {
-    schemaVersion: 1,
+    schemaVersion: 2,
     state: "runtime_ready",
     trigger: "startup",
     observedAt: "2026-07-28T10:00:00.000Z",
     status: "ready",
     retryable: false,
     remediation: "none",
+    update: {
+      phase: "idle",
+      currentVersion: "0.7.4",
+      targetVersion: null,
+      rollbackAvailable: true,
+    },
   });
 });
 
@@ -59,7 +75,7 @@ test("missing registered host becomes install-required state without throwing", 
   const outcome = await client.ensureRuntime({ trigger: "installed_install" });
 
   assert.deepEqual(outcome, {
-    schemaVersion: 1,
+    schemaVersion: 2,
     state: "runtime_install_required",
     trigger: "installed_install",
     observedAt: "2026-07-28T10:00:00.000Z",
@@ -96,6 +112,224 @@ test("a native host held by security software times out instead of hanging setup
   assert.deepEqual(storageWrites.at(-1)[NATIVE_RUNTIME_STATE_KEY], outcome);
 });
 
+test("native runtime client falls back once to the legacy v1 host contract", async () => {
+  const requests = [];
+  const { client } = clientWithResponder((_host, request, callback) => {
+    requests.push(structuredClone(request));
+    if (request.schemaVersion === 2) {
+      callback({
+        schemaVersion: 1,
+        kind: "response",
+        requestId: request.requestId,
+        action: request.action,
+        status: "incompatible",
+        runtime: null,
+        update: {
+          phase: "idle",
+          currentVersion: null,
+          targetVersion: null,
+          rollbackAvailable: false,
+        },
+        error: {
+          code: "protocol_incompatible",
+          message: "Native protocol version is not supported.",
+          retryable: false,
+          remediation: "reinstall_runtime",
+        },
+      });
+      return;
+    }
+    callback(readyResponse(request));
+  });
+
+  const outcome = await client.ensureRuntime({ trigger: "startup" });
+
+  assert.equal(outcome.state, NATIVE_RUNTIME_CLIENT_STATES.READY);
+  assert.equal(outcome.hostUpgradeRequired, true);
+  assert.deepEqual(requests.map(({ schemaVersion }) => schemaVersion), [2, 1]);
+  assert.deepEqual(requests[1].extension, {
+    product: "AkuBrowser",
+    productVersion: "0.7.4",
+    runtimeRevision: "source-adapters-v91",
+    bridgeContractVersion: "aku-browser.bridge.v2",
+  });
+});
+
+test("v2 reconcile is bounded and falls back through v1 status", async () => {
+  const requests = [];
+  const { client } = clientWithResponder((_host, request, callback) => {
+    requests.push({ schemaVersion: request.schemaVersion, action: request.action });
+    if (request.schemaVersion === 2) {
+      callback({
+        ...readyResponse({ ...request, schemaVersion: 1 }),
+        status: "incompatible",
+        runtime: null,
+        error: {
+          code: "protocol_incompatible",
+          message: "Native protocol version is not supported.",
+          retryable: false,
+          remediation: "reinstall_runtime",
+        },
+      });
+      return;
+    }
+    callback(readyResponse(request));
+  });
+
+  const outcome = await client.reconcileRuntime({ trigger: "startup" });
+
+  assert.equal(outcome.state, NATIVE_RUNTIME_CLIENT_STATES.READY);
+  assert.equal(outcome.hostUpgradeRequired, true);
+  assert.deepEqual(requests, [
+    { schemaVersion: 2, action: "reconcile_runtime" },
+    { schemaVersion: 1, action: "status" },
+  ]);
+});
+
+test("v1 reconcile fallback starts a stopped legacy runtime after status", async () => {
+  const requests = [];
+  const { client } = clientWithResponder((_host, request, callback) => {
+    requests.push({ schemaVersion: request.schemaVersion, action: request.action });
+    if (request.schemaVersion === 2) {
+      callback({
+        ...readyResponse({ ...request, schemaVersion: 1 }),
+        status: "incompatible",
+        runtime: null,
+        error: {
+          code: "protocol_incompatible",
+          message: "Native protocol version is not supported.",
+          retryable: false,
+          remediation: "reinstall_runtime",
+        },
+      });
+      return;
+    }
+    if (request.action === "status") {
+      callback(readyResponse(request, {
+        status: "error",
+        runtime: {
+          version: "0.7.4",
+          channel: "stable",
+          runtimeRevision: "source-adapters-v84",
+          bridgeContractVersion: "aku-browser.bridge.v2",
+          endpoint: "http://127.0.0.1:11122",
+          instanceEpoch: "not-running",
+          processState: "stopped",
+        },
+        error: {
+          code: "runtime_start_failed",
+          message: "AkuBrowser runtime is installed but not running.",
+          retryable: true,
+          remediation: "retry",
+        },
+      }));
+      return;
+    }
+    callback(readyResponse(request));
+  });
+
+  const outcome = await client.reconcileRuntime({ trigger: "startup" });
+
+  assert.equal(outcome.state, NATIVE_RUNTIME_CLIENT_STATES.READY);
+  assert.equal(outcome.hostUpgradeRequired, true);
+  assert.deepEqual(requests, [
+    { schemaVersion: 2, action: "reconcile_runtime" },
+    { schemaVersion: 1, action: "status" },
+    { schemaVersion: 1, action: "ensure_runtime" },
+  ]);
+});
+
+test("v1 stopped fallback surfaces an offline legacy feed as pinned host repair", async () => {
+  const requests = [];
+  const { client } = clientWithResponder((_host, request, callback) => {
+    requests.push({ schemaVersion: request.schemaVersion, action: request.action });
+    if (request.schemaVersion === 2) {
+      callback({
+        ...readyResponse({ ...request, schemaVersion: 1 }),
+        status: "incompatible",
+        runtime: null,
+        error: {
+          code: "protocol_incompatible",
+          message: "Native protocol version is not supported.",
+          retryable: false,
+          remediation: "reinstall_runtime",
+        },
+      });
+      return;
+    }
+    const runtime = {
+      version: "0.7.4",
+      channel: "stable",
+      runtimeRevision: "source-adapters-v84",
+      bridgeContractVersion: "aku-browser.bridge.v2",
+      endpoint: "http://127.0.0.1:11122",
+      instanceEpoch: "not-running",
+      processState: "stopped",
+    };
+    if (request.action === "status") {
+      callback(readyResponse(request, {
+        status: "error",
+        runtime,
+        error: {
+          code: "runtime_start_failed",
+          message: "AkuBrowser runtime is installed but not running.",
+          retryable: true,
+          remediation: "retry",
+        },
+      }));
+      return;
+    }
+    callback(readyResponse(request, {
+      status: "error",
+      runtime,
+      update: {
+        phase: "checking",
+        currentVersion: "0.7.4",
+        targetVersion: "0.7.4",
+        rollbackAvailable: true,
+      },
+      error: {
+        code: "update_check_failed",
+        message: "Legacy update feed is unavailable.",
+        retryable: true,
+        remediation: "retry",
+      },
+    }));
+  });
+
+  const outcome = await client.reconcileRuntime({ trigger: "startup" });
+
+  assert.equal(outcome.state, NATIVE_RUNTIME_CLIENT_STATES.FAILED);
+  assert.equal(outcome.hostUpgradeRequired, true);
+  assert.equal(outcome.errorCode, "update_check_failed");
+  assert.equal(outcome.silentError, false);
+  assert.deepEqual(requests, [
+    { schemaVersion: 2, action: "reconcile_runtime" },
+    { schemaVersion: 1, action: "status" },
+    { schemaVersion: 1, action: "ensure_runtime" },
+  ]);
+});
+
+test("native runtime client recovers when a strict v1 host exits on the v2 fields", async () => {
+  const requests = [];
+  const { client, runtime } = clientWithResponder((_host, request, callback) => {
+    requests.push(request.schemaVersion);
+    if (request.schemaVersion === 2) {
+      runtime.lastError = { message: "Native host has exited." };
+      callback(undefined);
+      runtime.lastError = undefined;
+      return;
+    }
+    callback(readyResponse(request));
+  });
+
+  const outcome = await client.status({ trigger: "startup" });
+
+  assert.equal(outcome.state, NATIVE_RUNTIME_CLIENT_STATES.READY);
+  assert.equal(outcome.hostUpgradeRequired, true);
+  assert.deepEqual(requests, [2, 1]);
+});
+
 test("a native host that rejects this extension requests an installer repair", async () => {
   const storageWrites = [];
   const runtime = {
@@ -124,7 +358,7 @@ test("a native host that rejects this extension requests an installer repair", a
   const outcome = await client.status({ trigger: "setup_check" });
 
   assert.deepEqual(outcome, {
-    schemaVersion: 1,
+    schemaVersion: 2,
     state: "runtime_failed",
     trigger: "setup_check",
     observedAt: "2026-07-28T10:00:00.000Z",
@@ -325,10 +559,13 @@ test("portable fallback probes only the fixed loopback health contract", async (
         async json() {
           return {
             status: "ok",
-            version: "0.7.4",
+            version: "0.8.1",
             runtime: "go",
             bridgeContractVersion: "aku-browser.bridge.v2",
             instanceEpoch: "runtime:0001",
+            softwareUpdate: {
+              bridgeProtocol: { name: "aku-browser.bridge", minVersion: 2, maxVersion: 2 },
+            },
           };
         },
       };
@@ -352,6 +589,168 @@ test("portable fallback probes only the fixed loopback health contract", async (
       },
     }),
   }), false);
+
+  assert.equal(await probeCompatibleLoopbackRuntime({
+    productVersion: "0.7.4",
+    fetchImpl: async () => ({
+      ok: true,
+      async json() {
+        return {
+          status: "ok",
+          version: "0.8.1",
+          runtime: "go",
+          bridgeContractVersion: "aku-browser.bridge.v2",
+          instanceEpoch: "runtime:0001",
+          softwareUpdate: {
+            bridgeProtocol: { name: "aku-browser.bridge", minVersion: 3, maxVersion: 3 },
+          },
+        };
+      },
+    }),
+  }), false);
+});
+
+test("healthy runtime preserves a silent retryable update-discovery failure", async () => {
+  const { client } = clientWithResponder((_host, request, callback) => {
+    callback(readyResponse(request, {
+      update: {
+        phase: "checking",
+        currentVersion: "0.7.4",
+        targetVersion: "0.8.1",
+        rollbackAvailable: true,
+      },
+      error: {
+        code: "update_check_failed",
+        message: "Signed feed is temporarily unavailable.",
+        retryable: true,
+        remediation: "retry",
+      },
+    }));
+  });
+
+  const outcome = await client.ensureRuntime({ trigger: "scheduled_alarm" });
+
+  assert.equal(outcome.state, "runtime_ready");
+  assert.equal(outcome.errorCode, "update_check_failed");
+  assert.equal(outcome.retryable, true);
+  assert.equal(outcome.silentError, true);
+  assert.equal(outcome.update.phase, "checking");
+});
+
+test("stopped runtime never hides a retryable update feed failure", async () => {
+  const { client } = clientWithResponder((_host, request, callback) => {
+    callback(readyResponse(request, {
+      status: "error",
+      runtime: {
+        version: "0.7.4",
+        channel: "stable",
+        runtimeRevision: "source-adapters-v84",
+        bridgeContractVersion: "aku-browser.bridge.v2",
+        endpoint: "http://127.0.0.1:11122",
+        instanceEpoch: "not-running",
+        processState: "stopped",
+      },
+      update: {
+        phase: "checking",
+        currentVersion: "0.7.4",
+        targetVersion: "0.8.1",
+        rollbackAvailable: true,
+      },
+      error: {
+        code: "update_check_failed",
+        message: "Signed feed is temporarily unavailable.",
+        retryable: true,
+        remediation: "retry",
+      },
+    }));
+  });
+
+  const outcome = await client.ensureRuntime({ trigger: "scheduled_alarm" });
+
+  assert.equal(outcome.state, NATIVE_RUNTIME_CLIENT_STATES.FAILED);
+  assert.equal(outcome.errorCode, "update_check_failed");
+  assert.equal(outcome.silentError, false);
+});
+
+test("signed v2 minimum-host failure requests the pinned companion installer", async () => {
+  const { client } = clientWithResponder((_host, request, callback) => {
+    callback(readyResponse(request, {
+      status: "error",
+      error: {
+        code: "host_upgrade_required",
+        message: "The native update helper must be refreshed.",
+        retryable: false,
+        remediation: "reinstall_runtime",
+      },
+    }));
+  });
+
+  const outcome = await client.ensureRuntime();
+
+  assert.equal(outcome.hostUpgradeRequired, true);
+  assert.equal(outcome.errorCode, "host_upgrade_required");
+  assert.equal(outcome.remediation, "reinstall_runtime");
+});
+
+test("v2 update urgency is validated and persisted for lightweight UX", async () => {
+  const { client, storageWrites } = clientWithResponder((_host, request, callback) => {
+    callback(readyResponse(request, {
+      update: {
+        phase: "waiting_for_idle",
+        currentVersion: "0.7.4",
+        targetVersion: "0.8.0",
+        rollbackAvailable: true,
+        urgency: "security",
+        deadline: "2026-08-15T00:00:00Z",
+      },
+    }));
+  });
+
+  const outcome = await client.ensureRuntime();
+
+  assert.equal(outcome.state, NATIVE_RUNTIME_CLIENT_STATES.READY);
+  assert.deepEqual(storageWrites.at(-1)[NATIVE_RUNTIME_STATE_KEY].update, {
+    phase: "waiting_for_idle",
+    currentVersion: "0.7.4",
+    targetVersion: "0.8.0",
+    rollbackAvailable: true,
+    urgency: "security",
+    deadline: "2026-08-15T00:00:00Z",
+  });
+});
+
+test("legacy v1 responses cannot add v2-only update policy fields", async () => {
+  const { client, storageWrites } = clientWithResponder((_host, request, callback) => {
+    if (request.schemaVersion === 2) {
+      callback({
+        ...readyResponse({ ...request, schemaVersion: 1 }),
+        status: "incompatible",
+        runtime: null,
+        error: {
+          code: "protocol_incompatible",
+          message: "Native protocol version is not supported.",
+          retryable: false,
+          remediation: "reinstall_runtime",
+        },
+      });
+      return;
+    }
+    callback(readyResponse(request, {
+      update: {
+        phase: "idle",
+        currentVersion: "0.7.4",
+        targetVersion: null,
+        rollbackAvailable: true,
+        urgency: "required",
+      },
+    }));
+  });
+
+  const outcome = await client.status();
+
+  assert.equal(outcome.state, NATIVE_RUNTIME_CLIENT_STATES.FAILED);
+  assert.equal(outcome.errorCode, "invalid_native_response");
+  assert.equal(storageWrites.at(-1)[NATIVE_RUNTIME_STATE_KEY].update, undefined);
 });
 
 function clientWithResponder(responder) {
@@ -380,7 +779,7 @@ function clientWithResponder(responder) {
 function readyResponse(request, overrides = {}) {
   const status = overrides.status ?? "ready";
   return {
-    schemaVersion: 1,
+    schemaVersion: request.schemaVersion,
     kind: "response",
     requestId: request.requestId,
     action: request.action,
@@ -408,7 +807,7 @@ function readyResponse(request, overrides = {}) {
 function codexResponse(request, status) {
   const available = status === "available";
   return {
-    schemaVersion: 1,
+    schemaVersion: request.schemaVersion,
     kind: "response",
     requestId: request.requestId,
     action: request.action,

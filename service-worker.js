@@ -36,6 +36,7 @@ import { navigationReadinessOutcome } from "./navigation-readiness-policy.js";
 import {
   BRIDGE_CONTRACT_VERSION,
   BRIDGE_ID,
+  bridgeCapabilitiesForProtocol,
   createBridgeCapabilities,
 } from "./bridge-capabilities.js";
 import {
@@ -46,6 +47,10 @@ import {
   nativeRuntimeDistribution,
   planNativeRuntimeLifecycle,
 } from "./native-runtime-lifecycle.js";
+import {
+  NATIVE_RUNTIME_CHECK_ALARM,
+  createNativeRuntimeScheduler,
+} from "./native-runtime-scheduler.js";
 import {
   reconcileRegisteredSourceScripts,
   sourceAccessGranted,
@@ -90,6 +95,16 @@ let backgroundDispatching = false;
 let sourceAccessReconciliation = Promise.resolve();
 const commandGuard = createCommandGuard();
 const nativeRuntimeClient = createChromeNativeRuntimeClient(chrome);
+const NATIVE_RUNTIME_BACKGROUND_TIMEOUT_MS = 195_000;
+const nativeRuntimeScheduler = createNativeRuntimeScheduler({
+  alarms: chrome.alarms,
+  storage: chrome.storage.local,
+  enabled: nativeRuntimeDistribution(chrome.runtime.getManifest()) === "production",
+  check: (trigger) => nativeRuntimeClient.ensureRuntime({
+    trigger,
+    timeoutMs: NATIVE_RUNTIME_BACKGROUND_TIMEOUT_MS,
+  }),
+});
 const managedCaptureWindow = createManagedCaptureWindowRuntime(chrome);
 const xMediaEvidenceStore = createXMediaEvidenceStore(chrome.storage.local);
 const xAvatarEvidenceStore = createXAvatarEvidenceStore(chrome.storage.local);
@@ -116,8 +131,17 @@ void resumePendingSelfReload().catch((error) => {
 void restoreBackgroundDispatch().catch((error) => {
   console.error("AkuBridge could not restore background dispatch.", error);
 });
+void nativeRuntimeScheduler.restore().catch(() => {
+  console.warn("AkuBridge could not restore the native runtime update schedule.");
+});
 
 chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === NATIVE_RUNTIME_CHECK_ALARM) {
+    void nativeRuntimeScheduler.checkNow("scheduled_alarm").catch(() => {
+      console.warn("AkuBridge could not complete the scheduled native runtime check.");
+    });
+    return;
+  }
   if (alarm.name !== BACKGROUND_DISPATCH_ALARM) return;
   void pollBackgroundDispatch().catch((error) => console.warn("AkuBridge background dispatch deferred.", error));
 });
@@ -129,8 +153,13 @@ chrome.runtime.onInstalled.addListener((details) => {
   });
   if (plan.openSetup) {
     chrome.tabs.create({ url: chrome.runtime.getURL("setup.html"), active: true });
+    void nativeRuntimeScheduler.scheduleInitial().catch(() => {
+      console.warn("AkuBrowser could not schedule the first native runtime update check.");
+    });
   }
-  void executeNativeRuntimeLifecycle(plan).catch(() => {
+  void executeNativeRuntimeLifecycle(plan, {
+    scheduleNext: details.reason !== "install",
+  }).catch(() => {
     console.warn("AkuBrowser could not record native runtime installation state.");
   });
   void scheduleSourceAccessReconciliation().catch(() => {
@@ -141,7 +170,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 chrome.runtime.onStartup.addListener(() => {
   void executeNativeRuntimeLifecycle(planNativeRuntimeLifecycle("startup", {
     distribution: NATIVE_RUNTIME_DISTRIBUTION,
-  })).catch(() => {
+  }), { scheduleNext: true }).catch(() => {
     console.warn("AkuBrowser could not record native runtime startup state.");
   });
   void scheduleSourceAccessReconciliation().catch(() => {
@@ -229,7 +258,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, message: "Background dispatch configuration rejected: invalid AkuBrowser origin." });
       return false;
     }
-    configureBackgroundDispatch(message.endpoint, message.token)
+    configureBackgroundDispatch(message.endpoint, message.token, message.protocolMajor)
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
     return true;
@@ -447,10 +476,20 @@ async function inspectNativeRuntime(trigger) {
   return nativeRuntimeClient.status({ trigger });
 }
 
-async function executeNativeRuntimeLifecycle(plan) {
+async function reconcileNativeRuntime(trigger) {
+  return nativeRuntimeClient.reconcileRuntime({ trigger });
+}
+
+async function executeNativeRuntimeLifecycle(plan, { scheduleNext = false } = {}) {
   if (plan.action === "none") return null;
+  if (scheduleNext && plan.action === "ensure_runtime") {
+    return nativeRuntimeScheduler.checkNow(plan.trigger);
+  }
   if (plan.action === "status") {
     return inspectNativeRuntime(plan.trigger);
+  }
+  if (plan.action === "reconcile_runtime") {
+    return reconcileNativeRuntime(plan.trigger);
   }
   return observeNativeRuntime(plan.trigger);
 }
@@ -552,7 +591,11 @@ async function releaseTerminalBackgroundLease(config) {
 }
 
 async function refreshBackgroundHeartbeat(config) {
-  const capabilities = await bridgeCapabilitiesWithSourceAccess();
+  const currentCapabilities = await bridgeCapabilitiesWithSourceAccess();
+  const capabilities = bridgeCapabilitiesForProtocol(
+    currentCapabilities,
+    config.sidecarProtocolMajor,
+  );
   const response = await fetch(`${config.endpoint}/api/bridge/heartbeat`, {
     method: "POST",
     headers: { ...bridgeHeaders(config.token), "Content-Type": "application/json" },
@@ -567,12 +610,16 @@ async function refreshBackgroundHeartbeat(config) {
   return true;
 }
 
-async function configureBackgroundDispatch(endpoint, token) {
+async function configureBackgroundDispatch(endpoint, token, protocolMajor = 0) {
   assertEndpoint(endpoint);
   if (typeof token !== "string" || token.length < 32 || token.length > 256) throw new Error("Background dispatch requires a valid Bridge token.");
   const stored = await chrome.storage.local.get(BACKGROUND_DISPATCH_CONFIG_KEY);
   const current = stored?.[BACKGROUND_DISPATCH_CONFIG_KEY];
-  const next = { endpoint, token };
+  const next = {
+    endpoint,
+    token,
+    sidecarProtocolMajor: protocolMajor === 2 ? 2 : 0,
+  };
   if (current?.endpoint === endpoint && current?.token === token && typeof current.activeLeaseId === "string") {
     next.activeLeaseId = current.activeLeaseId;
     next.releasedSources = Array.isArray(current.releasedSources)

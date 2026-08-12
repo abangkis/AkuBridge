@@ -31,6 +31,7 @@ beneath `~/Library/Application Support/AkuBrowser`. Linux resolves data beneath
 disabled until the 0.7.10 release gate.
 
 Update URLs, artifact architecture, and runtime executable names come only from
-the compiled platform profile. Windows retains the legacy stable update
-manifest name for 0.7.8 compatibility; macOS uses
-`AkuBrowserRuntimeUpdate-macos-universal.json`.
+the compiled platform profile. Current hosts prefer `AkuSidecarUpdate.json` on
+Windows and `AkuSidecarUpdate-macos-universal.json` on macOS. The frozen
+`AkuBrowserRuntimeUpdate*.json` names remain only as the exact v1 migration
+fallback for deployed legacy hosts.

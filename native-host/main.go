@@ -67,6 +67,7 @@ func run(stdin *os.File, stdout *os.File, stderr *os.File, arguments []string) i
 			Architecture:      platform.Architecture,
 			RuntimeExecutable: platform.RuntimeExecutable,
 			ManifestURL:       platform.UpdateManifestURL,
+			LegacyManifestURL: platform.LegacyUpdateManifestURL,
 			PublicKey:         pinnedUpdatePublicKey,
 			Transport:         HTTPUpdateTransport{},
 			Control:           updateControl,
@@ -74,12 +75,13 @@ func run(stdin *os.File, stdout *os.File, stderr *os.File, arguments []string) i
 			Launcher:          controller.Launcher,
 			Health:            controller.Prober,
 			ControlToken:      token,
+			IdleQuietPeriod:   30 * time.Second,
 		}
 	} else {
 		diagnostic.Log("error", "runtime_control_initialization_failed", nil)
 	}
 	timeout := 15 * time.Second
-	if request.Action == "ensure_runtime" {
+	if request.Action == "ensure_runtime" || request.Action == "reconcile_runtime" {
 		timeout = 3 * time.Minute
 	} else if request.Action == "check_codex" {
 		timeout = 30 * time.Second

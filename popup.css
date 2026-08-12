@@ -28,6 +28,24 @@ main {
 .brand strong { font-size: 16px; }
 .brand span { color: #60708d; font-size: 12px; }
 
+.runtime-status {
+  display: grid;
+  gap: 3px;
+  padding: 10px 11px;
+  border: 1px solid #cbd7ee;
+  border-radius: 9px;
+  color: #244987;
+  background: #eef3ff;
+}
+
+.runtime-status[hidden] { display: none; }
+.runtime-status strong { font-size: 13px; }
+.runtime-status span { color: #526783; font-size: 12px; line-height: 1.35; }
+.runtime-status[data-tone="waiting"],
+.runtime-status[data-tone="staged"] { border-color: #d7c98f; background: #fff9df; }
+.runtime-status[data-tone="error"],
+.runtime-status[data-tone="mandatory"] { border-color: #e4a5a5; background: #fff0f0; }
+
 button {
   min-height: 42px;
   padding: 9px 14px;

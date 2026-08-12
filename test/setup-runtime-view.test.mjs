@@ -21,6 +21,7 @@ test("fresh setup waits for an explicit runtime check", () => {
   assert.equal(state.actionLabel, "Check runtime");
   assert.equal(state.actionDisabled, false);
   assert.equal(state.runtimeReady, false);
+  assert.match(state.detail, /until you select Check runtime/);
 });
 
 test("missing Windows runtime offers installation", () => {
@@ -34,6 +35,7 @@ test("missing Windows runtime offers installation", () => {
   assert.equal(state.actionLabel, "Install runtime");
   assert.equal(state.actionDisabled, false);
   assert.equal(state.runtimeReady, false);
+  assert.match(state.detail, /compatible Sidecar companion packaged for this AkuBridge release/);
 });
 
 test("missing macOS runtime offers the versioned stable companion installer", () => {
@@ -134,6 +136,70 @@ test("legacy host response derives a packaged update target without external aut
   assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.INSTALL);
   assert.equal(state.actionLabel, "Update runtime");
   assert.match(state.detail, /Version 0\.7\.5 is installed; version 0\.7\.9 is required/);
+});
+
+test("v2 host without an update target does not inherit the Bridge version", () => {
+  const state = runtimeSetupView({
+    state: "runtime_ready",
+    response: {
+      schemaVersion: 2,
+      runtime: {
+        processState: "ready",
+        channel: "stable",
+        version: "1.4.2",
+        runtimeRevision: "source-adapters-v91",
+      },
+      update: { currentVersion: "1.4.2", targetVersion: null },
+    },
+  }, {
+    windowsInstallerAvailable: true,
+    requiredRuntimeVersion: "0.8.0",
+    requiredRuntimeRevision: "source-adapters-v91",
+  });
+
+  assert.equal(state.badge, "Running");
+  assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.STOP);
+  assert.equal(state.runtimeReady, true);
+  assert.doesNotMatch(state.detail, /0\.8\.0/);
+});
+
+test("legacy host keeps the current runtime usable while offering one helper refresh", () => {
+  const state = runtimeSetupView({
+    state: "runtime_ready",
+    hostUpgradeRequired: true,
+    response: {
+      schemaVersion: 1,
+      runtime: { processState: "ready", channel: "stable", version: "0.7.9" },
+      update: { currentVersion: "0.7.9", targetVersion: null },
+    },
+  }, {
+    windowsInstallerAvailable: true,
+    requiredRuntimeVersion: "0.7.9",
+  });
+
+  assert.equal(state.badge, "Updater refresh required");
+  assert.equal(state.runtimeReady, true);
+  assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.INSTALL);
+  assert.equal(state.actionLabel, "Refresh update helper");
+  assert.match(state.detail, /remains usable/);
+});
+
+test("legacy host update failure still offers the one-time helper refresh", () => {
+  const state = runtimeSetupView({
+    state: "runtime_failed",
+    hostUpgradeRequired: true,
+    errorCode: "update_check_failed",
+    response: {
+      schemaVersion: 1,
+      runtime: { processState: "stopped", channel: "stable", version: "0.7.9" },
+    },
+  }, { windowsInstallerAvailable: true });
+
+  assert.equal(state.badge, "Updater refresh required");
+  assert.equal(state.runtimeReady, false);
+  assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.INSTALL);
+  assert.equal(state.actionLabel, "Refresh update helper");
+  assert.doesNotMatch(state.detail, /remains usable/);
 });
 
 test("same-version build mismatch offers installer repair", () => {
@@ -274,6 +340,7 @@ test("invalid installed metadata offers installer repair", () => {
   assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.INSTALL);
   assert.equal(state.actionLabel, "Repair runtime");
   assert.equal(state.showInstallerNote, true);
+  assert.match(state.detail, /matching installer/);
 });
 
 test("forbidden native host explains the extension identity repair", () => {

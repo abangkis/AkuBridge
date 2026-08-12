@@ -16,14 +16,14 @@ export function planNativeRuntimeLifecycle(event, details = {}) {
       throw new TypeError(`Unsupported Chrome installation reason: ${reason || "missing"}`);
     }
     return Object.freeze({
-      action: reason === "install" || distribution === "development" ? "none" : "ensure_runtime",
+      action: reason === "install" || distribution === "development" ? "none" : "reconcile_runtime",
       trigger: `installed_${reason}`,
       openSetup: reason === "install",
     });
   }
   if (event === "startup") {
     return Object.freeze({
-      action: distribution === "development" ? "none" : "ensure_runtime",
+      action: distribution === "development" ? "none" : "reconcile_runtime",
       trigger: "startup",
       openSetup: false,
     });

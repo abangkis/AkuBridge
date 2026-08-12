@@ -78,6 +78,11 @@ func writeRuntimeArchiveForTest(t *testing.T, archivePath string, files map[stri
 	if len(architectures) > 0 {
 		architecture = architectures[0]
 	}
+	writeRuntimeArchiveVersionForTest(t, archivePath, files, "0.7.9", architecture)
+}
+
+func writeRuntimeArchiveVersionForTest(t *testing.T, archivePath string, files map[string][]byte, version, architecture string) {
+	t.Helper()
 	declared := make([]RuntimePayloadFile, 0, len(files))
 	for name, data := range files {
 		if strings.HasPrefix(name, "../") || name == "extra.dll" {
@@ -89,7 +94,7 @@ func writeRuntimeArchiveForTest(t *testing.T, archivePath string, files map[stri
 		})
 	}
 	manifest, err := json.Marshal(RuntimePayloadManifest{
-		SchemaVersion: 1, Product: "AkuBrowser", Version: "0.7.9",
+		SchemaVersion: 1, Product: "AkuBrowser", Version: version,
 		Architecture: architecture, Files: declared,
 	})
 	if err != nil {

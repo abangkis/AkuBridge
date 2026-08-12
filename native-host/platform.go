@@ -5,14 +5,25 @@ import "fmt"
 const legacyWindowsArchitecture = "windows-x64"
 
 type RuntimePlatform struct {
-	Architecture      string
-	RuntimeExecutable string
-	RuntimeRoot       string
-	DataRoot          string
-	UpdateManifestURL string
+	Architecture            string
+	RuntimeExecutable       string
+	RuntimeRoot             string
+	DataRoot                string
+	UpdateManifestURL       string
+	LegacyUpdateManifestURL string
 }
 
 func platformUpdateManifestURL(architecture string) string {
+	if architecture == legacyWindowsArchitecture {
+		return "https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuSidecarUpdate.json"
+	}
+	return fmt.Sprintf(
+		"https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuSidecarUpdate-%s.json",
+		architecture,
+	)
+}
+
+func legacyPlatformUpdateManifestURL(architecture string) string {
 	if architecture == legacyWindowsArchitecture {
 		// Keep the stable name so installed 0.7.8 Windows hosts can update.
 		return "https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuBrowserRuntimeUpdate.json"

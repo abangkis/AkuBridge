@@ -27,7 +27,10 @@ func TestDarwinRuntimePlatformUsesUniversalUserScopedLayout(t *testing.T) {
 	if platform.DataRoot != filepath.Join(home, "Library", "Application Support", "AkuBrowser", "data") {
 		t.Fatalf("data root=%s", platform.DataRoot)
 	}
-	if platform.UpdateManifestURL != "https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuBrowserRuntimeUpdate-macos-universal.json" {
-		t.Fatalf("manifest URL=%s", platform.UpdateManifestURL)
+	if platform.UpdateManifestURL != "https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuSidecarUpdate-macos-universal.json" {
+		t.Fatalf("preferred manifest URL=%s", platform.UpdateManifestURL)
+	}
+	if platform.LegacyUpdateManifestURL != "https://github.com/abangkis/AkuBrowser/releases/latest/download/AkuBrowserRuntimeUpdate-macos-universal.json" {
+		t.Fatalf("legacy manifest URL=%s", platform.LegacyUpdateManifestURL)
 	}
 }

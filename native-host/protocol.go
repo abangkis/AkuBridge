@@ -11,17 +11,21 @@ import (
 )
 
 const (
-	protocolVersion  = 1
-	maxRequestBytes  = 64 * 1024
-	maxResponseBytes = 64 * 1024
-	bridgeContract   = "aku-browser.bridge.v2"
-	loopbackEndpoint = "http://127.0.0.1:11122"
+	legacyProtocolVersion = 1
+	protocolVersion       = 2
+	maxRequestBytes       = 64 * 1024
+	maxResponseBytes      = 64 * 1024
+	bridgeContract        = "aku-browser.bridge.v2"
+	bridgeProtocolName    = "aku-browser.bridge"
+	bridgeProtocolVersion = 2
+	loopbackEndpoint      = "http://127.0.0.1:11122"
 )
 
 var (
-	requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{16,80}$`)
-	versionPattern   = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$`)
-	revisionPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{2,79}$`)
+	requestIDPattern  = regexp.MustCompile(`^[A-Za-z0-9._-]{16,80}$`)
+	versionPattern    = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$`)
+	revisionPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{2,79}$`)
+	capabilityPattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{1,79}$`)
 )
 
 type Request struct {
@@ -33,10 +37,17 @@ type Request struct {
 }
 
 type ExtensionIdentity struct {
-	Product               string `json:"product"`
-	ProductVersion        string `json:"productVersion"`
-	RuntimeRevision       string `json:"runtimeRevision"`
-	BridgeContractVersion string `json:"bridgeContractVersion"`
+	Product               string          `json:"product"`
+	ProductVersion        string          `json:"productVersion"`
+	RuntimeRevision       string          `json:"runtimeRevision"`
+	BridgeContractVersion string          `json:"bridgeContractVersion"`
+	BridgeProtocol        *BridgeProtocol `json:"bridgeProtocol,omitempty"`
+	Capabilities          []string        `json:"capabilities,omitempty"`
+}
+
+type BridgeProtocol struct {
+	Name    string `json:"name"`
+	Version int    `json:"version"`
 }
 
 type Response struct {
@@ -70,6 +81,8 @@ type UpdateState struct {
 	CurrentVersion    *string `json:"currentVersion"`
 	TargetVersion     *string `json:"targetVersion"`
 	RollbackAvailable bool    `json:"rollbackAvailable"`
+	Urgency           string  `json:"urgency,omitempty"`
+	Deadline          string  `json:"deadline,omitempty"`
 }
 
 type ErrorState struct {
@@ -97,6 +110,10 @@ func readRequest(r io.Reader) (Request, error) {
 }
 
 func writeResponse(w io.Writer, response Response) error {
+	if response.SchemaVersion == legacyProtocolVersion {
+		response.Update.Urgency = ""
+		response.Update.Deadline = ""
+	}
 	payload, err := json.Marshal(response)
 	if err != nil {
 		return fmt.Errorf("encode response: %w", err)
@@ -143,7 +160,7 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 }
 
 func validateRequest(request Request) *ErrorState {
-	if request.SchemaVersion != protocolVersion {
+	if request.SchemaVersion != legacyProtocolVersion && request.SchemaVersion != protocolVersion {
 		return protocolError(
 			"protocol_incompatible",
 			"Native protocol version is not supported.",
@@ -159,6 +176,9 @@ func validateRequest(request Request) *ErrorState {
 	}
 	if !isKnownAction(request.Action) {
 		return protocolError("invalid_request", "Native action is not supported.", false, "none")
+	}
+	if request.SchemaVersion == legacyProtocolVersion && request.Action == "reconcile_runtime" {
+		return protocolError("invalid_request", "Runtime reconciliation requires native protocol v2.", false, "none")
 	}
 	if request.Extension.Product != "AkuBrowser" {
 		return protocolError("invalid_request", "Extension product identity is invalid.", false, "none")
@@ -177,12 +197,53 @@ func validateRequest(request Request) *ErrorState {
 			"reinstall_runtime",
 		)
 	}
+	if request.SchemaVersion == legacyProtocolVersion {
+		if request.Extension.BridgeProtocol != nil || len(request.Extension.Capabilities) != 0 {
+			return protocolError("invalid_request", "Legacy native protocol requests cannot negotiate Bridge capabilities.", false, "none")
+		}
+		return nil
+	}
+	if request.Extension.BridgeProtocol == nil ||
+		request.Extension.BridgeProtocol.Name != bridgeProtocolName ||
+		request.Extension.BridgeProtocol.Version != bridgeProtocolVersion {
+		return protocolError(
+			"protocol_incompatible",
+			"Bridge protocol version is not supported.",
+			false,
+			"reinstall_runtime",
+		)
+	}
+	if state := validateCapabilities(request.Extension.Capabilities); state != nil {
+		return state
+	}
+	return nil
+}
+
+func validateCapabilities(capabilities []string) *ErrorState {
+	if len(capabilities) == 0 || len(capabilities) > 64 {
+		return protocolError("invalid_request", "Bridge capabilities are missing or exceed the allowed bound.", false, "none")
+	}
+	seen := make(map[string]struct{}, len(capabilities))
+	for _, capability := range capabilities {
+		if !capabilityPattern.MatchString(capability) {
+			return protocolError("invalid_request", "Bridge capability identifier is invalid.", false, "none")
+		}
+		if _, duplicate := seen[capability]; duplicate {
+			return protocolError("invalid_request", "Bridge capabilities contain a duplicate identifier.", false, "none")
+		}
+		seen[capability] = struct{}{}
+	}
+	for _, required := range []string{"authority.read_only_bounded", "capture.bounded"} {
+		if _, present := seen[required]; !present {
+			return protocolError("protocol_incompatible", "Bridge is missing a required safety capability.", false, "reinstall_runtime")
+		}
+	}
 	return nil
 }
 
 func isKnownAction(action string) bool {
 	switch action {
-	case "status", "ensure_runtime", "shutdown_if_idle", "check_codex":
+	case "status", "ensure_runtime", "reconcile_runtime", "shutdown_if_idle", "check_codex":
 		return true
 	default:
 		return false
@@ -213,7 +274,7 @@ func protocolError(code, message string, retryable bool, remediation string) *Er
 func errorResponse(request Request, status string, runtime *RuntimeState, update UpdateState, state *ErrorState) Response {
 	requestID, action := safeResponseBinding(request)
 	return Response{
-		SchemaVersion: protocolVersion,
+		SchemaVersion: responseProtocolVersion(request),
 		Kind:          "response",
 		RequestID:     requestID,
 		Action:        action,
@@ -222,4 +283,11 @@ func errorResponse(request Request, status string, runtime *RuntimeState, update
 		Update:        update,
 		Error:         state,
 	}
+}
+
+func responseProtocolVersion(request Request) int {
+	if request.SchemaVersion == legacyProtocolVersion {
+		return legacyProtocolVersion
+	}
+	return protocolVersion
 }
