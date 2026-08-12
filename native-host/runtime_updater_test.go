@@ -120,7 +120,7 @@ func newRuntimeUpdateFixture(t *testing.T) runtimeUpdateFixture {
 	}
 	expected := ExtensionIdentity{
 		Product: "AkuBrowser", ProductVersion: "0.7.9",
-		RuntimeRevision: "source-adapters-v90", BridgeContractVersion: bridgeContract,
+		RuntimeRevision: "source-adapters-v91", BridgeContractVersion: bridgeContract,
 	}
 	root := writeActiveRuntime(t, active)
 	if err := os.MkdirAll(filepath.Join(root, "versions", active.Version), 0o700); err != nil {

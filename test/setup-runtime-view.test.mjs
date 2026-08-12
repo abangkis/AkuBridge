@@ -127,7 +127,7 @@ test("legacy host response derives a packaged update target without external aut
   }, {
     windowsInstallerAvailable: true,
     requiredRuntimeVersion: "0.7.9",
-    requiredRuntimeRevision: "source-adapters-v90",
+    requiredRuntimeRevision: "source-adapters-v91",
   });
 
   assert.equal(state.badge, "Update available");

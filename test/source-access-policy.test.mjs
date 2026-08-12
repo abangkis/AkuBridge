@@ -11,7 +11,7 @@ import {
   sourcesForGrantedOrigins,
 } from "../source-access-policy.js";
 
-test("setup defaults every source on until the user records an explicit choice", () => {
+test("setup retains established defaults while Instagram remains explicit opt-in", () => {
   assert.deepEqual(setupSelectedSources([], undefined), ["x", "linkedin", "facebook"]);
   assert.deepEqual(
     setupSelectedSources(["x", "linkedin"], { schemaVersion: 1, selectedSources: ["linkedin"] }),
@@ -29,6 +29,10 @@ test("source permissions are exact, optional, and independently selectable", () 
   assert.deepEqual(originsForSources(["facebook"]), [
     "https://www.facebook.com/*",
     "https://facebook.com/*",
+  ]);
+  assert.deepEqual(originsForSources(["instagram"]), [
+    "https://www.instagram.com/*",
+    "https://instagram.com/*",
   ]);
   assert.deepEqual(
     sourcesForGrantedOrigins(["https://x.com/*", "https://www.linkedin.com/*"]),
@@ -54,7 +58,8 @@ test("registered scripts contain packaged logic only for approved sources", () =
   assert.equal(scripts.some((script) => script.world === "MAIN"), true);
   assert.equal(scripts.some((script) =>
     script.js.includes("adapters/linkedin-adapter.js")
-    || script.js.includes("adapters/facebook-adapter.js")), false);
+    || script.js.includes("adapters/facebook-adapter.js")
+    || script.js.includes("adapters/instagram-adapter.js")), false);
 });
 
 test("reconciliation derives authority from Chrome grants, not message input", async () => {
@@ -105,6 +110,7 @@ test("reconciliation derives authority from Chrome grants, not message input", a
     { source: "x", permissionGranted: false, scriptRegistered: false, ready: false, reason: "permission_not_granted" },
     { source: "linkedin", permissionGranted: true, scriptRegistered: true, ready: true, reason: "ready" },
     { source: "facebook", permissionGranted: false, scriptRegistered: false, ready: false, reason: "permission_not_granted" },
+    { source: "instagram", permissionGranted: false, scriptRegistered: false, ready: false, reason: "permission_not_granted" },
   ]);
   assert.equal(storageWrites.length, 1);
   assert.equal(await sourceAccessGranted(chromeApi, "linkedin"), true);

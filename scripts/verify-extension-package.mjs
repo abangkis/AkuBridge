@@ -2,7 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { registeredScriptsForSources } from "../source-access-policy.js";
+import {
+  registeredScriptsForSources,
+  sourceAccessDefinitions,
+} from "../source-access-policy.js";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = readJson("manifest.json");
@@ -25,7 +28,7 @@ for (const entry of manifest.content_scripts ?? []) {
   for (const file of entry.js ?? []) addReference(file);
   for (const file of entry.css ?? []) addReference(file);
 }
-for (const entry of registeredScriptsForSources(["x", "linkedin", "facebook"])) {
+for (const entry of registeredScriptsForSources(sourceAccessDefinitions().map(({ id }) => id))) {
   for (const file of entry.js ?? []) addReference(file);
   for (const file of entry.css ?? []) addReference(file);
 }

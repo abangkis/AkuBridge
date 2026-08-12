@@ -40,7 +40,9 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   ]);
   assert.deepEqual(manifest.optional_host_permissions.sort(), [
     "https://facebook.com/*",
+    "https://instagram.com/*",
     "https://www.facebook.com/*",
+    "https://www.instagram.com/*",
     "https://www.linkedin.com/*",
     "https://x.com/*",
   ]);
@@ -62,6 +64,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     "adapters/x-adapter.js",
     "adapters/linkedin-adapter.js",
     "adapters/facebook-adapter.js",
+    "adapters/instagram-adapter.js",
     "aku-browser-tab-bridge.js",
     "x-media-evidence-runtime.js",
     "x-media-evidence-store.js",
@@ -247,7 +250,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v90/);
+  assert.match(contentScript, /source-adapters-v91/);
   assert.match(contentScript, /candidateDiagnostics: normalizeCandidateDiagnostics/);
   assert.match(contentScript, /function normalizeCandidateDiagnostics/);
   assert.match(contentScript, /plan\.scrollFraction \* scrollStepMultiplier/);
@@ -485,6 +488,15 @@ test("X media enrichment stays passive, bounded, and media-only", () => {
   assert.doesNotMatch(lookupHandler, /chrome\.tabs\.(?:create|update)/);
 });
 
+test("extension packaging derives dynamic source files from the permission registry", () => {
+  const verifier = fs.readFileSync(
+    path.join(projectRoot, "scripts", "verify-extension-package.mjs"),
+    "utf8",
+  );
+  assert.match(verifier, /sourceAccessDefinitions\(\)\.map/);
+  assert.doesNotMatch(verifier, /registeredScriptsForSources\(\["x", "linkedin", "facebook"\]\)/);
+});
+
 test("structured media collection runs parallel with a hard failure-soft budget", () => {
   const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
   const contentScript = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
@@ -527,10 +539,10 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /capabilities: response\.capabilities/);
   const capabilities = createBridgeCapabilities({ version: "0.7.9.0", version_name: "0.7.9", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.7.9");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v90");
-  assert.equal(capabilities.buildId, "aku-bridge-0.7.9-source-adapters-v90");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v91");
+  assert.equal(capabilities.buildId, "aku-bridge-0.7.9-source-adapters-v91");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v21", linkedin: "linkedin-dom-v20", facebook: "facebook-dom-v18" });
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v21", linkedin: "linkedin-dom-v20", facebook: "facebook-dom-v18", instagram: "instagram-dom-v1" });
   assert.deepEqual(capabilities.mediaEvidenceAdapterVersions, {
     x: "x-response-evidence-v2",
     linkedin: "linkedin-main-world-video-v1",

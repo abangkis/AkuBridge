@@ -55,6 +55,20 @@ const SOURCE_DEFINITIONS = Object.freeze([
       managedLoad: "recreate_managed_once",
     }),
   }),
+  Object.freeze({
+    id: "instagram",
+    displayName: "Instagram",
+    adapterVersion: "instagram-dom-v1",
+    adapterScript: "adapters/instagram-adapter.js",
+    supportScripts: Object.freeze([]),
+    feedUrl: "https://www.instagram.com/",
+    matchPatterns: Object.freeze(["https://www.instagram.com/*", "https://instagram.com/*"]),
+    hostnames: Object.freeze(["www.instagram.com", "instagram.com"]),
+    canonicalFeedPath: /^\/$/,
+    nativePostPath: /^\/(?:p|reel|tv)\/[A-Za-z0-9_-]+\/?$/,
+    hydration: Object.freeze({ defaultTimeoutMs: 15_000, minTimeoutMs: 10_000, maxTimeoutMs: 20_000 }),
+    readiness: Object.freeze({ initialTimeoutMs: 10_000, activateWhenBackground: true }),
+  }),
 ]);
 
 export function sourceDefinitions() {

@@ -21,6 +21,7 @@ test("source catalog exposes Facebook without changing the X media capability", 
     x: "x-dom-v21",
     linkedin: "linkedin-dom-v20",
     facebook: "facebook-dom-v18",
+    instagram: "instagram-dom-v1",
   });
   assert.equal(sourceForUrl("https://www.facebook.com/"), "facebook");
   assert.equal(isCanonicalFeed("https://www.facebook.com/", "facebook"), true);
@@ -34,7 +35,7 @@ test("optional MV3 source authority stays synchronized with the generic source c
   for (const pattern of sourceMatchPatterns()) {
     assert.equal(optionalHosts.has(pattern), true, `optional authority is missing ${pattern}`);
   }
-  const contentFiles = new Set(registeredScriptsForSources(["x", "linkedin", "facebook"])
+  const contentFiles = new Set(registeredScriptsForSources(["x", "linkedin", "facebook", "instagram"])
     .flatMap((entry) => entry.js ?? []));
   for (const file of sourceRuntimeScripts()) {
     assert.equal(contentFiles.has(file), true, `registered source logic is missing ${file}`);

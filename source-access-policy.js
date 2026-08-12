@@ -91,6 +91,32 @@ const SOURCE_ACCESS = Object.freeze({
       }),
     ]),
   }),
+  instagram: Object.freeze({
+    displayName: "Instagram",
+    defaultSelected: false,
+    origins: Object.freeze([
+      "https://www.instagram.com/*",
+      "https://instagram.com/*",
+    ]),
+    scripts: Object.freeze([
+      Object.freeze({
+        id: "aku-source-instagram-feed",
+        matches: ["https://www.instagram.com/*", "https://instagram.com/*"],
+        js: [
+          "bounded-capture-policy.js",
+          "capture-quality-policy.js",
+          "source-adapter-runtime.js",
+          "media-post-processor.js",
+          "adapters/instagram-adapter.js",
+          "source-freshness-runtime.js",
+          "media-acquisition-engine.js",
+          "content-script.js",
+        ],
+        runAt: "document_idle",
+        world: "ISOLATED",
+      }),
+    ]),
+  }),
 });
 
 export function sourceAccessDefinitions() {
@@ -104,7 +130,7 @@ export function sourceAccessDefinitions() {
 export function setupSelectedSources(grantedSources, savedSelection) {
   const allSources = Object.keys(SOURCE_ACCESS);
   if (!savedSelection || savedSelection.schemaVersion !== 1 || !Array.isArray(savedSelection.selectedSources)) {
-    return allSources;
+    return allSources.filter((source) => SOURCE_ACCESS[source].defaultSelected !== false);
   }
   const selected = new Set(normalizeSources(savedSelection.selectedSources));
   return normalizeSources(grantedSources).filter((source) => selected.has(source));

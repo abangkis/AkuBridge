@@ -1,7 +1,7 @@
 # AkuBridge
 
 Current preview identity: **`0.7.9`** / Chrome manifest
-**`0.7.9.0`** / runtime **`source-adapters-v90`**.
+**`0.7.9.0`** / runtime **`source-adapters-v91`**.
 
 Runtime v73 adds bounded background command dispatch for AkuBrowser Auto
 Update. After a trusted local AkuBrowser page configures the loopback endpoint
@@ -18,7 +18,7 @@ Source readiness is registry-driven. Sidecar commands may tune each source's
 hydration wait in whole seconds inside that source's fixed default +/- 5 second
 window; AkuBridge clamps the value again before using it.
 
-AkuBridge is the read-only Chrome extension used by AkuBrowser to collect a bounded set of visible observations from X, LinkedIn, or Facebook.
+AkuBridge is the read-only Chrome extension used by AkuBrowser to collect a bounded set of visible observations from X, LinkedIn, Facebook, or Instagram.
 
 ## Chrome Store runtime bootstrap
 
@@ -48,7 +48,7 @@ and [Build Week evidence](https://github.com/abangkis/AkuBrowser/blob/main/BUILD
 
 ## Current source-adapter architecture
 
-X, LinkedIn, and Facebook DOM knowledge is separated behind one revisioned adapter
+X, LinkedIn, Facebook, and Instagram DOM knowledge is separated behind one revisioned adapter
 registry. The adapters are source-specific parsers, but they do not construct
 or validate the complete bridge observation by themselves.
 
@@ -58,9 +58,11 @@ flowchart LR
     DOM --> XA["X adapter<br/>x-dom-v21<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
     DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v20<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v2"]
     DOM --> FA["Facebook adapter<br/>facebook-dom-v18<br/>facebook-media-acquisition-v2"]
+    DOM --> IA["Instagram adapter<br/>instagram-dom-v1<br/>instagram-media-acquisition-v1"]
     XA --> R["Source-adapter registry"]
     LA --> R
     FA --> R
+    IA --> R
     R --> F["Generic freshness recovery<br/>wake -> reveal -> proof"]
     F --> C["Shared content runtime"]
     C --> Q["Generic evidence admission<br/>social-post-v2"]
@@ -211,7 +213,7 @@ match, proves process ownership. A loopback-only portable runtime is explicitly
 shown as unmanaged: Setup tells the user to stop it manually and offers
 **Check after stopping** instead of sending installed-host control commands.
 
-The adapter foundation separates X, LinkedIn, and Facebook DOM knowledge into source adapters loaded behind a common registry and catalog. The content runtime owns bounded scrolling, restoration, evidence normalization, and messaging; each adapter owns source matching, candidate discovery, author discovery, media exclusions, and pending-content labels.
+The adapter foundation separates X, LinkedIn, Facebook, and Instagram DOM knowledge into source adapters loaded behind a common registry and catalog. The content runtime owns bounded scrolling, restoration, evidence normalization, and messaging; each adapter owns source matching, candidate discovery, author discovery, media exclusions, and pending-content labels. Instagram is opt-in and initially uses native-post fallback for blob-backed video while image evidence remains allowlisted to Instagram CDN hosts.
 
 `package:verify` validates Manifest V3 references, local module imports,
 product `version_name` alignment, and emits a SHA-256 file manifest plus

@@ -30,7 +30,7 @@ func TestStatusKeepsOlderContractCompatibleRuntimeUsableAndOffersUpdate(t *testi
 	controller := testController(root, &sequenceProber{results: []probeStep{{result: readyProbe()}}}, &recordingLauncher{})
 	identity := validRequest("status").Extension
 	identity.ProductVersion = "0.7.9"
-	identity.RuntimeRevision = "source-adapters-v90"
+	identity.RuntimeRevision = "source-adapters-v91"
 
 	outcome := controller.Status(context.Background(), identity)
 
@@ -46,7 +46,7 @@ func TestStatusKeepsOlderContractCompatibleRuntimeUsableAndOffersUpdate(t *testi
 func TestStatusDoesNotDowngradeNewerRuntimeWithSameContract(t *testing.T) {
 	active := activeFixture()
 	active.Version = "0.7.9"
-	active.RuntimeRevision = "source-adapters-v90"
+	active.RuntimeRevision = "source-adapters-v91"
 	root := writeActiveRuntime(t, active)
 	probe := readyProbe()
 	probe.Health.Version = active.Version
@@ -64,7 +64,7 @@ func TestStoppedOlderRuntimeReportsExplicitUpdateTarget(t *testing.T) {
 	controller := testController(root, &sequenceProber{results: []probeStep{{result: ProbeResult{Reachable: false}}}}, &recordingLauncher{})
 	identity := validRequest("status").Extension
 	identity.ProductVersion = "0.7.9"
-	identity.RuntimeRevision = "source-adapters-v90"
+	identity.RuntimeRevision = "source-adapters-v91"
 
 	outcome := controller.Status(context.Background(), identity)
 
@@ -133,7 +133,7 @@ func TestShutdownUsesInstalledRuntimeOwnershipAcrossReleaseVersions(t *testing.T
 	controller.UpdateControl = control
 	identity := validRequest("shutdown_if_idle").Extension
 	identity.ProductVersion = "0.7.9"
-	identity.RuntimeRevision = "source-adapters-v90"
+	identity.RuntimeRevision = "source-adapters-v91"
 
 	outcome := controller.ShutdownIfIdle(context.Background(), identity)
 
@@ -149,7 +149,7 @@ func TestEnsureDelegatesExactIncompatibleTupleToSignedUpdater(t *testing.T) {
 	root := writeActiveRuntime(t, activeFixture())
 	updated := ActiveRuntime{
 		SchemaVersion: 1, Channel: "stable", Version: "0.7.9",
-		RuntimeRevision: "source-adapters-v90", BridgeContractVersion: bridgeContract,
+		RuntimeRevision: "source-adapters-v91", BridgeContractVersion: bridgeContract,
 		RollbackVersion: stringPointer("0.7.4"),
 	}
 	updater := &recordingRuntimeUpdater{
@@ -166,7 +166,7 @@ func TestEnsureDelegatesExactIncompatibleTupleToSignedUpdater(t *testing.T) {
 	controller.Updater = updater
 	identity := validRequest("ensure_runtime").Extension
 	identity.ProductVersion = "0.7.9"
-	identity.RuntimeRevision = "source-adapters-v90"
+	identity.RuntimeRevision = "source-adapters-v91"
 
 	outcome := controller.Ensure(context.Background(), identity)
 
@@ -304,7 +304,7 @@ func TestRuntimeControlTokenCreationConvergesAcrossConcurrentHosts(t *testing.T)
 func TestEnsureRollsBackAnUnconfirmedRuntimeAfterHealthFailure(t *testing.T) {
 	active := activeFixture()
 	active.Version = "0.7.9"
-	active.RuntimeRevision = "source-adapters-v90"
+	active.RuntimeRevision = "source-adapters-v91"
 	active.RollbackVersion = stringPointer("0.7.4")
 	root := writeActiveRuntime(t, active)
 	updater := &recordingRuntimeUpdater{pending: true}
@@ -317,7 +317,7 @@ func TestEnsureRollsBackAnUnconfirmedRuntimeAfterHealthFailure(t *testing.T) {
 	controller.Updater = updater
 	identity := validRequest("ensure_runtime").Extension
 	identity.ProductVersion = "0.7.9"
-	identity.RuntimeRevision = "source-adapters-v90"
+	identity.RuntimeRevision = "source-adapters-v91"
 
 	outcome := controller.Ensure(context.Background(), identity)
 

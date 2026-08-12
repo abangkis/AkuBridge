@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v14";
+  const runtimeRevision = "source-adapters-v15";
   const supportedContentFamilies = new Set(["feed_post"]);
   const supportedEvidenceModalities = new Set([
     "text",

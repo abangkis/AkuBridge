@@ -32,7 +32,7 @@ test("native runtime request carries only the bounded AkuBrowser identity contra
     extension: {
       product: "AkuBrowser",
       productVersion: "0.7.4",
-      runtimeRevision: "source-adapters-v90",
+      runtimeRevision: "source-adapters-v91",
       bridgeContractVersion: "aku-browser.bridge.v2",
     },
   });
@@ -82,7 +82,7 @@ test("a native host held by security software times out instead of hanging setup
       },
     },
     productVersion: "0.7.9",
-    runtimeRevision: "source-adapters-v90",
+    runtimeRevision: "source-adapters-v91",
     now: () => FIXED_NOW,
     randomUUID: () => FIXED_REQUEST_ID,
     nativeMessageTimeoutMs: 1_000,
@@ -116,7 +116,7 @@ test("a native host that rejects this extension requests an installer repair", a
       },
     },
     productVersion: "0.7.9",
-    runtimeRevision: "source-adapters-v90",
+    runtimeRevision: "source-adapters-v91",
     now: () => FIXED_NOW,
     randomUUID: () => FIXED_REQUEST_ID,
   });

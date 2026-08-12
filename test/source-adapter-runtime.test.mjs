@@ -13,6 +13,7 @@ test("source adapters register independently behind one contract", () => {
   runScript(context, path.join("adapters", "x-adapter.js"));
   runScript(context, path.join("adapters", "linkedin-adapter.js"));
   runScript(context, path.join("adapters", "facebook-adapter.js"));
+  runScript(context, path.join("adapters", "instagram-adapter.js"));
 
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
@@ -20,6 +21,7 @@ test("source adapters register independently behind one contract", () => {
       { source: "x", version: "x-dom-v21" },
       { source: "linkedin", version: "linkedin-dom-v20" },
       { source: "facebook", version: "facebook-dom-v18" },
+      { source: "instagram", version: "instagram-dom-v1" },
     ],
   );
   assert.equal(context.AkuSourceAdapters.get("x").matchesPage(), true);
@@ -105,18 +107,20 @@ test("generic platform-origin contract preserves kind and object scope", () => {
   }]);
 });
 
-test("X, LinkedIn, and Facebook expose platform origin labels through one presentation field", () => {
+test("every source exposes platform origin labels through one presentation field", () => {
   const context = createBrowserContext();
   runScript(context, "source-adapter-runtime.js");
   runScript(context, path.join("adapters", "x-adapter.js"));
   runScript(context, path.join("adapters", "linkedin-adapter.js"));
   runScript(context, path.join("adapters", "facebook-adapter.js"));
+  runScript(context, path.join("adapters", "instagram-adapter.js"));
   const compactText = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
   const helpers = { compactText, normalizeHttpUrl: (value) => value ?? "" };
   for (const [source, label, expectedKind] of [
     ["x", "Made with AI", "platform_ai_label"],
     ["linkedin", "Content Credentials", "content_credentials"],
     ["facebook", "AI info", "platform_ai_label"],
+    ["instagram", "AI info", "platform_ai_label"],
   ]) {
     const element = {
       innerText: label,
@@ -142,7 +146,7 @@ test("a reinjected adapter runtime replaces the stale registry generation", () =
   context.AkuSourceAdapters = previous;
   runScript(context, "source-adapter-runtime.js");
   assert.notEqual(context.AkuSourceAdapters, previous);
-  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v14");
+  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v15");
   assert.deepEqual([...context.AkuSourceAdapters.capabilities()], []);
 });
 
@@ -152,12 +156,14 @@ test("the complete adapter bundle can replace its current registry generation", 
   runScript(context, path.join("adapters", "x-adapter.js"));
   runScript(context, path.join("adapters", "linkedin-adapter.js"));
   runScript(context, path.join("adapters", "facebook-adapter.js"));
+  runScript(context, path.join("adapters", "instagram-adapter.js"));
   const previous = context.AkuSourceAdapters;
 
   runScript(context, "source-adapter-runtime.js");
   runScript(context, path.join("adapters", "x-adapter.js"));
   runScript(context, path.join("adapters", "linkedin-adapter.js"));
   runScript(context, path.join("adapters", "facebook-adapter.js"));
+  runScript(context, path.join("adapters", "instagram-adapter.js"));
 
   assert.notEqual(context.AkuSourceAdapters, previous);
   assert.deepEqual(
@@ -166,6 +172,7 @@ test("the complete adapter bundle can replace its current registry generation", 
       { source: "x", version: "x-dom-v21" },
       { source: "linkedin", version: "linkedin-dom-v20" },
       { source: "facebook", version: "facebook-dom-v18" },
+      { source: "instagram", version: "instagram-dom-v1" },
     ],
   );
 });
