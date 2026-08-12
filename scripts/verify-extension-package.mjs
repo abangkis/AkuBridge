@@ -21,7 +21,7 @@ const pending = [];
 const referenced = new Set();
 addReference("manifest.json");
 addReference(manifest.background?.service_worker);
-addReference(manifest.options_ui?.page);
+addReference(manifest.options_page);
 for (const file of Object.values(manifest.icons ?? {})) addReference(file);
 for (const file of Object.values(manifest.action?.default_icon ?? {})) addReference(file);
 for (const entry of manifest.content_scripts ?? []) {

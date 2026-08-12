@@ -116,8 +116,8 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   const setupScript = fs.readFileSync(path.join(projectRoot, "setup.js"), "utf8");
   const setupRuntimeView = fs.readFileSync(path.join(projectRoot, "setup-runtime-view.js"), "utf8");
 
-  assert.equal(manifest.options_ui.page, "setup.html");
-  assert.equal(manifest.options_ui.open_in_tab, true);
+  assert.equal(manifest.options_page, "setup.html");
+  assert.equal(manifest.options_ui, undefined);
   assert.match(setupHtml, /setup\.css/);
   assert.match(setupHtml, /setup\.js/);
   assert.match(setupHtml, /rel="icon" type="image\/svg\+xml" href="icons\/setup-favicon\.svg"/);

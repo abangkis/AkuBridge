@@ -35,10 +35,7 @@
     "service_worker": "service-worker.js",
     "type": "module"
   },
-  "options_ui": {
-    "page": "setup.html",
-    "open_in_tab": true
-  },
+  "options_page": "setup.html",
   "content_scripts": [
     {
       "matches": [
