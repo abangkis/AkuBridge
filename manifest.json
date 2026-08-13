@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "AkuBrowser",
   "short_name": "AkuBrowser",
-  "version": "0.7.9.0",
-  "version_name": "0.7.9",
+  "version": "0.8.0.0",
+  "version_name": "0.8.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAi+2n3emVPzEGx3qvX0nny73+5buc7wlnWbmMznhpK0ULhvv9gEKh7JQySTEFSCgu+qkD7+WJQiWJaAUi1jVpRQeFr0tQay/dLNdtS7XsSDOF5hOAQKILoDtKraaHXhdluee4nTVjS0AUHb+Qmknrgx/PIOW4z/tfeaGfO+esQUFN/BbWPhMwjVPUWVpxg9eQMcH74ivVXAy9PD1TWSYI73aqB6vgLetS9IWYEvu5q9/SX8lh9DCPyJQML/LM9e5CdgalFvoFunceFe09W9jfYNeaUm4kQEjYeBhDRwsusyniqbTYm3WlK4KnRIc0hhjAsqxbEfqnuAzsjfeJGso85wIDAQAB",
   "description": "Build a private AI feed from the X, LinkedIn, Facebook, and Instagram sources you explicitly enable.",
   "icons": {

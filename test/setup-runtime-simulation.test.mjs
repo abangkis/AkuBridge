@@ -30,7 +30,7 @@ test("setup simulates update, stopped, and running runtime states", () => {
   const running = simulatedRuntimeOutcome(`?simulateRuntime=${RUNTIME_RUNNING_SIMULATION}`);
 
   assert.equal(update.state, "runtime_incompatible");
-  assert.equal(update.response.update.currentVersion, "0.7.7");
+  assert.equal(update.response.update.currentVersion, "0.7.9");
   assert.equal(stopped.response.runtime.processState, "stopped");
   assert.equal(running.state, "runtime_ready");
   assert.equal(running.response.runtime.processState, "ready");
