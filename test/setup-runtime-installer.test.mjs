@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   companionInstallerVersion,
   runtimeInstallerDownload,
+  runtimeLocalAcceptanceInstaller,
   runtimePortableFallbackURL,
 } from "../setup-runtime-installer.js";
 
@@ -59,6 +60,21 @@ test("installer resolver fails closed for unsupported platform or version", () =
   assert.equal(runtimePortableFallbackURL({
     platform: "windows",
     sidecarBootstrapVersion: "latest",
+  }), "");
+});
+
+test("pre-Store acceptance uses explicit local companion installer names", () => {
+  assert.equal(runtimeLocalAcceptanceInstaller({
+    platform: "windows",
+    sidecarBootstrapVersion: "0.8.0",
+  }), "AkuBrowserRuntimeSetup-0.8.0-unsigned-local.exe");
+  assert.equal(runtimeLocalAcceptanceInstaller({
+    platform: "macos",
+    sidecarBootstrapVersion: "0.8.0",
+  }), "AkuBrowserRuntimeSetup-0.8.0-macos-universal-unsigned-local.pkg");
+  assert.equal(runtimeLocalAcceptanceInstaller({
+    platform: "linux",
+    sidecarBootstrapVersion: "0.8.0",
   }), "");
 });
 

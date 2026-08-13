@@ -218,6 +218,11 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.match(setupScript, /RUNTIME_SETUP_ACTIONS\.RESOLVE_CONFLICT/);
   assert.match(setupScript, /runtimeConflictDialog\.showModal/);
   assert.match(setupScript, /runtimePortableFallbackURL/);
+  assert.match(setupScript, /preStoreAcceptance = Boolean\(manifest\.key\)/);
+  assert.match(setupScript, /Run the local acceptance installer/);
+  assert.match(setupScript, /this pre-Store package does not download an unpublished GitHub asset/);
+  assert.match(setupScript, /Show local installer/);
+  assert.match(setupScript, /preStoreAcceptance\s*\?\s*""/);
   assert.match(setupScript, /windowsAntivirusNote\.hidden = !windowsRuntimeInstallerAvailable/);
   assert.match(setupScript, /runtimeInstallerAttempted\.v1/);
   assert.match(setupScript, /runtimeInstallerAttempted/);
@@ -227,6 +232,7 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.doesNotMatch(setupScript, /hostUpgradeRequired:\s*currentRuntimeOutcome/);
   assert.match(setupScript, /installerAvailable:\s*runtimeInstallerAvailable/);
   assert.match(setupRuntimeInstaller, /AkuBrowserRuntimeSetup-\$\{version\}\.exe/);
+  assert.match(setupRuntimeInstaller, /AkuBrowserRuntimeSetup-\$\{version\}-unsigned-local\.exe/);
   assert.match(setupRuntimeInstaller, /AkuBrowserRuntimeSetup-\$\{version\}-macos-universal\.pkg/);
   assert.match(
     setupHtml,

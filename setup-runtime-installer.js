@@ -4,10 +4,12 @@ const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/;
 const PLATFORM_ASSETS = Object.freeze({
   windows: Object.freeze({
     pinnedInstaller: (version) => `AkuBrowserRuntimeSetup-${version}.exe`,
+    localAcceptanceInstaller: (version) => `AkuBrowserRuntimeSetup-${version}-unsigned-local.exe`,
     portable: (version) => `AkuBrowser-${version}-windows-x64.zip`,
   }),
   macos: Object.freeze({
     pinnedInstaller: (version) => `AkuBrowserRuntimeSetup-${version}-macos-universal.pkg`,
+    localAcceptanceInstaller: (version) => `AkuBrowserRuntimeSetup-${version}-macos-universal-unsigned-local.pkg`,
     portable: (version) => `AkuBrowser-${version}-macos-universal.zip`,
   }),
 });
@@ -39,6 +41,15 @@ export function runtimeInstallerDownload({
     name,
     url: `${RELEASES_ROOT}/download/v${sidecarBootstrapVersion}/${name}`,
   });
+}
+
+export function runtimeLocalAcceptanceInstaller({
+  platform,
+  sidecarBootstrapVersion,
+} = {}) {
+  const assets = PLATFORM_ASSETS[platform];
+  if (!assets || !VERSION_PATTERN.test(sidecarBootstrapVersion ?? "")) return "";
+  return assets.localAcceptanceInstaller(sidecarBootstrapVersion);
 }
 
 export function runtimePortableFallbackURL({

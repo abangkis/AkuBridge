@@ -20,6 +20,7 @@ import {
 import {
   companionInstallerVersion,
   runtimeInstallerDownload,
+  runtimeLocalAcceptanceInstaller,
   runtimePortableFallbackURL,
 } from "./setup-runtime-installer.js";
 import {
@@ -42,11 +43,18 @@ const setupPlatform = detectSetupPlatform(globalThis.navigator);
 const client = createChromeNativeRuntimeClient(chrome);
 const manifest = chrome.runtime.getManifest();
 const productVersion = manifest.version_name || manifest.version;
+const preStoreAcceptance = Boolean(manifest.key);
 const pinnedRuntimeInstaller = runtimeInstallerDownload({
   platform: setupPlatform,
   sidecarBootstrapVersion: SIDECAR_BOOTSTRAP_VERSION,
 });
-const runtimeInstallerAvailable = Boolean(pinnedRuntimeInstaller.url);
+const localAcceptanceInstallerName = runtimeLocalAcceptanceInstaller({
+  platform: setupPlatform,
+  sidecarBootstrapVersion: SIDECAR_BOOTSTRAP_VERSION,
+});
+const runtimeInstallerAvailable = preStoreAcceptance
+  ? Boolean(localAcceptanceInstallerName)
+  : Boolean(pinnedRuntimeInstaller.url);
 const windowsRuntimeInstallerAvailable = setupPlatform === SETUP_PLATFORMS.WINDOWS;
 const WINDOWS_INSTALLER_COMPLETION_GUIDANCE = [
   "Complete one Windows Setup flow.",
@@ -223,6 +231,22 @@ async function downloadRuntimeInstaller() {
   runtimeAction.disabled = true;
   try {
     manualRuntimeFallback.hidden = true;
+    if (preStoreAcceptance) {
+      runtimeInstallerAttempted = true;
+      globalThis.sessionStorage.setItem(RUNTIME_INSTALLER_ATTEMPT_KEY, "1");
+      currentRuntimeAction = RUNTIME_SETUP_ACTIONS.CHECK;
+      runtimeAction.textContent = "Check runtime";
+      installerNote.hidden = false;
+      installerNoteTitle.textContent = "Run the local acceptance installer";
+      summary.textContent = "The pre-Store runtime installer is in this release kit.";
+      detail.textContent = [
+        `Open ${localAcceptanceInstallerName} from the acceptance folder, finish setup, return here, then select Check runtime.`,
+        setupPlatform === SETUP_PLATFORMS.WINDOWS
+          ? "If Avast opens another Setup window, select No or Cancel; do not run Repair twice."
+          : "Do not upload or distribute this development-identity installer.",
+      ].join(" ");
+      return;
+    }
     const installer = runtimeInstallerDownload({
       platform: setupPlatform,
       sidecarBootstrapVersion: companionInstallerVersion({
@@ -260,16 +284,23 @@ function applyPlatformCopy() {
   windowsAntivirusNote.hidden = !windowsRuntimeInstallerAvailable;
   // Every bootstrap and repair lane stays pinned to the companion version
   // packaged with this Bridge. The update feed is the only "latest" authority.
-  manualBundleDownload.href = runtimePortableFallbackURL({
-    platform: setupPlatform,
-    sidecarBootstrapVersion: SIDECAR_BOOTSTRAP_VERSION,
-  });
+  manualBundleDownload.href = preStoreAcceptance
+    ? ""
+    : runtimePortableFallbackURL({
+        platform: setupPlatform,
+        sidecarBootstrapVersion: SIDECAR_BOOTSTRAP_VERSION,
+      });
   if (setupPlatform === SETUP_PLATFORMS.WINDOWS) {
-    runtimePlatformDescription.textContent = [
-      "The Windows runtime installer includes AkuSidecar, the Native Messaging Host,",
-      "and the C2PA verifier. You install and prepare Codex App separately.",
-    ].join(" ");
-    installerStepOpen.innerHTML = `Open <code>${pinnedRuntimeInstaller.name}</code> when the download finishes.`;
+    runtimePlatformDescription.textContent = preStoreAcceptance
+      ? "This frozen pre-Store package uses the matching development runtime included in the same acceptance kit."
+      : [
+          "The Windows runtime installer includes AkuSidecar, the Native Messaging Host,",
+          "and the C2PA verifier. You install and prepare Codex App separately.",
+        ].join(" ");
+    const installerName = preStoreAcceptance ? localAcceptanceInstallerName : pinnedRuntimeInstaller.name;
+    installerStepOpen.innerHTML = preStoreAcceptance
+      ? `Open <code>${installerName}</code> from the acceptance folder.`
+      : `Open <code>${installerName}</code> when the download finishes.`;
     installerStepRun.textContent = WINDOWS_INSTALLER_COMPLETION_GUIDANCE;
     codexPlatformDescription.textContent = [
       "Select Check Codex to inspect this computer.",
@@ -329,9 +360,14 @@ function configureInstallerGuidance(state, runtimeView) {
       outcome: currentRuntimeOutcome,
     }),
   });
+  const installerName = preStoreAcceptance ? localAcceptanceInstallerName : installer.name;
   if (state === "runtime_incompatible" && runtimeView.actionKind === RUNTIME_SETUP_ACTIONS.INSTALL) {
-    installerNoteTitle.textContent = "Install the matching AkuBrowser Runtime";
-    installerStepOpen.innerHTML = `Open <code>${installer.name}</code> after the download finishes.`;
+    installerNoteTitle.textContent = preStoreAcceptance
+      ? "Run the matching local acceptance runtime"
+      : "Install the matching AkuBrowser Runtime";
+    installerStepOpen.innerHTML = preStoreAcceptance
+      ? `Open <code>${installerName}</code> from the acceptance folder.`
+      : `Open <code>${installerName}</code> after the download finishes.`;
     installerStepRun.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
       ? "Complete the disclosed unsigned macOS setup to replace or repair the outdated runtime build."
       : WINDOWS_INSTALLER_COMPLETION_GUIDANCE;
@@ -345,8 +381,12 @@ function configureInstallerGuidance(state, runtimeView) {
     installerStepCheck.textContent = "Return here and select Try again.";
     return;
   }
-  installerNoteTitle.textContent = `Run the ${platformName} installer after downloading it`;
-  installerStepOpen.innerHTML = `Open <code>${installer.name}</code> when the download finishes.`;
+  installerNoteTitle.textContent = preStoreAcceptance
+    ? `Run the local ${platformName} acceptance installer`
+    : `Run the ${platformName} installer after downloading it`;
+  installerStepOpen.innerHTML = preStoreAcceptance
+    ? `Open <code>${installerName}</code> from the acceptance folder.`
+    : `Open <code>${installerName}</code> when the download finishes.`;
   installerStepRun.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
     ? "Complete the unsigned macOS setup. If blocked, use Privacy & Security > Open Anyway; do not disable Gatekeeper."
     : WINDOWS_INSTALLER_COMPLETION_GUIDANCE;
@@ -375,13 +415,15 @@ function setChecking(timeoutMs, { stopping = false } = {}) {
 
 function renderOutcome(outcome) {
   currentRuntimeOutcome = outcome;
-  manualBundleDownload.href = runtimePortableFallbackURL({
-    platform: setupPlatform,
-    sidecarBootstrapVersion: companionInstallerVersion({
-      sidecarBootstrapVersion: SIDECAR_BOOTSTRAP_VERSION,
-      outcome,
-    }),
-  });
+  manualBundleDownload.href = preStoreAcceptance
+    ? ""
+    : runtimePortableFallbackURL({
+        platform: setupPlatform,
+        sidecarBootstrapVersion: companionInstallerVersion({
+          sidecarBootstrapVersion: SIDECAR_BOOTSTRAP_VERSION,
+          outcome,
+        }),
+      });
   if (outcome.state === "runtime_ready") {
     runtimeRetryAttempts = 0;
     runtimeInstallerAttempted = false;
@@ -399,13 +441,21 @@ function renderOutcome(outcome) {
   currentRuntimeAction = runtimeView.actionKind;
   currentRuntimeActionRetries = runtimeView.retryAction;
   configureInstallerGuidance(outcome.state, runtimeView);
-  summary.textContent = runtimeView.summary;
-  detail.textContent = runtimeView.detail;
-  runtimeAction.textContent = runtimeView.actionLabel;
+  const localInstallerAction = preStoreAcceptance
+    && runtimeView.actionKind === RUNTIME_SETUP_ACTIONS.INSTALL;
+  summary.textContent = localInstallerAction
+    ? "The matching local runtime installer is required."
+    : runtimeView.summary;
+  detail.textContent = localInstallerAction
+    ? `Use ${localAcceptanceInstallerName} from this release kit; this pre-Store package does not download an unpublished GitHub asset.`
+    : runtimeView.detail;
+  runtimeAction.textContent = localInstallerAction
+    ? "Show local installer"
+    : runtimeView.actionLabel;
   runtimeAction.disabled = runtimeView.actionDisabled;
   installerNote.hidden = !runtimeView.showInstallerNote;
   windowsAntivirusNote.hidden = !runtimeView.showSecurityNotice;
-  manualRuntimeFallback.hidden = !runtimeView.showManualFallback;
+  manualRuntimeFallback.hidden = preStoreAcceptance || !runtimeView.showManualFallback;
   runtimeConflictNote.hidden = !runtimeView.showConflictNotice;
   runtimeExecutablePath.textContent = runtimeView.executableLocation;
   runtimeExecutableLocationHint.textContent = runtimeView.executableLocationHint;
