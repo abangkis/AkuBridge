@@ -263,6 +263,10 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
     path.join(projectRoot, "adapters", "x-adapter.js"),
     "utf8",
   );
+  const serviceWorker = fs.readFileSync(
+    path.join(projectRoot, "service-worker.js"),
+    "utf8",
+  );
 
   assert.match(
     linkedInAdapter,
@@ -273,7 +277,9 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v93/);
+  assert.match(contentScript, /source-adapters-v98/);
+  assert.match(contentScript, /AKU_BROWSER_RECOVER_SOURCE_READINESS/);
+  assert.match(serviceWorker, /recoverSourceReadiness/);
   assert.match(contentScript, /candidateDiagnostics: normalizeCandidateDiagnostics/);
   assert.match(contentScript, /function normalizeCandidateDiagnostics/);
   assert.match(contentScript, /plan\.scrollFraction \* scrollStepMultiplier/);
@@ -566,8 +572,8 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /protocolMajor: sidecarProtocolMajor/);
   const capabilities = createBridgeCapabilities({ version: "0.7.9.0", version_name: "0.7.9", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.7.9");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v93");
-  assert.equal(capabilities.buildId, "aku-bridge-0.7.9-source-adapters-v93");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v98");
+  assert.equal(capabilities.buildId, "aku-bridge-0.7.9-source-adapters-v98");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.equal(capabilities.protocolMajor, 2);
   assert.equal(capabilities.protocolMinor, 0);
@@ -583,7 +589,7 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.equal("protocolMinor" in legacyCapabilities, false);
   assert.equal("updateCapabilities" in legacyCapabilities, false);
   assert.equal(legacyCapabilities.contractVersion, "aku-browser.bridge.v2");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v22", linkedin: "linkedin-dom-v20", facebook: "facebook-dom-v18", instagram: "instagram-dom-v3" });
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v22", linkedin: "linkedin-dom-v20", facebook: "facebook-dom-v18", instagram: "instagram-dom-v4" });
   assert.deepEqual(capabilities.mediaEvidenceAdapterVersions, {
     x: "x-response-evidence-v2",
     linkedin: "linkedin-main-world-video-v1",
@@ -601,6 +607,13 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.ok(capabilities.actions.includes("dispatch_background_commands"));
   assert.match(tabBridge, /AKU_BRIDGE_CONFIGURE_BACKGROUND_DISPATCH/);
   assert.match(worker, /pollBackgroundDispatch/);
+  assert.match(worker, /could not restore background dispatch configuration/);
+  assert.match(worker, /background dispatch startup poll deferred/);
+  assert.match(worker, /AkuBridge background command failed/);
+  assert.match(worker, /backgroundDispatchStageError\("heartbeat_refresh"/);
+  assert.match(worker, /backgroundDispatchStageError\("lease_reconciliation"/);
+  assert.match(worker, /backgroundDispatchStageError\("pending_command_poll"/);
+  assert.match(worker, /wrapped\.captureSurfaceLifecycle = lifecycleEvents/);
   assert.match(worker, /api\/bridge\/commands\/pending/);
   assert.match(worker, /rememberBackgroundLease/);
   assert.match(worker, /releaseTerminalBackgroundLease/);

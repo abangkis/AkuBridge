@@ -130,9 +130,16 @@ const NATIVE_RUNTIME_DISTRIBUTION = nativeRuntimeDistribution(chrome.runtime.get
 void resumePendingSelfReload().catch((error) => {
   console.error("AkuBridge could not resume the pending AkuBrowser tab reload.", error);
 });
-void restoreBackgroundDispatch().catch((error) => {
-  console.error("AkuBridge could not restore background dispatch.", error);
-});
+void restoreBackgroundDispatch()
+  .then((restored) => {
+    if (!restored) return;
+    void pollBackgroundDispatch().catch((error) => {
+      console.warn("AkuBridge background dispatch startup poll deferred.", error);
+    });
+  })
+  .catch((error) => {
+    console.error("AkuBridge could not restore background dispatch configuration.", error);
+  });
 void nativeRuntimeScheduler.restore().catch(() => {
   console.warn("AkuBridge could not restore the native runtime update schedule.");
 });
@@ -636,13 +643,13 @@ async function configureBackgroundDispatch(endpoint, token, protocolMajor = 0) {
 async function restoreBackgroundDispatch() {
   const stored = await chrome.storage.local.get(BACKGROUND_DISPATCH_CONFIG_KEY);
   const config = stored?.[BACKGROUND_DISPATCH_CONFIG_KEY];
-  if (!config) return;
+  if (!config) return false;
   try {
     assertEndpoint(config.endpoint);
     if (typeof config.token !== "string" || config.token.length < 32) throw new Error("invalid stored token");
   } catch {
     await chrome.storage.local.remove(BACKGROUND_DISPATCH_CONFIG_KEY);
-    return;
+    return false;
   }
   const reconciliation = await managedCaptureWindow.reconcile();
   if (typeof config.activeLeaseId === "string") {
@@ -656,7 +663,7 @@ async function restoreBackgroundDispatch() {
     ).catch(() => undefined);
   }
   await chrome.alarms.create(BACKGROUND_DISPATCH_ALARM, { periodInMinutes: 1 });
-  await pollBackgroundDispatch();
+  return true;
 }
 
 async function pollBackgroundDispatch() {
@@ -666,10 +673,28 @@ async function pollBackgroundDispatch() {
   if (!config) return;
   backgroundDispatching = true;
   try {
-    if (!(await refreshBackgroundHeartbeat(config))) return;
-    config = await releaseTerminalBackgroundLease(config);
+    let heartbeatReady;
+    try {
+      heartbeatReady = await refreshBackgroundHeartbeat(config);
+    } catch (error) {
+      throw backgroundDispatchStageError("heartbeat_refresh", error);
+    }
+    if (!heartbeatReady) return;
+    try {
+      config = await releaseTerminalBackgroundLease(config);
+    } catch (error) {
+      throw backgroundDispatchStageError("lease_reconciliation", error);
+    }
     if (!config) return;
-    const response = await fetch(`${config.endpoint}/api/bridge/commands/pending`, { headers: bridgeHeaders(config.token), cache: "no-store" });
+    let response;
+    try {
+      response = await fetch(`${config.endpoint}/api/bridge/commands/pending`, {
+        headers: bridgeHeaders(config.token),
+        cache: "no-store",
+      });
+    } catch (error) {
+      throw backgroundDispatchStageError("pending_command_poll", error);
+    }
     if (response.status === 204) return;
     if (response.status === 401 || response.status === 403) {
       await chrome.storage.local.remove(BACKGROUND_DISPATCH_CONFIG_KEY);
@@ -683,11 +708,21 @@ async function pollBackgroundDispatch() {
       await dispatchRun({ endpoint: config.endpoint, token: config.token, runId, background: true });
       await pumpBackgroundSession(config.endpoint, config.token);
     } catch (error) {
-      if (error?.message !== "No queued browser command was available for this run.") throw error;
+      if (error?.message === "No queued browser command was available for this run.") return;
+      console.error("AkuBridge background command failed.", error);
     }
   } finally {
     backgroundDispatching = false;
   }
+}
+
+function backgroundDispatchStageError(stage, error) {
+  return new AkuBridgeError(
+    "background_dispatch_deferred",
+    "background_dispatch",
+    `AkuBridge background dispatch ${stage} failed: ${String(error?.message ?? error).slice(0, 240)}`,
+    { stage },
+  );
 }
 
 async function pumpBackgroundSession(endpoint, token) {
@@ -961,7 +996,7 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
   const sourceFreshness = await recoverSourceFreshness({
     source: command.payload.source,
     acquisitionRound: command.payload.acquisitionRound ?? 1,
-    backgroundAtDispatch: prepared.backgroundAtDispatch,
+    backgroundAtDispatch: prepared.freshnessBackgroundAtDispatch ?? prepared.backgroundAtDispatch,
     opened: prepared.opened,
     activatedBeforeRecovery: prepared.activatedForReadiness,
     pendingContentPolicy: command.payload.pendingContentPolicy,
@@ -1107,6 +1142,24 @@ async function findOrOpenSourceTab(
     mode,
     foregroundAuthorized,
   });
+  const readyReusable = visibilityPlan.initialMode === "managed_window" && !targetUrl
+    ? await findReadyReusableSourceTab(source)
+    : null;
+  if (readyReusable) {
+    return prepareSourceTab(readyReusable.tab, source, false, {
+      ownership: "shared",
+      captureVisibilityPolicy: visibilityPlan.policy,
+      captureVisibilityMode: "ready_inactive_canonical_tab",
+      workingTabPreserved: true,
+      openedTabDisposition: "preserve",
+      hydrationTimeoutMs: requestedHydrationTimeoutMs,
+      prevalidatedReadiness: readyReusable.readiness,
+      passiveReadyReuse: true,
+      lifecycleEvents: [captureSurfaceEvent("reused", source, {
+        outcome: "ready_inactive_canonical_tab",
+      })],
+    });
+  }
   let targetCaptureTabId = null;
   if (visibilityPlan.initialMode === "managed_window") {
     let managed = null;
@@ -1162,6 +1215,7 @@ async function findOrOpenSourceTab(
           break;
         } catch (error) {
           const recoveryPolicy = sourceDefinition(source)?.captureRecovery;
+          const adapterRecovery = error?.details?.readiness?.recoveryHint ?? null;
           if (!shouldRecoverManagedSurface({
             error,
             attempt: managedLoadAttempt,
@@ -1169,7 +1223,6 @@ async function findOrOpenSourceTab(
             reset: managed.reset,
             policy: recoveryPolicy,
           })) throw error;
-          const adapterRecovery = error?.details?.readiness?.recoveryHint ?? null;
           managedLifecycleEvents.push(captureSurfaceEvent("release_requested", source, {
             outcome: adapterRecovery
               ? "managed_adapter_readiness_retry"
@@ -1264,12 +1317,14 @@ async function findOrOpenSourceTab(
       if (["visible_recovery_required", "source_unavailable", "login_required"].includes(error?.code)) {
         throw error;
       }
-      throw new AkuBridgeError(
+      const wrapped = new AkuBridgeError(
         "visible_recovery_required",
         "capture_visibility",
         `Quiet capture could not prepare the managed ${source} surface: ${String(error?.message ?? error)}`,
         { source, causeCode: error?.code ?? "bridge_failure" },
       );
+      wrapped.captureSurfaceLifecycle = lifecycleEvents;
+      throw wrapped;
     }
   }
 
@@ -1313,6 +1368,32 @@ async function findOrOpenSourceTab(
     hydrationTimeoutMs: requestedHydrationTimeoutMs,
     lifecycleEvents,
   });
+}
+
+async function findReadyReusableSourceTab(source) {
+  if (sourceDefinition(source)?.captureReuse?.readyInactiveCanonicalTab !== true) {
+    return null;
+  }
+  const tabs = await chrome.tabs.query({ url: matchPatternsFor(source) });
+  const candidates = tabs
+    .filter((tab) => tab.active !== true && isCanonicalFeedUrl(tab.url, source))
+    .sort((left, right) => Number(right.lastAccessed ?? 0) - Number(left.lastAccessed ?? 0))
+    .slice(0, 3);
+  const expected = bridgeCapabilities();
+  for (const tab of candidates) {
+    const readiness = await probeSourceReadiness(tab.id, source).catch(() => null);
+    if (
+      readiness?.runtimeRevision === expected.runtimeRevision &&
+      readiness?.adapterVersion === expected.adapterVersions[source] &&
+      readiness.state === "feed_ready" &&
+      readiness.feedRootPresent === true &&
+      readiness.visualHydrationReady === true &&
+      Number(readiness.visibleSelectorCandidateCount ?? 0) > 0
+    ) {
+      return { tab, readiness };
+    }
+  }
+  return null;
 }
 
 async function deliverStructuredMediaEvidence(tabId, requestId, evidence) {
@@ -1452,16 +1533,22 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
     }
     return false;
   };
-  let readiness;
+  let readiness = options.prevalidatedReadiness ?? null;
   const readinessPolicy = sourceDefinition(source)?.readiness ?? {};
   const hydrationTimeoutMs = sourceHydrationTimeout(source, options.hydrationTimeoutMs);
-  const initialTimeoutMs = readinessPolicy.retryAfterActivationMs
-    ? Math.min(readinessPolicy.initialTimeoutMs ?? hydrationTimeoutMs, hydrationTimeoutMs)
-    : hydrationTimeoutMs;
+  const initialTimeoutMs = Math.min(
+    readinessPolicy.initialTimeoutMs ?? hydrationTimeoutMs,
+    hydrationTimeoutMs,
+  );
   const retryAfterActivationMs = readinessPolicy.retryAfterActivationMs
     ? Math.max(1_000, hydrationTimeoutMs - initialTimeoutMs)
     : 0;
-  if (readinessPolicy.activateWhenBackground === true && backgroundAtDispatch) {
+  if (readiness && isSourceCaptureReady(readiness) && (
+    !requireVisualHydration || readiness.visualHydrationReady === true
+  )) {
+    // A source-owned, inactive canonical tab may already be fully rendered.
+    // Reuse that evidence without stealing focus merely to repeat readiness.
+  } else if (readinessPolicy.activateWhenBackground === true && backgroundAtDispatch) {
     // Some sources defer visual hydration while the feed remains in a
     // background tab. The source catalog owns that capability declaration.
     await activate();
@@ -1528,6 +1615,9 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
     lease,
     opened,
     backgroundAtDispatch,
+    freshnessBackgroundAtDispatch: options.passiveReadyReuse === true
+      ? false
+      : backgroundAtDispatch,
     readiness,
     activatedForReadiness,
     activateForRetry: activate,
@@ -1575,6 +1665,7 @@ async function waitForSourceReady(
   { requireVisualHydration = false } = {},
 ) {
   const startedAt = Date.now();
+  let inPageRecoveryAttempted = false;
   let latest = {
     state: "page_shell",
     selectorCandidateCount: 0,
@@ -1592,9 +1683,25 @@ async function waitForSourceReady(
       !requireVisualHydration || latest.visualHydrationReady === true
     )) break;
     if (["login_required", "source_unavailable", "wrong_page"].includes(latest.state)) break;
+    if (!inPageRecoveryAttempted && latest.recoveryHint?.inPageAction) {
+      inPageRecoveryAttempted = true;
+      await recoverSourceReadiness(tabId, source, latest).catch(() => null);
+    }
     await delay(250);
   }
   return { ...latest, waitMs: Date.now() - startedAt };
+}
+
+async function recoverSourceReadiness(tabId, source, readiness) {
+  const response = await chrome.tabs.sendMessage(tabId, {
+    type: "AKU_BROWSER_RECOVER_SOURCE_READINESS",
+    source,
+    readiness: {
+      state: readiness?.state ?? "page_shell",
+      recoveryHint: readiness?.recoveryHint ?? null,
+    },
+  });
+  return response?.ok ? response.recovery ?? null : null;
 }
 
 async function probeSourceReadiness(tabId, source) {

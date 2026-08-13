@@ -63,7 +63,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "instagram",
     displayName: "Instagram",
-    adapterVersion: "instagram-dom-v3",
+    adapterVersion: "instagram-dom-v4",
     adapterScript: "adapters/instagram-adapter.js",
     supportScripts: Object.freeze([]),
     feedUrl: "https://www.instagram.com/",
@@ -77,6 +77,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
     structuredMediaPayloadField: "instagramStructuredMediaEvidence",
     hydration: Object.freeze({ defaultTimeoutMs: 15_000, minTimeoutMs: 10_000, maxTimeoutMs: 20_000 }),
     readiness: Object.freeze({ initialTimeoutMs: 10_000, activateWhenBackground: true }),
+    captureReuse: Object.freeze({ readyInactiveCanonicalTab: true }),
     captureRecovery: Object.freeze({
       managedLoad: "recreate_managed_once",
       managedReadiness: "adapter_directed",

@@ -22,7 +22,7 @@
 
   registry.register({
     source: "instagram",
-    version: "instagram-dom-v3",
+    version: "instagram-dom-v4",
     mediaHosts: Object.freeze(["fbcdn.net", "cdninstagram.com"]),
     structuredMediaEvidence: Object.freeze({
       payloadField: "instagramStructuredMediaEvidence",
@@ -82,6 +82,7 @@
     ),
     feedRootPresent: () => Boolean(document.querySelector("main")),
     assessReadiness: assessInstagramReadiness,
+    recoverReadiness: recoverInstagramReadiness,
     discoverCandidates: ({ uniqueElements }) => {
       const structural = uniqueElements([...document.querySelectorAll("main article")]);
       const candidates = structural.filter((candidate) => Boolean(instagramPermalink(candidate)));
@@ -159,18 +160,30 @@
   function assessInstagramReadiness(context) {
     if (context.feedRootPresent === true &&
         context.documentReadyState === "complete" &&
-        context.selectorCandidateCount === 0) {
+        (context.visibleSelectorCandidateCount ?? 0) === 0) {
+      const selectorPostsPresent = context.selectorCandidateCount > 0;
       const structuralPostsPresent = context.structuralCandidateCount > 0;
       return {
-        state: structuralPostsPresent ? "feed_hydrating" : "selector_mismatch",
-        diagnosis: structuralPostsPresent
-          ? "post_permalink_unhydrated"
-          : "feed_shell_unhydrated",
-        recovery: {
-          action: "recreate_managed_surface",
-          reason: structuralPostsPresent
+        state: selectorPostsPresent
+          ? context.state
+          : structuralPostsPresent
+            ? "feed_hydrating"
+            : "selector_mismatch",
+        diagnosis: selectorPostsPresent
+          ? "post_outside_capture_viewport"
+          : structuralPostsPresent
             ? "post_permalink_unhydrated"
             : "feed_shell_unhydrated",
+        recovery: {
+          action: "recreate_managed_surface",
+          inPageAction: selectorPostsPresent
+            ? "align_first_candidate"
+            : "reset_feed_top",
+          reason: selectorPostsPresent
+            ? "post_outside_capture_viewport"
+            : structuralPostsPresent
+              ? "post_permalink_unhydrated"
+              : "feed_shell_unhydrated",
           maxAttempts: 1,
         },
       };
@@ -179,6 +192,28 @@
       state: context.state,
       diagnosis: context.state === "loading" ? "navigation_incomplete" : "readiness_observed",
     };
+  }
+
+  function recoverInstagramReadiness(context) {
+    const requestedAction = context?.recoveryHint?.inPageAction;
+    if (!["align_first_candidate", "reset_feed_top"].includes(requestedAction)) {
+      return { attempted: false, outcome: "unsupported" };
+    }
+    const candidates = [...document.querySelectorAll("main article")]
+      .filter((candidate) => Boolean(instagramPermalink(candidate)));
+    const target = candidates.find((candidate) => {
+      const rect = candidate.getBoundingClientRect?.() ?? {};
+      return Number(rect.width) > 0 && Number(rect.height) > 0;
+    });
+    if (target?.scrollIntoView) {
+      target.scrollIntoView({ block: "start", inline: "nearest", behavior: "instant" });
+      return { attempted: true, outcome: "candidate_aligned" };
+    }
+    if (document.querySelector("main") && typeof window.scrollTo === "function") {
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+      return { attempted: true, outcome: "feed_top_reset" };
+    }
+    return { attempted: false, outcome: "feed_unavailable" };
   }
 
   function instagramPlatformIdFromCandidates(values) {

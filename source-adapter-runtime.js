@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v16";
+  const runtimeRevision = "source-adapters-v17";
   const supportedContentFamilies = new Set(["feed_post"]);
   const supportedEvidenceModalities = new Set([
     "text",
@@ -10,6 +10,10 @@
   ]);
   const supportedReadinessRecoveryActions = new Set([
     "recreate_managed_surface",
+  ]);
+  const supportedReadinessInPageActions = new Set([
+    "align_first_candidate",
+    "reset_feed_top",
   ]);
 
   const adapters = new Map();
@@ -145,12 +149,24 @@
     let recovery = null;
     if (assessment.recovery !== undefined && assessment.recovery !== null) {
       const action = String(assessment.recovery.action ?? "").trim();
+      const inPageAction = String(assessment.recovery.inPageAction ?? "").trim();
       const reason = String(assessment.recovery.reason ?? diagnosis).trim().slice(0, 120);
       const maxAttempts = Number(assessment.recovery.maxAttempts ?? 0);
       if (!supportedReadinessRecoveryActions.has(action) || !reason || maxAttempts !== 1) {
         throw new Error(`AkuBridge ${source} adapter returned an invalid readiness recovery hint.`);
       }
-      recovery = Object.freeze({ action, reason, maxAttempts });
+      if (inPageAction && (
+        !supportedReadinessInPageActions.has(inPageAction) ||
+        typeof adapter.recoverReadiness !== "function"
+      )) {
+        throw new Error(`AkuBridge ${source} adapter returned an invalid in-page readiness recovery hint.`);
+      }
+      recovery = Object.freeze({
+        action,
+        ...(inPageAction ? { inPageAction } : {}),
+        reason,
+        maxAttempts,
+      });
     }
     return Object.freeze({ state, diagnosis, recovery });
   }

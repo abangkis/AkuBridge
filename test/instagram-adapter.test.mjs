@@ -15,7 +15,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("Instagram is an independently permissioned source with bounded native URLs", () => {
   const definition = sourceDefinition("instagram");
-  assert.equal(definition.adapterVersion, "instagram-dom-v3");
+  assert.equal(definition.adapterVersion, "instagram-dom-v4");
   assert.equal(sourceForUrl("https://www.instagram.com/"), "instagram");
   assert.equal(isCanonicalFeed("https://www.instagram.com/", "instagram"), true);
   assert.equal(isNativePostUrl("https://www.instagram.com/p/ABC_123/", "instagram"), true);
@@ -60,7 +60,7 @@ test("Instagram adapter captures a live-shaped Home Feed article without admitti
   };
   const discovery = adapter.discoverCandidates({ uniqueElements: (items) => [...new Set(items)] });
 
-  assert.equal(adapter.version, "instagram-dom-v3");
+  assert.equal(adapter.version, "instagram-dom-v4");
   assert.equal(adapter.matchesPage(), true);
   assert.equal(adapter.loginRequired(), false);
   assert.equal(adapter.feedRootPresent(), true);
@@ -113,6 +113,26 @@ test("Instagram adapter captures a live-shaped Home Feed article without admitti
       urlSource: "instagram_structured_json",
     }],
   );
+  const readiness = adapter.assessReadiness({
+    state: "feed_not_visible",
+    feedRootPresent: true,
+    documentReadyState: "complete",
+    selectorCandidateCount: 1,
+    visibleSelectorCandidateCount: 0,
+    structuralCandidateCount: 2,
+  });
+  assert.equal(readiness.recovery.inPageAction, "align_first_candidate");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(adapter.recoverReadiness(readiness.recovery
+      ? { recoveryHint: readiness.recovery }
+      : {}))),
+    { attempted: true, outcome: "candidate_aligned" },
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(candidate.lastScrollOptions)), {
+    block: "start",
+    inline: "nearest",
+    behavior: "instant",
+  });
 });
 
 function instagramCandidate({ permalink = "https://www.instagram.com/p/ABC_123/", author = "aku.example" } = {}) {
@@ -163,6 +183,13 @@ function instagramCandidate({ permalink = "https://www.instagram.com/p/ABC_123/"
   ];
   return {
     innerText: `${author}\n2h\n1.2K\n34\n${author}\n${caption.innerText}`,
+    lastScrollOptions: null,
+    getBoundingClientRect() {
+      return { width: 470, height: 700 };
+    },
+    scrollIntoView(options) {
+      this.lastScrollOptions = options;
+    },
     querySelector(selector) {
       if (selector === "video") return null;
       if (selector === "time") return time;

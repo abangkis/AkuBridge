@@ -33,6 +33,12 @@ test("source recovery remains capability-scoped", () => {
     managedLoad: "recreate_managed_once",
     managedReadiness: "adapter_directed",
   });
+  assert.deepEqual(sourceDefinition("instagram").captureReuse, {
+    readyInactiveCanonicalTab: true,
+  });
+  for (const source of ["x", "linkedin", "facebook"]) {
+    assert.equal(sourceDefinition(source).captureReuse, undefined);
+  }
   assert.equal(sourceDefinition("facebook").captureRecovery.managedReadiness, undefined);
 });
 

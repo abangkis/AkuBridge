@@ -32,7 +32,7 @@ test("native runtime request carries only the bounded AkuBrowser identity contra
     extension: {
       product: "AkuBrowser",
       productVersion: "0.7.4",
-      runtimeRevision: "source-adapters-v93",
+      runtimeRevision: "source-adapters-v98",
       bridgeContractVersion: "aku-browser.bridge.v2",
       bridgeProtocol: { name: "aku-browser.bridge", version: 2 },
       capabilities: [
@@ -150,7 +150,7 @@ test("native runtime client falls back once to the legacy v1 host contract", asy
   assert.deepEqual(requests[1].extension, {
     product: "AkuBrowser",
     productVersion: "0.7.4",
-    runtimeRevision: "source-adapters-v93",
+    runtimeRevision: "source-adapters-v98",
     bridgeContractVersion: "aku-browser.bridge.v2",
   });
 });

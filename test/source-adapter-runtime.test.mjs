@@ -21,7 +21,7 @@ test("source adapters register independently behind one contract", () => {
       { source: "x", version: "x-dom-v22" },
       { source: "linkedin", version: "linkedin-dom-v20" },
       { source: "facebook", version: "facebook-dom-v18" },
-      { source: "instagram", version: "instagram-dom-v3" },
+      { source: "instagram", version: "instagram-dom-v4" },
     ],
   );
   assert.equal(
@@ -51,7 +51,7 @@ test("source adapters register independently behind one contract", () => {
   );
 });
 
-test("X and Instagram diagnose unhydrated feed shells without owning tab lifecycle", () => {
+test("X and Instagram diagnose unhydrated feed shells through the generic contract", () => {
   const context = createBrowserContext();
   runScript(context, "source-adapter-runtime.js");
   runScript(context, path.join("adapters", "x-adapter.js"));
@@ -69,6 +69,7 @@ test("X and Instagram diagnose unhydrated feed shells without owning tab lifecyc
     assert.equal(assessment.diagnosis, "feed_shell_unhydrated");
     assert.deepEqual(JSON.parse(JSON.stringify(assessment.recovery)), {
       action: "recreate_managed_surface",
+      ...(source === "instagram" ? { inPageAction: "reset_feed_top" } : {}),
       reason: "feed_shell_unhydrated",
       maxAttempts: 1,
     });
@@ -83,6 +84,77 @@ test("X and Instagram diagnose unhydrated feed shells without owning tab lifecyc
   });
   assert.equal(hydrating.state, "feed_hydrating");
   assert.equal(hydrating.diagnosis, "post_permalink_unhydrated");
+  assert.equal(hydrating.recovery.inPageAction, "reset_feed_top");
+});
+
+test("generic readiness contract rejects unallowlisted or unimplemented in-page recovery", () => {
+  const context = createBrowserContext();
+  runScript(context, "source-adapter-runtime.js");
+  const fixture = {
+    source: "fixture",
+    version: "fixture-v1",
+    mediaHosts: ["example.test"],
+    qualityProfile: "social-post-v2",
+    evidenceProfile: { contentFamily: "feed_post", modalities: ["text"] },
+    qualitySelectors: {},
+    freshness: {
+      version: "fixture-freshness-v1",
+      revealObservationMs: 5_000,
+      pendingContentPattern: /new posts/i,
+    },
+    mediaAcquisition: {
+      version: "fixture-media-v1",
+      maxAttempts: 1,
+      settleMs: 500,
+      detectExpectedKinds() { return []; },
+      extractCandidates() { return []; },
+    },
+    matchesPage() { return true; },
+    discoverCandidates() { return { candidates: [] }; },
+    findAuthor() { return ""; },
+    extractSemantics() { return {}; },
+    assessReadiness() {
+      return {
+        state: "selector_mismatch",
+        diagnosis: "fixture_unready",
+        recovery: {
+          action: "recreate_managed_surface",
+          inPageAction: "reset_feed_top",
+          reason: "fixture_unready",
+          maxAttempts: 1,
+        },
+      };
+    },
+  };
+  context.AkuSourceAdapters.register(fixture);
+  assert.throws(
+    () => context.AkuSourceAdapters.assessReadiness("fixture", { state: "selector_mismatch" }),
+    /invalid in-page readiness recovery hint/,
+  );
+  context.AkuSourceAdapters.register({
+    ...fixture,
+    source: "fixture-unknown-action",
+    recoverReadiness() { return { attempted: false }; },
+    assessReadiness() {
+      return {
+        state: "selector_mismatch",
+        diagnosis: "fixture_unready",
+        recovery: {
+          action: "recreate_managed_surface",
+          inPageAction: "navigate_somewhere",
+          reason: "fixture_unready",
+          maxAttempts: 1,
+        },
+      };
+    },
+  });
+  assert.throws(
+    () => context.AkuSourceAdapters.assessReadiness(
+      "fixture-unknown-action",
+      { state: "selector_mismatch" },
+    ),
+    /invalid in-page readiness recovery hint/,
+  );
 });
 
 test("adapter registry rejects duplicates and unknown sources", () => {
@@ -188,7 +260,7 @@ test("a reinjected adapter runtime replaces the stale registry generation", () =
   context.AkuSourceAdapters = previous;
   runScript(context, "source-adapter-runtime.js");
   assert.notEqual(context.AkuSourceAdapters, previous);
-  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v16");
+  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v17");
   assert.deepEqual([...context.AkuSourceAdapters.capabilities()], []);
 });
 
@@ -214,7 +286,7 @@ test("the complete adapter bundle can replace its current registry generation", 
       { source: "x", version: "x-dom-v22" },
       { source: "linkedin", version: "linkedin-dom-v20" },
       { source: "facebook", version: "facebook-dom-v18" },
-      { source: "instagram", version: "instagram-dom-v3" },
+      { source: "instagram", version: "instagram-dom-v4" },
     ],
   );
 });

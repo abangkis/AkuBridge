@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v93";
+  const runtimeRevision = "source-adapters-v98";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -29,6 +29,15 @@
     }
     if (message?.type === "AKU_BROWSER_PROBE_SOURCE_READY") {
       sendResponse({ ok: true, readiness: probeSourceReadiness(message.source) });
+      return false;
+    }
+    if (message?.type === "AKU_BROWSER_RECOVER_SOURCE_READINESS") {
+      const adapter = sourceAdapters.get(message.source);
+      const recovery = adapter.recoverReadiness?.(message.readiness ?? {}) ?? {
+        attempted: false,
+        outcome: "unsupported",
+      };
+      sendResponse({ ok: true, recovery });
       return false;
     }
     if (message?.type === "AKU_BROWSER_PROBE_SOURCE_FRESHNESS") {
