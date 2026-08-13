@@ -36,8 +36,12 @@ test("source recovery remains capability-scoped", () => {
   assert.deepEqual(sourceDefinition("instagram").captureReuse, {
     readyInactiveCanonicalTab: true,
   });
+  assert.deepEqual(sourceDefinition("instagram").captureFallback, {
+    emptyShell: "instagram_structured_feed_v1",
+  });
   for (const source of ["x", "linkedin", "facebook"]) {
     assert.equal(sourceDefinition(source).captureReuse, undefined);
+    assert.equal(sourceDefinition(source).captureFallback, undefined);
   }
   assert.equal(sourceDefinition("facebook").captureRecovery.managedReadiness, undefined);
 });

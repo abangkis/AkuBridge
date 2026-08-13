@@ -62,6 +62,11 @@ import { resolveLinkedInStructuredMediaInMainWorld } from "./linkedin-main-world
 import { resolveFacebookStructuredMediaInMainWorld } from "./facebook-main-world-media-resolver.js";
 import { resolveInstagramStructuredMediaInMainWorld } from "./instagram-main-world-media-resolver.js";
 import {
+  instagramStructuredFeedObservation,
+  resolveInstagramStructuredFeedInMainWorld,
+  shouldUseInstagramStructuredFeedFallback,
+} from "./instagram-main-world-feed-resolver.js";
+import {
   captureWithParallelStructuredMedia,
   collectStructuredMediaWithinBudget,
 } from "./structured-media-collection-runtime.js";
@@ -991,6 +996,10 @@ async function captureWithSourceTabRecovery(command) {
 
 async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) {
   await assertTabLease(prepared.lease, "before_capture");
+  if (prepared.structuredFeedFallback) {
+    await assertTabLease(prepared.lease, "after_capture");
+    return prepared.structuredFeedFallback;
+  }
   const captureSurface = await inspectCaptureSurface(chrome, prepared.tab.id);
   const tabLifecycle = normalizeSourceTabLifecycle(command.payload.tabLifecycle);
   const sourceFreshness = await recoverSourceFreshness({
@@ -1572,7 +1581,10 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
   }
   readiness.waitMs = Date.now() - startedAt;
   const captureReady = isSourceCaptureReady(readiness);
-  if (!captureReady) {
+  const structuredFeedFallback = !captureReady
+    ? await collectStructuredFeedFallback(tab.id, source, readiness)
+    : null;
+  if (!captureReady && !structuredFeedFallback) {
     await restoreTabFocus(previousActiveTabId, tab.id);
     if (readiness.state === "source_unavailable") {
       throw new AkuBridgeError(
@@ -1619,6 +1631,7 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
       ? false
       : backgroundAtDispatch,
     readiness,
+    structuredFeedFallback,
     activatedForReadiness,
     activateForRetry: activate,
     ownership: options.ownership ?? (opened ? "managed" : "shared"),
@@ -1629,6 +1642,37 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
     restoreFocus: options.restoreFocus ?? (() => restoreTabFocus(previousActiveTabId, tab.id)),
     lifecycleEvents: Array.isArray(options.lifecycleEvents) ? options.lifecycleEvents : [],
   };
+}
+
+async function collectStructuredFeedFallback(tabId, source, readiness) {
+  if (!shouldUseInstagramStructuredFeedFallback({
+    source,
+    configuredFallback: sourceDefinition(source)?.captureFallback?.emptyShell,
+    readiness,
+  })) return null;
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: resolveInstagramStructuredFeedInMainWorld,
+      args: [{
+        maxCandidates: 5,
+        maxMediaPerCandidate: 4,
+        maxScripts: 48,
+        maxDocumentScripts: 96,
+        maxScriptBytes: 300_000,
+        maxTotalBytes: 2_000_000,
+        maxTraversalNodes: 20_000,
+        maxDepth: 40,
+        maxCaptionCharacters: 4_000,
+      }],
+    });
+    const evidence = results?.[0]?.result ?? null;
+    if (!Array.isArray(evidence?.candidates) || evidence.candidates.length === 0) return null;
+    return instagramStructuredFeedObservation(evidence);
+  } catch {
+    return null;
+  }
 }
 
 function isSourceCaptureReady(readiness) {

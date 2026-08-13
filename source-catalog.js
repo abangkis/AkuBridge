@@ -78,6 +78,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
     hydration: Object.freeze({ defaultTimeoutMs: 15_000, minTimeoutMs: 10_000, maxTimeoutMs: 20_000 }),
     readiness: Object.freeze({ initialTimeoutMs: 10_000, activateWhenBackground: true }),
     captureReuse: Object.freeze({ readyInactiveCanonicalTab: true }),
+    captureFallback: Object.freeze({ emptyShell: "instagram_structured_feed_v1" }),
     captureRecovery: Object.freeze({
       managedLoad: "recreate_managed_once",
       managedReadiness: "adapter_directed",

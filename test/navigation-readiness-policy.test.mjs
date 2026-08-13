@@ -7,7 +7,7 @@ import {
 
 const validReadiness = Object.freeze({
   source: "instagram",
-  runtimeRevision: "source-adapters-v98",
+  runtimeRevision: "source-adapters-v99",
   adapterVersion: "instagram-dom-v4",
   state: "feed_ready",
   feedRootPresent: true,
@@ -21,7 +21,7 @@ function outcome(overrides = {}) {
     readiness: validReadiness,
     expectedSource: "instagram",
     expectedAdapterVersion: "instagram-dom-v4",
-    expectedRuntimeRevision: "source-adapters-v98",
+    expectedRuntimeRevision: "source-adapters-v99",
     canonicalFeed: true,
     ...overrides,
   });

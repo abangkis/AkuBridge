@@ -22,5 +22,7 @@ test("Instagram navigation fallback is passive and final capture readiness remai
   assert.match(worker, /managed_adapter_readiness_recreated/);
   assert.match(worker, /findReadyReusableSourceTab/);
   assert.match(worker, /ready_inactive_canonical_tab/);
+  assert.match(worker, /collectStructuredFeedFallback/);
+  assert.match(worker, /shouldUseInstagramStructuredFeedFallback/);
   assert.match(worker, /recoveryHint/);
 });

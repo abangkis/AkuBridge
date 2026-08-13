@@ -1,7 +1,7 @@
 # AkuBridge
 
 Current preview identity: **`0.7.9`** / Chrome manifest
-**`0.7.9.0`** / runtime **`source-adapters-v98`**.
+**`0.7.9.0`** / runtime **`source-adapters-v99`**.
 
 Runtime v73 adds bounded background command dispatch for AkuBrowser Auto
 Update. After a trusted local AkuBrowser page configures the loopback endpoint
