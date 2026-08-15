@@ -30,6 +30,7 @@ import {
 import {
   RUNTIME_SETUP_ACTIONS,
   runtimeCheckTimeoutMs,
+  runtimeLocalAcceptanceView,
   runtimeSetupView,
 } from "./setup-runtime-view.js";
 import {
@@ -231,22 +232,6 @@ async function downloadRuntimeInstaller() {
   runtimeAction.disabled = true;
   try {
     manualRuntimeFallback.hidden = true;
-    if (preStoreAcceptance) {
-      runtimeInstallerAttempted = true;
-      globalThis.sessionStorage.setItem(RUNTIME_INSTALLER_ATTEMPT_KEY, "1");
-      currentRuntimeAction = RUNTIME_SETUP_ACTIONS.CHECK;
-      runtimeAction.textContent = "Check runtime";
-      installerNote.hidden = false;
-      installerNoteTitle.textContent = "Run the local acceptance installer";
-      summary.textContent = "The pre-Store runtime installer is in this release kit.";
-      detail.textContent = [
-        `Open ${localAcceptanceInstallerName} from the acceptance folder, finish setup, return here, then select Check runtime.`,
-        setupPlatform === SETUP_PLATFORMS.WINDOWS
-          ? "If Avast opens another Setup window, select No or Cancel; do not run Repair twice."
-          : "Do not upload or distribute this development-identity installer.",
-      ].join(" ");
-      return;
-    }
     const installer = runtimeInstallerDownload({
       platform: setupPlatform,
       sidecarBootstrapVersion: companionInstallerVersion({
@@ -429,7 +414,7 @@ function renderOutcome(outcome) {
     runtimeInstallerAttempted = false;
     globalThis.sessionStorage.removeItem(RUNTIME_INSTALLER_ATTEMPT_KEY);
   }
-  const runtimeView = runtimeSetupView(outcome, {
+  const reportedRuntimeView = runtimeSetupView(outcome, {
     windowsInstallerAvailable: windowsRuntimeInstallerAvailable,
     installerAvailable: runtimeInstallerAvailable,
     runtimePlatform: setupPlatform,
@@ -437,21 +422,22 @@ function renderOutcome(outcome) {
     requiredRuntimeVersion: SIDECAR_BOOTSTRAP_VERSION,
     requiredRuntimeRevision: BRIDGE_RUNTIME_REVISION,
   });
+  const localInstallerAction = preStoreAcceptance
+    && reportedRuntimeView.actionKind === RUNTIME_SETUP_ACTIONS.INSTALL;
+  const runtimeView = localInstallerAction
+    ? runtimeLocalAcceptanceView(reportedRuntimeView)
+    : reportedRuntimeView;
   runtimeReady = runtimeView.runtimeReady;
   currentRuntimeAction = runtimeView.actionKind;
   currentRuntimeActionRetries = runtimeView.retryAction;
-  configureInstallerGuidance(outcome.state, runtimeView);
-  const localInstallerAction = preStoreAcceptance
-    && runtimeView.actionKind === RUNTIME_SETUP_ACTIONS.INSTALL;
+  configureInstallerGuidance(outcome.state, reportedRuntimeView);
   summary.textContent = localInstallerAction
     ? "The matching local runtime installer is required."
     : runtimeView.summary;
   detail.textContent = localInstallerAction
     ? `Use ${localAcceptanceInstallerName} from this release kit; this pre-Store package does not download an unpublished GitHub asset.`
     : runtimeView.detail;
-  runtimeAction.textContent = localInstallerAction
-    ? "Show local installer"
-    : runtimeView.actionLabel;
+  runtimeAction.textContent = runtimeView.actionLabel;
   runtimeAction.disabled = runtimeView.actionDisabled;
   installerNote.hidden = !runtimeView.showInstallerNote;
   windowsAntivirusNote.hidden = !runtimeView.showSecurityNotice;

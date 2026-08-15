@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   RUNTIME_SETUP_ACTIONS,
   runtimeCheckTimeoutMs,
+  runtimeLocalAcceptanceView,
   runtimeSetupView,
 } from "../setup-runtime-view.js";
 
@@ -47,6 +48,40 @@ test("missing macOS runtime offers the versioned stable companion installer", ()
   assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.INSTALL);
   assert.equal(state.actionLabel, "Install runtime");
   assert.equal(state.showSecurityNotice, false);
+});
+
+test("local Windows and macOS install and repair flows use one explicit check", () => {
+  for (const runtimePlatform of ["windows", "macos"]) {
+    for (const outcome of [
+      { state: "runtime_install_required" },
+      {
+        state: "runtime_incompatible",
+        response: {
+          runtime: { processState: "stopped", channel: "stable" },
+          update: { currentVersion: "0.8.0", targetVersion: "0.8.0" },
+        },
+      },
+    ]) {
+      const reported = runtimeSetupView(outcome, {
+        installerAvailable: true,
+        runtimePlatform,
+      });
+      const state = runtimeLocalAcceptanceView(reported);
+
+      assert.equal(reported.actionKind, RUNTIME_SETUP_ACTIONS.INSTALL);
+      assert.equal(state.badge, "Check required");
+      assert.equal(state.actionKind, RUNTIME_SETUP_ACTIONS.CHECK);
+      assert.equal(state.actionLabel, "Check runtime");
+      assert.equal(state.showInstallerNote, true);
+    }
+  }
+});
+
+test("local acceptance leaves non-installer runtime actions unchanged", () => {
+  const reported = runtimeSetupView({ state: "runtime_stopped" });
+
+  assert.equal(runtimeLocalAcceptanceView(reported), reported);
+  assert.equal(reported.actionKind, RUNTIME_SETUP_ACTIONS.ENSURE);
 });
 
 test("running macOS runtime reports its user-scoped executable", () => {

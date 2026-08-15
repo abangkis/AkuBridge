@@ -17,6 +17,20 @@ export function runtimeCheckTimeoutMs(retryAttempt = 0) {
     + (normalizedAttempt * RUNTIME_CHECK_TIMEOUT_RETRY_STEP_MS);
 }
 
+export function runtimeLocalAcceptanceView(runtimeView) {
+  if (!runtimeView || runtimeView.actionKind !== RUNTIME_SETUP_ACTIONS.INSTALL) {
+    return runtimeView;
+  }
+  return {
+    ...runtimeView,
+    badge: "Check required",
+    actionKind: RUNTIME_SETUP_ACTIONS.CHECK,
+    actionLabel: "Check runtime",
+    actionDisabled: false,
+    retryAction: false,
+  };
+}
+
 export function runtimeSetupView(outcome, {
   windowsInstallerAvailable = false,
   installerAvailable = windowsInstallerAvailable,
