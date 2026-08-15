@@ -43,8 +43,8 @@ export function planNativeRuntimeLifecycle(event, details = {}) {
   throw new TypeError(`Unsupported native runtime lifecycle event: ${String(event)}`);
 }
 
-export function nativeRuntimeDistribution(manifest = {}) {
-  return typeof manifest.key === "string" && manifest.key.trim() !== ""
-    ? "development"
-    : "production";
+export function nativeRuntimeDistribution(deployment = {}) {
+  if (deployment.runtimeLifecycle === "managed") return "production";
+  if (deployment.runtimeLifecycle === "manual") return "development";
+  throw new TypeError(`Unsupported AkuBridge runtime lifecycle: ${String(deployment.runtimeLifecycle ?? "missing")}`);
 }

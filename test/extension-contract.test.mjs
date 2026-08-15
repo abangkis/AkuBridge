@@ -218,13 +218,15 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.match(setupScript, /RUNTIME_SETUP_ACTIONS\.RESOLVE_CONFLICT/);
   assert.match(setupScript, /runtimeConflictDialog\.showModal/);
   assert.match(setupScript, /runtimePortableFallbackURL/);
-  assert.match(setupScript, /preStoreAcceptance = Boolean\(manifest\.key\)/);
+  assert.match(setupScript, /preStoreAcceptance = BRIDGE_DEPLOYMENT\.mode === "acceptance"/);
+  assert.match(setupScript, /offlineBundle = BRIDGE_DEPLOYMENT\.mode === "production-offline"/);
   assert.match(setupScript, /Run the matching local acceptance runtime/);
   assert.match(setupScript, /Run the local \$\{platformName\} acceptance installer/);
   assert.match(setupScript, /this pre-Store package does not download an unpublished GitHub asset/);
   assert.match(setupScript, /runtimeLocalAcceptanceView/);
   assert.doesNotMatch(setupScript, /Show local installer/);
   assert.match(setupScript, /preStoreAcceptance\s*\?\s*""/);
+  assert.match(setupScript, /Start the bundled AkuBrowser Runtime/);
   assert.match(setupScript, /windowsAntivirusNote\.hidden = !windowsRuntimeInstallerAvailable/);
   assert.match(setupScript, /runtimeInstallerAttempted\.v1/);
   assert.match(setupScript, /runtimeInstallerAttempted/);

@@ -54,9 +54,10 @@ test("unpacked development reload and Chrome startup never start the installed r
   });
 });
 
-test("manifest key is the packaged development distribution marker", () => {
-  assert.equal(nativeRuntimeDistribution({ key: "public-development-key" }), "development");
-  assert.equal(nativeRuntimeDistribution({}), "production");
+test("trusted deployment metadata selects manual or managed runtime lifecycle", () => {
+  assert.equal(nativeRuntimeDistribution({ runtimeLifecycle: "manual" }), "development");
+  assert.equal(nativeRuntimeDistribution({ runtimeLifecycle: "managed" }), "production");
+  assert.throws(() => nativeRuntimeDistribution({}), /runtime lifecycle/);
 });
 
 test("unknown lifecycle events and installation reasons fail closed", () => {

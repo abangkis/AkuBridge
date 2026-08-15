@@ -37,6 +37,7 @@ import {
   CODEX_SETUP_ACTIONS,
   codexSetupView,
 } from "./setup-codex-view.js";
+import { BRIDGE_DEPLOYMENT } from "./bridge-deployment.js";
 
 const RUNTIME_INSTALLER_ATTEMPT_KEY = "akuBrowser.runtimeInstallerAttempted.v1";
 const simulatedOutcome = simulatedRuntimeOutcome(globalThis.location.search);
@@ -44,7 +45,8 @@ const setupPlatform = detectSetupPlatform(globalThis.navigator);
 const client = createChromeNativeRuntimeClient(chrome);
 const manifest = chrome.runtime.getManifest();
 const productVersion = manifest.version_name || manifest.version;
-const preStoreAcceptance = Boolean(manifest.key);
+const preStoreAcceptance = BRIDGE_DEPLOYMENT.mode === "acceptance";
+const offlineBundle = BRIDGE_DEPLOYMENT.mode === "production-offline";
 const pinnedRuntimeInstaller = runtimeInstallerDownload({
   platform: setupPlatform,
   sidecarBootstrapVersion: SIDECAR_BOOTSTRAP_VERSION,
@@ -53,7 +55,9 @@ const localAcceptanceInstallerName = runtimeLocalAcceptanceInstaller({
   platform: setupPlatform,
   sidecarBootstrapVersion: SIDECAR_BOOTSTRAP_VERSION,
 });
-const runtimeInstallerAvailable = preStoreAcceptance
+const runtimeInstallerAvailable = offlineBundle
+  ? false
+  : preStoreAcceptance
   ? Boolean(localAcceptanceInstallerName)
   : Boolean(pinnedRuntimeInstaller.url);
 const windowsRuntimeInstallerAvailable = setupPlatform === SETUP_PLATFORMS.WINDOWS;
@@ -275,9 +279,21 @@ function applyPlatformCopy() {
         platform: setupPlatform,
         sidecarBootstrapVersion: SIDECAR_BOOTSTRAP_VERSION,
       });
+  if (offlineBundle) {
+    runtimePlatformDescription.textContent = "This offline edition includes AkuSidecar beside the bundled AkuBridge extension. Start it with the platform launcher, then select Check runtime.";
+    installerNoteTitle.textContent = "Start the bundled offline runtime";
+    installerStepOpen.textContent = "Return to the folder that contains this AkuBridge directory.";
+    installerStepRun.textContent = setupPlatform === SETUP_PLATFORMS.MACOS
+      ? "Run Start-AkuBrowser.command or Start-AkuBrowser.sh and keep its terminal open."
+      : "Run Start-AkuBrowser.ps1 or Start-AkuBrowser.cmd and keep its terminal open.";
+    installerStepCheck.textContent = "Return here and select Check runtime.";
+    windowsAntivirusNote.hidden = true;
+    manualRuntimeFallback.hidden = true;
+    return;
+  }
   if (setupPlatform === SETUP_PLATFORMS.WINDOWS) {
     runtimePlatformDescription.textContent = preStoreAcceptance
-      ? "This frozen pre-Store package uses the matching development runtime included in the same acceptance kit."
+      ? "This frozen pre-Store package uses the matching acceptance runtime included in the same acceptance kit."
       : [
           "The Windows runtime installer includes AkuSidecar, the Native Messaging Host,",
           "and the C2PA verifier. You install and prepare Codex App separately.",
@@ -426,9 +442,22 @@ function renderOutcome(outcome) {
     && reportedRuntimeView.actionKind === RUNTIME_SETUP_ACTIONS.INSTALL;
   const localDataReset = localInstallerAction
     && outcome.errorCode === "data_version_incompatible";
-  const runtimeView = localInstallerAction
+  let runtimeView = localInstallerAction
     ? runtimeLocalAcceptanceView(reportedRuntimeView)
     : reportedRuntimeView;
+  if (offlineBundle && !runtimeView.runtimeReady) {
+    runtimeView = {
+      ...runtimeView,
+      summary: "Start the bundled AkuBrowser Runtime",
+      detail: "Run the Start-AkuBrowser launcher from this offline bundle, keep its terminal open, then select Check runtime.",
+      actionKind: RUNTIME_SETUP_ACTIONS.CHECK,
+      actionLabel: "Check runtime",
+      actionDisabled: false,
+      showInstallerNote: true,
+      showManualFallback: false,
+      showSecurityNotice: false,
+    };
+  }
   runtimeReady = runtimeView.runtimeReady;
   currentRuntimeAction = runtimeView.actionKind;
   currentRuntimeActionRetries = runtimeView.retryAction;
@@ -447,7 +476,7 @@ function renderOutcome(outcome) {
   runtimeAction.disabled = runtimeView.actionDisabled;
   installerNote.hidden = !runtimeView.showInstallerNote;
   windowsAntivirusNote.hidden = !runtimeView.showSecurityNotice;
-  manualRuntimeFallback.hidden = preStoreAcceptance || !runtimeView.showManualFallback;
+  manualRuntimeFallback.hidden = preStoreAcceptance || offlineBundle || !runtimeView.showManualFallback;
   runtimeConflictNote.hidden = !runtimeView.showConflictNotice;
   runtimeExecutablePath.textContent = runtimeView.executableLocation;
   runtimeExecutableLocationHint.textContent = runtimeView.executableLocationHint;

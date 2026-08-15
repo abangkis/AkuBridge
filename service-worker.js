@@ -47,6 +47,7 @@ import {
   nativeRuntimeDistribution,
   planNativeRuntimeLifecycle,
 } from "./native-runtime-lifecycle.js";
+import { BRIDGE_DEPLOYMENT } from "./bridge-deployment.js";
 import {
   NATIVE_RUNTIME_CHECK_ALARM,
   createNativeRuntimeScheduler,
@@ -105,7 +106,7 @@ const NATIVE_RUNTIME_BACKGROUND_TIMEOUT_MS = 195_000;
 const nativeRuntimeScheduler = createNativeRuntimeScheduler({
   alarms: chrome.alarms,
   storage: chrome.storage.local,
-  enabled: nativeRuntimeDistribution(chrome.runtime.getManifest()) === "production",
+  enabled: nativeRuntimeDistribution(BRIDGE_DEPLOYMENT) === "production",
   check: (trigger) => nativeRuntimeClient.ensureRuntime({
     trigger,
     timeoutMs: NATIVE_RUNTIME_BACKGROUND_TIMEOUT_MS,
@@ -130,7 +131,7 @@ const SOURCE_SCRIPT_FILES = [
   "media-acquisition-engine.js",
   "content-script.js",
 ];
-const NATIVE_RUNTIME_DISTRIBUTION = nativeRuntimeDistribution(chrome.runtime.getManifest());
+const NATIVE_RUNTIME_DISTRIBUTION = nativeRuntimeDistribution(BRIDGE_DEPLOYMENT);
 
 void resumePendingSelfReload().catch((error) => {
   console.error("AkuBridge could not resume the pending AkuBrowser tab reload.", error);
