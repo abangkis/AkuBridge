@@ -369,6 +369,36 @@ test("a native host that rejects this extension requests an installer repair", a
   assert.deepEqual(storageWrites.at(-1)[NATIVE_RUNTIME_STATE_KEY], outcome);
 });
 
+test("newer runtime data preserves the typed installer reset remediation", async () => {
+  const { client } = clientWithResponder((_host, request, callback) => {
+    callback(readyResponse(request, {
+      status: "error",
+      runtime: {
+        version: "0.7.4",
+        channel: "stable",
+        runtimeRevision: "source-adapters-v84",
+        bridgeContractVersion: "aku-browser.bridge.v2",
+        endpoint: "http://127.0.0.1:11122",
+        instanceEpoch: "data-version-incompatible",
+        processState: "stopped",
+      },
+      error: {
+        code: "data_version_incompatible",
+        message: "AkuBrowser data belongs to a newer runtime version.",
+        retryable: false,
+        remediation: "reset_data",
+      },
+    }));
+  });
+
+  const outcome = await client.status({ trigger: "setup_check" });
+
+  assert.equal(outcome.state, NATIVE_RUNTIME_CLIENT_STATES.FAILED);
+  assert.equal(outcome.errorCode, "data_version_incompatible");
+  assert.equal(outcome.retryable, false);
+  assert.equal(outcome.remediation, "reset_data");
+});
+
 test("native host statuses map to explicit client states", async () => {
   const cases = [
     ["updating", "runtime_updating"],

@@ -84,6 +84,30 @@ test("local acceptance leaves non-installer runtime actions unchanged", () => {
   assert.equal(reported.actionKind, RUNTIME_SETUP_ACTIONS.ENSURE);
 });
 
+test("newer runtime data exposes installer reset instead of a retry loop", () => {
+  for (const runtimePlatform of ["windows", "macos"]) {
+    const reported = runtimeSetupView({
+      state: "runtime_failed",
+      errorCode: "data_version_incompatible",
+      remediation: "reset_data",
+    }, {
+      installerAvailable: true,
+      runtimePlatform,
+    });
+
+    assert.equal(reported.badge, "Newer data detected");
+    assert.match(reported.summary, /newer runtime version/);
+    assert.match(reported.detail, /archive the newer data/);
+    assert.equal(reported.actionKind, RUNTIME_SETUP_ACTIONS.INSTALL);
+    assert.equal(reported.actionLabel, "Reset with installer");
+
+    const local = runtimeLocalAcceptanceView(reported);
+    assert.equal(local.badge, "Newer data detected");
+    assert.equal(local.actionKind, RUNTIME_SETUP_ACTIONS.CHECK);
+    assert.equal(local.actionLabel, "Check runtime");
+  }
+});
+
 test("running macOS runtime reports its user-scoped executable", () => {
   const state = runtimeSetupView({
     state: "runtime_ready",

@@ -25,6 +25,60 @@ func TestStatusReportsCompatibleRunningRuntime(t *testing.T) {
 	}
 }
 
+func TestRuntimeOperationsExplainNewerDataWithoutLaunching(t *testing.T) {
+	operations := map[string]func(RuntimeController, ExtensionIdentity) Outcome{
+		"status": func(controller RuntimeController, identity ExtensionIdentity) Outcome {
+			return controller.Status(context.Background(), identity)
+		},
+		"ensure": func(controller RuntimeController, identity ExtensionIdentity) Outcome {
+			return controller.Ensure(context.Background(), identity)
+		},
+		"reconcile": func(controller RuntimeController, identity ExtensionIdentity) Outcome {
+			return controller.Reconcile(context.Background(), identity)
+		},
+	}
+	for name, operation := range operations {
+		t.Run(name, func(t *testing.T) {
+			root := writeActiveRuntime(t, activeFixture())
+			launcher := &recordingLauncher{}
+			prober := &sequenceProber{}
+			controller := testController(root, prober, launcher)
+			if err := os.MkdirAll(controller.DataRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(controller.DataRoot, runtimeDataVersionMarker), []byte("0.8.0\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			outcome := operation(controller, validRequest(name).Extension)
+
+			if outcome.Status != "error" || outcome.Error == nil ||
+				outcome.Error.Code != "data_version_incompatible" || outcome.Error.Remediation != "reset_data" {
+				t.Fatalf("unexpected data-version outcome: %#v", outcome)
+			}
+			if launcher.calls != 0 || prober.calls != 0 {
+				t.Fatal("newer data reached the runtime process or loopback endpoint")
+			}
+		})
+	}
+}
+
+func TestStatusAcceptsDataFromTheActiveOrOlderRuntime(t *testing.T) {
+	for _, dataVersion := range []string{"0.7.4", "0.7.3"} {
+		root := writeActiveRuntime(t, activeFixture())
+		controller := testController(root, &sequenceProber{results: []probeStep{{result: readyProbe()}}}, &recordingLauncher{})
+		if err := os.MkdirAll(controller.DataRoot, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(controller.DataRoot, runtimeDataVersionMarker), []byte(dataVersion+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if outcome := controller.Status(context.Background(), validRequest("status").Extension); outcome.Status != "ready" {
+			t.Fatalf("data version %s was rejected: %#v", dataVersion, outcome)
+		}
+	}
+}
+
 func TestStatusKeepsOlderContractCompatibleRuntimeUsableAndOffersUpdate(t *testing.T) {
 	root := writeActiveRuntime(t, activeFixture())
 	controller := testController(root, &sequenceProber{results: []probeStep{{result: readyProbe()}}}, &recordingLauncher{})

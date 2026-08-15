@@ -107,6 +107,9 @@ func (controller RuntimeController) Status(ctx context.Context, identity Extensi
 	if err != nil {
 		return controller.metadataFailure(err)
 	}
+	if incompatible := controller.dataVersionIncompatibility(active); incompatible != nil {
+		return *incompatible
+	}
 	updateRequired := runtimeUpdateRequired(active, identity)
 	probe, err := controller.Prober.Probe(ctx)
 	if err != nil {
@@ -151,6 +154,9 @@ func (controller RuntimeController) Ensure(ctx context.Context, identity Extensi
 	if err != nil {
 		return controller.metadataFailure(err)
 	}
+	if incompatible := controller.dataVersionIncompatibility(active); incompatible != nil {
+		return *incompatible
+	}
 	var updateWarning *RuntimeUpdateAttempt
 	if controller.Updater != nil && identity.BridgeProtocol != nil {
 		attempt := controller.Updater.Update(ctx, active, identity)
@@ -193,6 +199,9 @@ func (controller RuntimeController) Reconcile(ctx context.Context, identity Exte
 	active, err := controller.loadActiveRuntime()
 	if err != nil {
 		return controller.metadataFailure(err)
+	}
+	if incompatible := controller.dataVersionIncompatibility(active); incompatible != nil {
+		return *incompatible
 	}
 	return controller.reconcileActive(ctx, active, identity, nil)
 }

@@ -424,6 +424,8 @@ function renderOutcome(outcome) {
   });
   const localInstallerAction = preStoreAcceptance
     && reportedRuntimeView.actionKind === RUNTIME_SETUP_ACTIONS.INSTALL;
+  const localDataReset = localInstallerAction
+    && outcome.errorCode === "data_version_incompatible";
   const runtimeView = localInstallerAction
     ? runtimeLocalAcceptanceView(reportedRuntimeView)
     : reportedRuntimeView;
@@ -432,10 +434,14 @@ function renderOutcome(outcome) {
   currentRuntimeActionRetries = runtimeView.retryAction;
   configureInstallerGuidance(outcome.state, reportedRuntimeView);
   summary.textContent = localInstallerAction
-    ? "The matching local runtime installer is required."
+    ? localDataReset
+      ? reportedRuntimeView.summary
+      : "The matching local runtime installer is required."
     : runtimeView.summary;
   detail.textContent = localInstallerAction
-    ? `Use ${localAcceptanceInstallerName} from this release kit; this pre-Store package does not download an unpublished GitHub asset.`
+    ? localDataReset
+      ? `${reportedRuntimeView.detail} Use ${localAcceptanceInstallerName} from this release kit.`
+      : `Use ${localAcceptanceInstallerName} from this release kit; this pre-Store package does not download an unpublished GitHub asset.`
     : runtimeView.detail;
   runtimeAction.textContent = runtimeView.actionLabel;
   runtimeAction.disabled = runtimeView.actionDisabled;

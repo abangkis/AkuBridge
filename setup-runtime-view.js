@@ -23,7 +23,9 @@ export function runtimeLocalAcceptanceView(runtimeView) {
   }
   return {
     ...runtimeView,
-    badge: "Check required",
+    badge: runtimeView.badge === "Newer data detected"
+      ? runtimeView.badge
+      : "Check required",
     actionKind: RUNTIME_SETUP_ACTIONS.CHECK,
     actionLabel: "Check runtime",
     actionDisabled: false,
@@ -188,6 +190,24 @@ export function runtimeSetupView(outcome, {
       detail: "The compatible runtime is available locally but is not running.",
       actionKind: RUNTIME_SETUP_ACTIONS.ENSURE,
       actionLabel: "Run AkuBrowser",
+    });
+  }
+
+  if (outcome?.errorCode === "data_version_incompatible") {
+    return view({
+      badge: "Newer data detected",
+      badgeState: "warning",
+      summary: "AkuBrowser data belongs to a newer runtime version.",
+      detail: installerAvailable
+        ? "Run the matching installer. It will archive the newer data and create a fresh database before this older runtime starts."
+        : "Use the platform uninstall Full reset option, then reinstall the matching runtime.",
+      actionKind: installerAvailable
+        ? RUNTIME_SETUP_ACTIONS.INSTALL
+        : RUNTIME_SETUP_ACTIONS.NONE,
+      actionLabel: installerAvailable ? "Reset with installer" : "Reset required",
+      actionDisabled: !installerAvailable,
+      showInstallerNote: installerAvailable,
+      showSecurityNotice: runtimePlatform === "windows",
     });
   }
 
