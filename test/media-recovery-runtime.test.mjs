@@ -241,6 +241,8 @@ test("X adapter fallback covers the captured regression shapes", () => {
   const photoPermalinkSelector = 'a[href*="/status/"][href*="/photo/"]';
   assert.ok(context.adapter.qualitySelectors.media.includes(photoPermalinkSelector));
   assert.ok(context.adapter.imageSelector.includes(`${photoPermalinkSelector} img`));
+  assert.ok(context.adapter.qualitySelectors.media.includes("twitterArticleReadView"));
+  assert.ok(context.adapter.imageSelector.includes("twitterArticleReadView"));
   for (const fixture of cases) {
     const root = recoveryRoot(fixture);
     const container = {
@@ -252,6 +254,7 @@ test("X adapter fallback covers the captured regression shapes", () => {
         ) return [root];
         if (fixture.rootType === "video" && selector.includes("previewInterstitial")) return [root];
         if (fixture.rootType === "card" && selector.includes("a[aria-label]")) return [root];
+        if (fixture.rootType === "article" && selector.includes("twitterArticleReadView")) return [root];
         return [];
       },
     };

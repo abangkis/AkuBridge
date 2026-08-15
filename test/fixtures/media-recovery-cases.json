@@ -33,5 +33,13 @@
     "urls": [
       "https://pbs.twimg.com/card_img/build-week/preview.jpg"
     ]
+  },
+  {
+    "id": "x-article-cover-image",
+    "rootType": "article",
+    "expectedKind": "image",
+    "urls": [
+      "https://pbs.twimg.com/media/article-cover.jpg?format=jpg&name=small"
+    ]
   }
 ]

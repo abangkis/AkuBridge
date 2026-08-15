@@ -2,6 +2,21 @@
   const registry = globalThis.AkuSourceAdapters;
   if (!registry) throw new Error("AkuBridge source-adapter runtime was not loaded.");
 
+  // X Articles use a separate read-view/media-link DOM contract from ordinary
+  // Tweet photos and link cards. Keep the selectors narrow so article covers
+  // are admitted without promoting profile or unrelated link images.
+  const xArticleRootSelector = '[data-testid="twitterArticleReadView"]';
+  const xArticleMediaSelector = [
+    `${xArticleRootSelector} img[src*="pbs.twimg.com/"], ${xArticleRootSelector} img[srcset*="pbs.twimg.com/"], ${xArticleRootSelector} img[data-src*="pbs.twimg.com/"]`,
+    'a[href*="/article/"][href*="/media/"] img[src*="pbs.twimg.com/"], a[href*="/article/"][href*="/media/"] img[srcset*="pbs.twimg.com/"], a[href*="/article/"][href*="/media/"] img[data-src*="pbs.twimg.com/"]',
+    'a[href*="/article/"] img[src*="pbs.twimg.com/"], a[href*="/article/"] img[srcset*="pbs.twimg.com/"], a[href*="/article/"] img[data-src*="pbs.twimg.com/"]',
+  ].join(", ");
+  const xArticleMediaRootSelector = [
+    xArticleRootSelector,
+    'a[href*="/article/"][href*="/media/"]',
+    'a[href*="/article/"]',
+  ].join(", ");
+
   registry.register({
     source: "x",
     version: "x-dom-v22",
@@ -28,12 +43,13 @@
     qualitySelectors: Object.freeze({
       author: '[data-testid="User-Name"]',
       avatar: '[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"]',
-      content: '[data-testid="tweetText"]',
+      content: '[data-testid="tweetText"], ' + xArticleRootSelector,
       media: '[data-testid="tweetPhoto"], [data-testid="previewInterstitial"], '
         + '[data-testid="videoPlayer"], [data-testid="videoComponent"], '
         + 'a[href*="/status/"][href*="/photo/"], '
         + '[aria-label*="Video" i], a[aria-label][href] img[src*="/card_img/"], '
-        + 'a[aria-label][href] [style*="/card_img/"]',
+        + 'a[aria-label][href] [style*="/card_img/"], '
+        + xArticleMediaSelector,
       timestamp: "time",
     }),
     freshness: Object.freeze({
@@ -115,7 +131,7 @@
       avatarRootSelector: '[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"]',
     }),
     mediaRendering: Object.freeze({
-      trustedRootSelector: '[data-testid="tweetPhoto"], [data-testid="previewInterstitial"], [data-testid="videoPlayer"], [data-testid="videoComponent"], a[href*="/status/"][href*="/photo/"], [aria-label*="Video" i], a[aria-label][href] img[src*="/card_img/"]',
+      trustedRootSelector: '[data-testid="tweetPhoto"], [data-testid="previewInterstitial"], [data-testid="videoPlayer"], [data-testid="videoComponent"], a[href*="/status/"][href*="/photo/"], [aria-label*="Video" i], a[aria-label][href] img[src*="/card_img/"], ' + xArticleMediaRootSelector,
       videoRootSelector: '[data-testid="previewInterstitial"], [data-testid="videoPlayer"], [data-testid="videoComponent"], [aria-label*="Video" i]',
       embeddedVideoPattern: /embedded video/i,
       trustedVideo: true,
@@ -126,10 +142,12 @@
       ]),
     }),
     permalinkPatterns: Object.freeze([/\/status\/\d+/]),
-    contentRootSelector: '[data-testid="tweetText"]',
+    contentRootSelector: '[data-testid="tweetText"], ' + xArticleRootSelector,
     extractText: (container, { compactText, structuredText }) => {
       const read = typeof structuredText === "function" ? structuredText : compactText;
-      return read(container.querySelector('[data-testid="tweetText"]')) || read(container);
+      return read(container.querySelector('[data-testid="tweetText"]'))
+        || read(container.querySelector(xArticleRootSelector))
+        || read(container);
     },
     extractSemantics: (container, { compactText, normalizeHttpUrl }) => {
       const socialContext = compactText(
@@ -205,6 +223,7 @@
       '[data-testid="videoPlayer"] img',
       '[data-testid="videoComponent"] img',
       'a[aria-label][href] img[src*="/card_img/"]',
+      xArticleMediaSelector,
     ].join(","),
   });
 
@@ -268,6 +287,7 @@
       ...container.querySelectorAll('a[href*="/status/"][href*="/photo/"]'),
       ...container.querySelectorAll(videoSelector),
       ...container.querySelectorAll('a[aria-label][href] img, a[aria-label][href] [style*="/card_img/"]'),
+      ...container.querySelectorAll(xArticleMediaSelector),
     ]).filter((root) => !excludeRoot?.contains?.(root));
     return roots.map((root) => {
       const videoRoot = root.matches?.(videoSelector) || root.closest?.(videoSelector);
