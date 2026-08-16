@@ -28,7 +28,9 @@ test("source recovery remains capability-scoped", () => {
     managedLoad: "recreate_managed_once",
     managedReadiness: "adapter_directed",
   });
-  assert.equal(sourceDefinition("linkedin").captureRecovery, undefined);
+  assert.deepEqual(sourceDefinition("linkedin").captureRecovery, {
+    managedLoad: "recreate_managed_once",
+  });
   assert.deepEqual(sourceDefinition("instagram").captureRecovery, {
     managedLoad: "recreate_managed_once",
     managedReadiness: "adapter_directed",

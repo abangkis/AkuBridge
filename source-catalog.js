@@ -38,6 +38,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
     structuredMediaPayloadField: "linkedinStructuredMediaEvidence",
     hydration: Object.freeze({ defaultTimeoutMs: 18_000, minTimeoutMs: 13_000, maxTimeoutMs: 23_000 }),
     readiness: Object.freeze({ initialTimeoutMs: 3_000, retryAfterActivationMs: 15_000 }),
+    captureRecovery: Object.freeze({ managedLoad: "recreate_managed_once" }),
   }),
   Object.freeze({
     id: "facebook",

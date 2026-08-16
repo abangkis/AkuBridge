@@ -271,6 +271,37 @@ test("source failure closes only its Bridge-owned managed tab", async () => {
   });
 });
 
+test("source release and next-source prepare are serialized across a shared window handoff", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  await runtime.prepare("instagram", { leaseId: "session-1" });
+  let releaseWindowRemoval;
+  let signalWindowRemovalStarted;
+  const windowRemovalStarted = new Promise((resolve) => {
+    signalWindowRemovalStarted = resolve;
+  });
+  const windowRemovalGate = new Promise((resolve) => {
+    releaseWindowRemoval = resolve;
+  });
+  chrome.beforeWindowRemove = async () => {
+    signalWindowRemovalStarted();
+    await windowRemovalGate;
+  };
+
+  const release = runtime.releaseSource("instagram", "session-1");
+  await windowRemovalStarted;
+  const prepare = runtime.prepare("linkedin", { leaseId: "session-1" });
+  await Promise.resolve();
+
+  assert.equal(chrome.createdWindowOptionsList.length, 1);
+  releaseWindowRemoval();
+  assert.equal((await release).mode, "owned_source_surface_closed");
+  const linkedin = await prepare;
+  assert.equal(chrome.createdWindowOptionsList.length, 2);
+  assert.equal(chrome.windowsById.has(linkedin.tab.windowId), true);
+  assert.equal(linkedin.tab.url, "https://www.linkedin.com/feed/");
+});
+
 test("managed Facebook capture resets an internal redirect instead of leaking a new surface", async () => {
   const chrome = fakeChrome();
   const runtime = createManagedCaptureWindowRuntime(chrome);
@@ -443,6 +474,7 @@ function fakeChrome() {
     createdTabOptions: [],
     focusManagedWindowOnTabActivation: false,
     failFocusRestore: false,
+    beforeWindowRemove: null,
     addTab(windowId, url, id) {
       const tab = { id, windowId, active: false, url };
       tabs.set(id, tab);
@@ -480,6 +512,7 @@ function fakeChrome() {
       async remove(id) {
         const window = windows.get(id);
         if (!window) throw new Error("No window");
+        if (state.beforeWindowRemove) await state.beforeWindowRemove(id);
         state.removedWindowIds.push(id);
         for (const tab of window.tabs) tabs.delete(tab.id);
         windows.delete(id);

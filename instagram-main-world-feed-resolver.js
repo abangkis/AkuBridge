@@ -6,7 +6,7 @@ export function resolveInstagramStructuredFeedInMainWorld(request = {}) {
   const maxMediaPerCandidate = clamp(request.maxMediaPerCandidate, 1, 4, 4);
   const maxScripts = clamp(request.maxScripts, 1, 64, 48);
   const maxDocumentScripts = clamp(request.maxDocumentScripts, 1, 128, 96);
-  const maxScriptBytes = clamp(request.maxScriptBytes, 8_192, 512_000, 300_000);
+  const maxScriptBytes = clamp(request.maxScriptBytes, 8_192, 512_000, 512_000);
   const maxTotalBytes = clamp(request.maxTotalBytes, 64_000, 4_000_000, 2_000_000);
   const maxTraversalNodes = clamp(request.maxTraversalNodes, 500, 40_000, 20_000);
   const maxDepth = clamp(request.maxDepth, 8, 48, 40);
@@ -15,10 +15,13 @@ export function resolveInstagramStructuredFeedInMainWorld(request = {}) {
   let inspectedScriptCount = 0;
   let parsedScriptCount = 0;
   let rejectedScriptCount = 0;
+  let oversizedScriptCount = 0;
+  let largestMatchedScriptBytes = 0;
   let inspectedBytes = 0;
   let traversedNodeCount = 0;
   let rejectedPromotedCount = 0;
   const candidateRejectionCounts = {};
+  const boundedReasons = new Set();
 
   const pageDocument = typeof document === "undefined" ? null : document;
   const documentScripts = [...new Set([
@@ -33,8 +36,17 @@ export function resolveInstagramStructuredFeedInMainWorld(request = {}) {
   for (const script of scripts) {
     if (candidates.size >= maxCandidates || traversedNodeCount >= maxTraversalNodes) break;
     const text = typeof script?.textContent === "string" ? script.textContent : "";
-    if (!text || text.length > maxScriptBytes || inspectedBytes + text.length > maxTotalBytes) {
-      if (text) rejectedScriptCount += 1;
+    if (!text) continue;
+    largestMatchedScriptBytes = Math.max(largestMatchedScriptBytes, text.length);
+    if (text.length > maxScriptBytes) {
+      rejectedScriptCount += 1;
+      oversizedScriptCount += 1;
+      boundedReasons.add("max_script_bytes");
+      continue;
+    }
+    if (inspectedBytes + text.length > maxTotalBytes) {
+      rejectedScriptCount += 1;
+      boundedReasons.add("max_total_bytes");
       continue;
     }
     inspectedScriptCount += 1;
@@ -67,6 +79,8 @@ export function resolveInstagramStructuredFeedInMainWorld(request = {}) {
       }
     }
   }
+  if (traversedNodeCount >= maxTraversalNodes) boundedReasons.add("max_traversal_nodes");
+  if (inspectedBytes >= maxTotalBytes) boundedReasons.add("max_total_bytes");
 
   return Object.freeze({
     runtimeRevision,
@@ -78,12 +92,15 @@ export function resolveInstagramStructuredFeedInMainWorld(request = {}) {
       inspectedScriptCount,
       parsedScriptCount,
       rejectedScriptCount,
+      oversizedScriptCount,
+      largestMatchedScriptBytes,
       rejectedPromotedCount,
       candidateRejectionCounts,
       inspectedBytes,
       traversedNodeCount,
       candidateCount: candidates.size,
-      bounded: traversedNodeCount >= maxTraversalNodes || inspectedBytes >= maxTotalBytes,
+      bounded: boundedReasons.size > 0,
+      boundedReasons: [...boundedReasons],
     }),
   });
 

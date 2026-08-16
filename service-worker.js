@@ -1673,7 +1673,7 @@ async function collectStructuredFeedFallback(tabId, source, readiness) {
         maxMediaPerCandidate: 4,
         maxScripts: 48,
         maxDocumentScripts: 96,
-        maxScriptBytes: 300_000,
+        maxScriptBytes: 512_000,
         maxTotalBytes: 2_000_000,
         maxTraversalNodes: 20_000,
         maxDepth: 40,

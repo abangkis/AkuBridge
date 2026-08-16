@@ -29,7 +29,7 @@ export function shouldRecoverManagedLoad({
   reset,
   policy,
 }) {
-  return source === "facebook" && shouldRecoverManagedSurface({
+  return typeof source === "string" && source.length > 0 && shouldRecoverManagedSurface({
     error,
     attempt,
     opened,

@@ -19,18 +19,25 @@ test("Facebook may recreate one Bridge-owned managed surface after a load timeou
   }), true);
 });
 
-test("managed load recovery is bounded and Facebook-specific", () => {
+test("managed load recovery is bounded for every opted-in source", () => {
   for (const value of [
     { source: "facebook", error: { code: "tab_load_timeout" }, attempt: 1, opened: true, reset: false },
     { source: "facebook", error: { code: "tab_load_timeout" }, attempt: 0, opened: false, reset: false },
     { source: "facebook", error: { code: "selector_mismatch" }, attempt: 0, opened: true, reset: false },
-    { source: "linkedin", error: { code: "tab_load_timeout" }, attempt: 0, opened: true, reset: false },
   ]) {
     assert.equal(shouldRecoverManagedLoad({
       ...value,
       policy: MANAGED_LOAD_RECOVERY_RECREATE_ONCE,
     }), false);
   }
+  assert.equal(shouldRecoverManagedLoad({
+    source: "linkedin",
+    error: { code: "tab_load_timeout" },
+    attempt: 0,
+    opened: true,
+    reset: false,
+    policy: MANAGED_LOAD_RECOVERY_RECREATE_ONCE,
+  }), true);
 });
 
 test("managed surface recreation requires a confirmed safe cleanup outcome", () => {

@@ -120,6 +120,30 @@ test("Instagram structured feed resolver reports candidate rejection causes", ()
   assert.equal(result.diagnostics.candidateRejectionCounts.missing_image_versions, 1);
 });
 
+test("Instagram structured feed fallback accepts the observed 300 KB bootstrap payload safely", () => {
+  const payload = JSON.stringify({
+    padding: "x".repeat(310_000),
+    item: instagramItem({ code: "LargeBootstrap_123", username: "aku.example" }),
+  });
+  const accepted = withScripts([payload], () => resolveInstagramStructuredFeedInMainWorld({
+    maxScriptBytes: 512_000,
+  }));
+
+  assert.equal(payload.length > 300_000, true);
+  assert.equal(accepted.candidates.length, 1);
+  assert.equal(accepted.diagnostics.largestMatchedScriptBytes, payload.length);
+  assert.equal(accepted.diagnostics.oversizedScriptCount, 0);
+  assert.deepEqual(accepted.diagnostics.boundedReasons, []);
+
+  const rejected = withScripts([payload], () => resolveInstagramStructuredFeedInMainWorld({
+    maxScriptBytes: 300_000,
+  }));
+  assert.equal(rejected.candidates.length, 0);
+  assert.equal(rejected.diagnostics.oversizedScriptCount, 1);
+  assert.equal(rejected.diagnostics.bounded, true);
+  assert.deepEqual(rejected.diagnostics.boundedReasons, ["max_script_bytes"]);
+});
+
 function instagramItem({ code, username, productType = "clips" }) {
   return {
     code,

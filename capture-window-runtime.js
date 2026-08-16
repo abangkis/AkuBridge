@@ -6,6 +6,24 @@ export const CAPTURE_SURFACE_LEDGER_STORAGE_KEY = "akuBridgeManagedCaptureSurfac
 const MAX_LEDGER_RECEIPTS = 100;
 
 export function createManagedCaptureWindowRuntime(chromeApi) {
+  const runtime = createUnserializedManagedCaptureWindowRuntime(chromeApi);
+  let operationTail = Promise.resolve();
+  const serialize = (operation) => {
+    const result = operationTail.then(operation, operation);
+    operationTail = result.catch(() => undefined);
+    return result;
+  };
+  return Object.freeze({
+    prepare: (...args) => serialize(() => runtime.prepare(...args)),
+    reconcile: (...args) => serialize(() => runtime.reconcile(...args)),
+    trackOpenedTab: (...args) => serialize(() => runtime.trackOpenedTab(...args)),
+    isTrackedTab: (...args) => serialize(() => runtime.isTrackedTab(...args)),
+    releaseSource: (...args) => serialize(() => runtime.releaseSource(...args)),
+    release: (...args) => serialize(() => runtime.release(...args)),
+  });
+}
+
+function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
   return Object.freeze({
     async prepare(
       source,
