@@ -999,6 +999,8 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
   await assertTabLease(prepared.lease, "before_capture");
   if (prepared.structuredFeedFallback) {
     await assertTabLease(prepared.lease, "after_capture");
+    prepared.structuredFeedFallback.coverage.structuredFeedFallback =
+      prepared.structuredFeedDiagnostics ?? null;
     return prepared.structuredFeedFallback;
   }
   const captureSurface = await inspectCaptureSurface(chrome, prepared.tab.id);
@@ -1331,7 +1333,11 @@ async function findOrOpenSourceTab(
         "visible_recovery_required",
         "capture_visibility",
         `Quiet capture could not prepare the managed ${source} surface: ${String(error?.message ?? error)}`,
-        { source, causeCode: error?.code ?? "bridge_failure" },
+        {
+          source,
+          causeCode: error?.code ?? "bridge_failure",
+          causeDetails: error?.details ?? null,
+        },
       );
       wrapped.captureSurfaceLifecycle = lifecycleEvents;
       throw wrapped;
@@ -1582,9 +1588,10 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
   }
   readiness.waitMs = Date.now() - startedAt;
   const captureReady = isSourceCaptureReady(readiness);
-  const structuredFeedFallback = !captureReady
+  const structuredFeedResult = !captureReady
     ? await collectStructuredFeedFallback(tab.id, source, readiness)
     : null;
+  const structuredFeedFallback = structuredFeedResult?.observation ?? null;
   if (!captureReady && !structuredFeedFallback) {
     await restoreTabFocus(previousActiveTabId, tab.id);
     if (readiness.state === "source_unavailable") {
@@ -1620,7 +1627,11 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
       `loading=${readiness.loadingIndicator}, feedRoot=${readiness.feedRootPresent}, ` +
       `scroll=${readiness.scrollContext ?? "unknown"}, ` +
       `document=${readiness.documentReadyState ?? "unknown"}).`,
-      { source, readiness },
+      {
+        source,
+        readiness,
+        structuredFeedFallback: structuredFeedResult?.diagnostics ?? null,
+      },
     );
   }
   return {
@@ -1633,6 +1644,7 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
       : backgroundAtDispatch,
     readiness,
     structuredFeedFallback,
+    structuredFeedDiagnostics: structuredFeedResult?.diagnostics ?? null,
     activatedForReadiness,
     activateForRetry: activate,
     ownership: options.ownership ?? (opened ? "managed" : "shared"),
@@ -1669,10 +1681,24 @@ async function collectStructuredFeedFallback(tabId, source, readiness) {
       }],
     });
     const evidence = results?.[0]?.result ?? null;
-    if (!Array.isArray(evidence?.candidates) || evidence.candidates.length === 0) return null;
-    return instagramStructuredFeedObservation(evidence);
+    const diagnostics = evidence?.diagnostics && typeof evidence.diagnostics === "object"
+      ? { ...evidence.diagnostics, attempted: true }
+      : { attempted: true, outcome: "no_diagnostics" };
+    if (!Array.isArray(evidence?.candidates) || evidence.candidates.length === 0) {
+      return {
+        observation: null,
+        diagnostics: { ...diagnostics, outcome: "no_candidates" },
+      };
+    }
+    return {
+      observation: instagramStructuredFeedObservation(evidence),
+      diagnostics: { ...diagnostics, outcome: "candidates_found" },
+    };
   } catch {
-    return null;
+    return {
+      observation: null,
+      diagnostics: { attempted: true, outcome: "execution_failed" },
+    };
   }
 }
 
@@ -1727,6 +1753,7 @@ async function waitForSourceReady(
     if (latest.state === "feed_ready" && (
       !requireVisualHydration || latest.visualHydrationReady === true
     )) break;
+    if (latest.diagnosis === "dom_contract_mismatch" && latest.visualHydrationReady === true) break;
     if (["login_required", "source_unavailable", "wrong_page"].includes(latest.state)) break;
     if (!inPageRecoveryAttempted && latest.recoveryHint?.inPageAction) {
       inPageRecoveryAttempted = true;

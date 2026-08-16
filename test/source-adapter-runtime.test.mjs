@@ -85,6 +85,18 @@ test("X and Instagram diagnose unhydrated feed shells through the generic contra
   assert.equal(hydrating.state, "feed_hydrating");
   assert.equal(hydrating.diagnosis, "post_permalink_unhydrated");
   assert.equal(hydrating.recovery.inPageAction, "reset_feed_top");
+
+  const settledContractMismatch = context.AkuSourceAdapters.assessReadiness("instagram", {
+    state: "selector_mismatch",
+    feedRootPresent: true,
+    documentReadyState: "complete",
+    selectorCandidateCount: 0,
+    structuralCandidateCount: 0,
+    visualHydrationReady: true,
+  });
+  assert.equal(settledContractMismatch.state, "selector_mismatch");
+  assert.equal(settledContractMismatch.diagnosis, "dom_contract_mismatch");
+  assert.equal(settledContractMismatch.recovery, null);
 });
 
 test("generic readiness contract rejects unallowlisted or unimplemented in-page recovery", () => {

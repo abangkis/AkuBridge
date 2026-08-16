@@ -18,11 +18,13 @@ export function resolveInstagramStructuredFeedInMainWorld(request = {}) {
   let inspectedBytes = 0;
   let traversedNodeCount = 0;
   let rejectedPromotedCount = 0;
+  const candidateRejectionCounts = {};
 
   const pageDocument = typeof document === "undefined" ? null : document;
-  const documentScripts = [...(pageDocument?.querySelectorAll?.(
-    'script[type="application/json"]',
-  ) ?? [])].slice(0, maxDocumentScripts);
+  const documentScripts = [...new Set([
+    ...(pageDocument?.querySelectorAll?.('script[type="application/json"]') ?? []),
+    ...(pageDocument?.querySelectorAll?.("script:not([src])") ?? []),
+  ])].slice(0, maxDocumentScripts);
   const scripts = documentScripts.filter((script) => {
     const text = typeof script?.textContent === "string" ? script.textContent : "";
     return text.includes('"image_versions2"') && text.includes('"code"');
@@ -77,6 +79,7 @@ export function resolveInstagramStructuredFeedInMainWorld(request = {}) {
       parsedScriptCount,
       rejectedScriptCount,
       rejectedPromotedCount,
+      candidateRejectionCounts,
       inspectedBytes,
       traversedNodeCount,
       candidateCount: candidates.size,
@@ -89,14 +92,18 @@ export function resolveInstagramStructuredFeedInMainWorld(request = {}) {
     const user = dataProperty(value, "user");
     const username = normalizeUsername(dataProperty(user, "username"));
     const imageVersions = dataProperty(dataProperty(value, "image_versions2"), "candidates");
-    if (!shortcode || !username || !Array.isArray(imageVersions) || imageVersions.length === 0) return null;
+    if (!shortcode) return rejectCandidate("missing_shortcode");
+    if (!username) return rejectCandidate("missing_username");
+    if (!Array.isArray(imageVersions) || imageVersions.length === 0) {
+      return rejectCandidate("missing_image_versions");
+    }
     const productType = boundedText(dataProperty(value, "product_type"), 40).toLowerCase();
     const sponsorTags = dataProperty(value, "sponsor_tags");
     const promoted = productType === "ad" || dataProperty(value, "is_paid_partnership") === true ||
       (Array.isArray(sponsorTags) && sponsorTags.length > 0);
     const media = collectMedia(value);
     const caption = boundedText(dataProperty(dataProperty(value, "caption"), "text"), maxCaptionCharacters);
-    if (!caption && media.length === 0) return null;
+    if (!caption && media.length === 0) return rejectCandidate("missing_caption_and_media");
     const takenAt = positiveInteger(dataProperty(value, "taken_at"));
     const nativeKind = productType === "clips" ? "reel" : "p";
     const permalink = canonicalInstagramPostUrl(dataProperty(value, "link"), shortcode) ??
@@ -117,6 +124,11 @@ export function resolveInstagramStructuredFeedInMainWorld(request = {}) {
       media,
       promoted,
     };
+  }
+
+  function rejectCandidate(reason) {
+    candidateRejectionCounts[reason] = (candidateRejectionCounts[reason] ?? 0) + 1;
+    return null;
   }
 
   function collectMedia(value) {
@@ -337,9 +349,11 @@ export function instagramStructuredFeedObservation(evidence, { capturedAt = new 
 }
 
 export function shouldUseInstagramStructuredFeedFallback({ source, configuredFallback, readiness } = {}) {
+  const diagnosisAllowsFallback = readiness?.diagnosis === "feed_shell_unhydrated" ||
+    (readiness?.diagnosis === "dom_contract_mismatch" && readiness?.visualHydrationReady === true);
   return source === "instagram" &&
     configuredFallback === "instagram_structured_feed_v1" &&
-    readiness?.diagnosis === "feed_shell_unhydrated" &&
+    diagnosisAllowsFallback &&
     readiness?.feedRootPresent === true &&
     Number(readiness?.selectorCandidateCount ?? 0) === 0 &&
     Number(readiness?.structuralCandidateCount ?? 0) === 0;

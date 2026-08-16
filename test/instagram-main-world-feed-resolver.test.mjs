@@ -18,6 +18,22 @@ test("structured feed fallback is isolated to the exact Instagram empty-shell co
     },
   };
   assert.equal(shouldUseInstagramStructuredFeedFallback(valid), true);
+  assert.equal(shouldUseInstagramStructuredFeedFallback({
+    ...valid,
+    readiness: {
+      ...valid.readiness,
+      diagnosis: "dom_contract_mismatch",
+      visualHydrationReady: true,
+    },
+  }), true);
+  assert.equal(shouldUseInstagramStructuredFeedFallback({
+    ...valid,
+    readiness: {
+      ...valid.readiness,
+      diagnosis: "dom_contract_mismatch",
+      visualHydrationReady: false,
+    },
+  }), false);
   assert.equal(shouldUseInstagramStructuredFeedFallback({ ...valid, source: "x" }), false);
   assert.equal(shouldUseInstagramStructuredFeedFallback({
     ...valid,
@@ -94,6 +110,16 @@ test("Instagram structured feed resolver rejects hostile and oversized evidence"
   assert.equal(JSON.stringify(result).includes("attacker.example"), false);
 });
 
+test("Instagram structured feed resolver reports candidate rejection causes", () => {
+  const incomplete = instagramItem({ code: "MissingImage_123", username: "aku.example" });
+  incomplete.image_versions2.candidates = [];
+  const result = withScripts([JSON.stringify({ item: incomplete })], () =>
+    resolveInstagramStructuredFeedInMainWorld());
+
+  assert.equal(result.candidates.length, 0);
+  assert.equal(result.diagnostics.candidateRejectionCounts.missing_image_versions, 1);
+});
+
 function instagramItem({ code, username, productType = "clips" }) {
   return {
     code,
@@ -123,10 +149,11 @@ function instagramItem({ code, username, productType = "clips" }) {
 
 function withScripts(texts, callback) {
   const previous = globalThis.document;
+  const nodes = texts.map((textContent) => ({ textContent }));
   globalThis.document = {
     querySelectorAll(selector) {
-      return selector === 'script[type="application/json"]'
-        ? texts.map((textContent) => ({ textContent }))
+      return selector === 'script[type="application/json"]' || selector === "script:not([src])"
+        ? nodes
         : [];
     },
   };

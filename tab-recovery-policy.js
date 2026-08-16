@@ -33,5 +33,6 @@ function isStableEmptyCapture(details = {}) {
   if (readiness === "feed_empty") return true;
   return readiness === "feed_ready" &&
     Number(details?.selectorCandidateCount ?? 0) > 0 &&
-    Number(details?.visibleSelectorCandidateCount ?? 0) > 0;
+    Number(details?.visibleSelectorCandidateCount ?? 0) > 0 &&
+    Number(details?.observedBlockCount ?? 0) > 0;
 }

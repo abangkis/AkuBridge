@@ -85,16 +85,27 @@
     recoverReadiness: recoverInstagramReadiness,
     discoverCandidates: ({ uniqueElements }) => {
       const structural = uniqueElements([...document.querySelectorAll("main article")]);
-      const candidates = structural.filter((candidate) => Boolean(instagramPermalink(candidate)));
+      const permalinkAnchored = uniqueElements(instagramPermalinkAnchoredCandidates())
+        .filter((candidate) => !structural.includes(candidate));
+      const readinessCandidates = uniqueElements([...structural, ...permalinkAnchored]);
+      const candidates = readinessCandidates.filter((candidate) => Boolean(instagramPermalink(candidate)));
       return {
         candidates,
-        readinessCandidates: structural,
+        readinessCandidates,
         semanticCandidateCount: candidates.length,
         actionAnchoredCandidateCount: 0,
-        strategy: candidates.length > 0 ? "main_article_native_permalink" : structural.length > 0
+        strategy: candidates.length > 0 && structural.some((candidate) => candidates.includes(candidate))
+          ? "main_article_native_permalink"
+          : candidates.length > 0
+            ? "native_permalink_ancestor"
+            : structural.length > 0
           ? "main_article_unresolved"
           : "none",
-        selectorCounts: { main_article: structural.length, native_permalink: candidates.length },
+        selectorCounts: {
+          main_article: structural.length,
+          native_permalink_ancestor: permalinkAnchored.length,
+          native_permalink: candidates.length,
+        },
       };
     },
     findAuthor: instagramAuthor,
@@ -163,6 +174,8 @@
         (context.visibleSelectorCandidateCount ?? 0) === 0) {
       const selectorPostsPresent = context.selectorCandidateCount > 0;
       const structuralPostsPresent = context.structuralCandidateCount > 0;
+      const visuallySettledWithoutCandidates = context.visualHydrationReady === true &&
+        !selectorPostsPresent && !structuralPostsPresent;
       return {
         state: selectorPostsPresent
           ? context.state
@@ -173,19 +186,23 @@
           ? "post_outside_capture_viewport"
           : structuralPostsPresent
             ? "post_permalink_unhydrated"
-            : "feed_shell_unhydrated",
-        recovery: {
-          action: "recreate_managed_surface",
-          inPageAction: selectorPostsPresent
-            ? "align_first_candidate"
-            : "reset_feed_top",
-          reason: selectorPostsPresent
-            ? "post_outside_capture_viewport"
-            : structuralPostsPresent
-              ? "post_permalink_unhydrated"
+            : visuallySettledWithoutCandidates
+              ? "dom_contract_mismatch"
               : "feed_shell_unhydrated",
-          maxAttempts: 1,
-        },
+        ...(visuallySettledWithoutCandidates ? {} : {
+          recovery: {
+            action: "recreate_managed_surface",
+            inPageAction: selectorPostsPresent
+              ? "align_first_candidate"
+              : "reset_feed_top",
+            reason: selectorPostsPresent
+              ? "post_outside_capture_viewport"
+              : structuralPostsPresent
+                ? "post_permalink_unhydrated"
+                : "feed_shell_unhydrated",
+            maxAttempts: 1,
+          },
+        }),
       };
     }
     return {
@@ -199,8 +216,10 @@
     if (!["align_first_candidate", "reset_feed_top"].includes(requestedAction)) {
       return { attempted: false, outcome: "unsupported" };
     }
-    const candidates = [...document.querySelectorAll("main article")]
-      .filter((candidate) => Boolean(instagramPermalink(candidate)));
+    const candidates = [...new Set([
+      ...document.querySelectorAll("main article"),
+      ...instagramPermalinkAnchoredCandidates(),
+    ])].filter((candidate) => Boolean(instagramPermalink(candidate)));
     const target = candidates.find((candidate) => {
       const rect = candidate.getBoundingClientRect?.() ?? {};
       return Number(rect.width) > 0 && Number(rect.height) > 0;
@@ -280,17 +299,70 @@
 
   function instagramPermalink(container) {
     for (const anchor of container.querySelectorAll?.("a[href]") ?? []) {
-      try {
-        const url = new URL(anchor.href, window.location.href);
-        if (["instagram.com", "www.instagram.com"].includes(url.hostname) &&
-            nativePostPattern.test(url.pathname)) {
-          return url.href;
-        }
-      } catch {
-        // Ignore malformed DOM hrefs; the native source URL must fail closed.
-      }
+      const permalink = instagramPermalinkFromAnchor(anchor);
+      if (permalink) return permalink;
     }
     return null;
+  }
+
+  function instagramPermalinkFromAnchor(anchor) {
+    try {
+      const url = new URL(anchor?.href || anchor?.getAttribute?.("href"), window.location.href);
+      if (["instagram.com", "www.instagram.com"].includes(url.hostname) &&
+          nativePostPattern.test(url.pathname)) {
+        return url.href;
+      }
+    } catch {
+      // Ignore malformed DOM hrefs; the native source URL must fail closed.
+    }
+    return null;
+  }
+
+  function instagramPermalinkAnchoredCandidates() {
+    const main = document.querySelector?.("main");
+    if (!main) return [];
+    const anchors = [...(main.querySelectorAll?.("a[href]") ?? [])]
+      .filter((anchor) => Boolean(instagramPermalinkFromAnchor(anchor)));
+    return anchors
+      .map((anchor) => instagramCandidateContainer(anchor, main))
+      .filter(Boolean);
+  }
+
+  function instagramCandidateContainer(anchor, main) {
+    let current = anchor?.parentElement ?? null;
+    let distance = 0;
+    let best = null;
+    while (current && current !== main) {
+      const permalinkCount = [...(current.querySelectorAll?.("a[href]") ?? [])]
+        .filter((candidate) => Boolean(instagramPermalinkFromAnchor(candidate))).length;
+      if (permalinkCount === 1) {
+        const score = instagramCandidateScore(current);
+        if (score > 0 && (!best || score > best.score || score === best.score && distance < best.distance)) {
+          best = { element: current, score, distance };
+        }
+        const tagName = String(current.tagName ?? "").toLowerCase();
+        const role = String(current.getAttribute?.("role") ?? "").toLowerCase();
+        if (tagName === "article" || role === "article") return current;
+      } else if (permalinkCount > 1) {
+        break;
+      }
+      current = current.parentElement;
+      distance += 1;
+    }
+    return best?.element ?? null;
+  }
+
+  function instagramCandidateScore(element) {
+    let score = 0;
+    const tagName = String(element.tagName ?? "").toLowerCase();
+    const role = String(element.getAttribute?.("role") ?? "").toLowerCase();
+    if (tagName === "article") score += 6;
+    if (role === "article") score += 5;
+    if (element.querySelector?.("time")) score += 3;
+    if (element.querySelector?.("img, video")) score += 2;
+    if (element.querySelector?.('span[dir="auto"]')) score += 1;
+    if (String(element.innerText ?? element.textContent ?? "").trim().length >= 40) score += 1;
+    return score;
   }
 
   function instagramProfileAnchors(container) {

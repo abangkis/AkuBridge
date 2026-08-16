@@ -115,6 +115,7 @@
       structuralCandidateCount: readinessCandidates.length,
       visibleStructuralCandidateCount: visibleReadinessCandidates.length,
       documentReadyState: document.readyState,
+      ...visualHydration,
     });
     return readiness(
       assessment?.state ?? baseState,

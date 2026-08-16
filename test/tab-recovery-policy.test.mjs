@@ -68,6 +68,22 @@ test("Facebook empty capture retries only while its managed feed is not stably r
         readinessState: "feed_ready",
         selectorCandidateCount: 2,
         visibleSelectorCandidateCount: 1,
+        observedBlockCount: 0,
+      },
+    },
+    acquisitionRound: 1,
+    attempt: 0,
+    ownership: "managed",
+    emptyObservationRecovery: policy,
+  }), true);
+  assert.equal(shouldRetrySourceTab({
+    error: {
+      code: "capture_empty",
+      details: {
+        readinessState: "feed_ready",
+        selectorCandidateCount: 2,
+        visibleSelectorCandidateCount: 1,
+        observedBlockCount: 1,
       },
     },
     acquisitionRound: 1,

@@ -46,5 +46,9 @@ test("empty capture diagnostics preserve selector and readiness evidence without
     captureSurfaceReason: null,
     snapshotCount: 1,
     observedBlockCount: 0,
+    captureFailureReason: "candidates_not_visible_or_not_observed",
+    candidateDiagnostics: null,
+    captureQuality: null,
+    structuredFeedFallback: null,
   });
 });

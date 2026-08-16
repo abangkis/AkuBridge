@@ -135,6 +135,58 @@ test("Instagram adapter captures a live-shaped Home Feed article without admitti
   });
 });
 
+test("Instagram adapter can anchor a candidate to a native permalink without an article tag", () => {
+  const permalink = { href: "https://www.instagram.com/p/ABC_123/" };
+  const card = {
+    tagName: "div",
+    parentElement: null,
+    innerText: "aku.example 2h A bounded caption with enough visible evidence.",
+    textContent: "aku.example 2h A bounded caption with enough visible evidence.",
+    getAttribute() { return null; },
+    querySelector(selector) {
+      if (selector === "time") return { textContent: "2h" };
+      if (selector === "img, video") return { currentSrc: "https://instagram.example/image.jpg" };
+      if (selector === 'span[dir="auto"]') return { textContent: "A bounded caption" };
+      return null;
+    },
+    querySelectorAll(selector) {
+      return selector === "a[href]" ? [permalink] : [];
+    },
+  };
+  permalink.parentElement = card;
+  const main = {
+    querySelectorAll(selector) {
+      return selector === "a[href]" ? [permalink] : [];
+    },
+  };
+  const document = {
+    querySelector(selector) {
+      return selector === "main" ? main : null;
+    },
+    querySelectorAll() { return []; },
+  };
+  const window = {
+    document,
+    location: {
+      hostname: "www.instagram.com",
+      pathname: "/",
+      href: "https://www.instagram.com/",
+    },
+  };
+  const context = vm.createContext({ document, window, URL });
+  context.globalThis = context;
+  run(context, "source-adapter-runtime.js");
+  run(context, "adapters/instagram-adapter.js");
+
+  const adapter = context.AkuSourceAdapters.get("instagram");
+  const discovery = adapter.discoverCandidates({ uniqueElements: (items) => [...new Set(items)] });
+
+  assert.equal(discovery.strategy, "native_permalink_ancestor");
+  assert.equal(discovery.readinessCandidates.length, 1);
+  assert.equal(discovery.candidates.length, 1);
+  assert.equal(discovery.selectorCounts.native_permalink_ancestor, 1);
+});
+
 function instagramCandidate({ permalink = "https://www.instagram.com/p/ABC_123/", author = "aku.example" } = {}) {
   const avatar = {
     currentSrc: "https://instagram.fcgk4-2.fna.fbcdn.net/avatar.jpg",
