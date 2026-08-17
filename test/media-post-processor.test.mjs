@@ -66,6 +66,25 @@ test("generic media-post processor promotes an exact LinkedIn poster image to vi
   assert.equal(result.media[0].width, primary.width);
 });
 
+test("structured Instagram carousel order wins over partially rendered DOM neighbors", () => {
+  const processor = processorContext().AkuMediaPostProcessor;
+  const structured = Array.from({ length: 7 }, (_, index) => ({
+    kind: "image",
+    url: `https://instagram.example.fbcdn.net/carousel-${index + 1}.jpg`,
+    width: 1080,
+    height: 1350,
+  }));
+  const primary = [structured[1], structured[2]].map((value) => ({ ...value }));
+
+  const result = processor.process("instagram", primary, structured);
+
+  assert.equal(result.media.length, 7);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.media.map((value) => value.url))),
+    structured.map((value) => value.url),
+  );
+});
+
 test("generic evidence runtime keeps source identity and media validation in callbacks", () => {
   let now = 1_000;
   const context = processorContext();

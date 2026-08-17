@@ -5,7 +5,7 @@
 
   const defaults = Object.freeze({
     maxCandidates: 128,
-    maxMediaPerCandidate: 4,
+    maxMediaPerCandidate: 20,
     ttlMs: 15 * 60 * 1_000,
   });
 
@@ -24,7 +24,7 @@
     const maxMediaPerCandidate = clampInteger(
       options.maxMediaPerCandidate,
       1,
-      8,
+      20,
       defaults.maxMediaPerCandidate,
     );
     const ttlMs = clampInteger(options.ttlMs, 1_000, 60 * 60 * 1_000, defaults.ttlMs);
@@ -121,47 +121,48 @@
       return Object.freeze({ media: primary, enrichedCount: 0, structuredCount: 0 });
     }
 
-    const unusedStructured = new Set(structured);
+    const unusedPrimary = new Set(primary);
     const combined = [];
     let enrichedCount = 0;
     const primaryVideos = primary.filter((value) => value.kind === "video");
     const structuredVideos = structured.filter((value) => value.kind === "video");
 
-    for (const primaryValue of primary) {
-      if (primaryValue.kind !== "video" && primaryValue.kind !== "image") {
-        combined.push(primaryValue);
-        continue;
-      }
-      const match = structuredVideos.find((value) => (
-        unusedStructured.has(value) && (
-          samePoster(primaryValue, value) ||
-          primaryValue.kind === "video" &&
+    // Structured carousel evidence carries the source order. Walk it first and
+    // enrich matching DOM media in place so partially rendered neighboring
+    // slides cannot move ahead of the actual first slide.
+    for (const structuredValue of structured) {
+      const match = primary.find((primaryValue) => (
+        unusedPrimary.has(primaryValue) && (
+          samePoster(primaryValue, structuredValue) ||
+          primaryValue.kind === "video" && structuredValue.kind === "video" &&
             primaryVideos.length === 1 && structuredVideos.length === 1
         )
       ));
       if (!match) {
-        combined.push(primaryValue);
+        combined.push(structuredValue);
         continue;
       }
-      const materiallyEnriched = primaryValue.kind !== "video" ||
-        primaryValue.playbackMode !== "inline" ||
-        primaryValue.playbackUrl !== match.playbackUrl ||
-        (!primaryValue.width && Boolean(match.width)) ||
-        (!primaryValue.height && Boolean(match.height));
-      unusedStructured.delete(match);
+      const materiallyEnriched = match.kind !== structuredValue.kind ||
+        match.playbackMode !== structuredValue.playbackMode ||
+        match.playbackUrl !== structuredValue.playbackUrl ||
+        (!match.width && Boolean(structuredValue.width)) ||
+        (!match.height && Boolean(structuredValue.height));
+      unusedPrimary.delete(match);
       combined.push({
-        ...primaryValue,
         ...match,
-        url: primaryValue.posterUrl || primaryValue.url || match.posterUrl || match.url,
-        posterUrl: primaryValue.posterUrl || primaryValue.url || match.posterUrl || match.url,
-        width: primaryValue.width || match.width,
-        height: primaryValue.height || match.height,
+        ...structuredValue,
+        url: match.posterUrl || match.url || structuredValue.posterUrl || structuredValue.url,
+        posterUrl: structuredValue.kind === "video"
+          ? match.posterUrl || match.url || structuredValue.posterUrl || structuredValue.url
+          : null,
+        width: match.width || structuredValue.width,
+        height: match.height || structuredValue.height,
       });
       if (materiallyEnriched) enrichedCount += 1;
     }
 
-    for (const value of structured) {
-      if (unusedStructured.has(value)) combined.push(value);
+    for (const value of primary) {
+      if (unusedPrimary.has(value)) combined.push(value);
     }
     const media = capturePolicy.normalizeMediaCandidates(source, combined);
     return Object.freeze({ media, enrichedCount, structuredCount: structured.length });

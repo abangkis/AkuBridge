@@ -64,7 +64,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "instagram",
     displayName: "Instagram",
-    adapterVersion: "instagram-dom-v4",
+    adapterVersion: "instagram-dom-v5",
     adapterScript: "adapters/instagram-adapter.js",
     supportScripts: Object.freeze([]),
     feedUrl: "https://www.instagram.com/",
@@ -73,7 +73,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
     canonicalFeedPath: /^\/$/,
     nativePostPath: /^\/(?:p|reel|tv)\/[A-Za-z0-9_-]+\/?$/,
     navigation: Object.freeze({ readinessMode: "tab_complete_or_source_ready" }),
-    mediaEvidenceAdapterVersion: "instagram-structured-video-v1",
+    mediaEvidenceAdapterVersion: "instagram-structured-carousel-v2",
     structuredMediaCollector: "instagram_structured",
     structuredMediaPayloadField: "instagramStructuredMediaEvidence",
     hydration: Object.freeze({ defaultTimeoutMs: 15_000, minTimeoutMs: 10_000, maxTimeoutMs: 20_000 }),

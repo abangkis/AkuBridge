@@ -22,7 +22,7 @@
 
   registry.register({
     source: "instagram",
-    version: "instagram-dom-v4",
+    version: "instagram-dom-v5",
     mediaHosts: Object.freeze(["fbcdn.net", "cdninstagram.com"]),
     structuredMediaEvidence: Object.freeze({
       payloadField: "instagramStructuredMediaEvidence",
@@ -258,10 +258,23 @@
   }
 
   function normalizeInstagramStructuredMedia(value) {
-    if (!value || value.kind !== "video") return null;
+    if (!value || (value.kind !== "image" && value.kind !== "video")) return null;
     const posterUrl = safeInstagramMediaUrl(value.posterUrl || value.url, "image");
+    if (!posterUrl) return null;
+    if (value.kind === "image") {
+      return Object.freeze({
+        kind: "image",
+        url: posterUrl,
+        posterUrl: null,
+        playbackUrl: null,
+        playbackMode: null,
+        width: positiveMediaDimension(value.width),
+        height: positiveMediaDimension(value.height),
+        provenance: String(value.provenance || "instagram_structured_json").slice(0, 60),
+      });
+    }
     const playbackUrl = safeInstagramMediaUrl(value.playbackUrl, "video");
-    if (!posterUrl || !playbackUrl) return null;
+    if (!playbackUrl) return null;
     return Object.freeze({
       kind: "video",
       url: posterUrl,
@@ -284,7 +297,7 @@
         !["fbcdn.net", "cdninstagram.com"].some((suffix) => host === suffix || host.endsWith(`.${suffix}`))
       ) return null;
       if (kind === "video" && !/\.mp4$/i.test(url.pathname)) return null;
-      if (kind === "image" && !/\.(?:avif|gif|jpe?g|png|webp)$/i.test(url.pathname)) return null;
+      if (kind === "image" && !/\.(?:avif|gif|heic|jpe?g|png|webp)$/i.test(url.pathname)) return null;
       url.hash = "";
       return url.href;
     } catch {

@@ -17,7 +17,7 @@ test("Instagram MAIN-world resolver returns bounded MP4 and poster evidence by s
 
   const result = withScripts([payload], () => resolveInstagramStructuredMediaInMainWorld());
 
-  assert.equal(result.resolverVersion, "instagram-structured-video-v1");
+  assert.equal(result.resolverVersion, "instagram-structured-carousel-v2");
   assert.deepEqual(result.candidates, [{
     candidateId: "instagram:post:Db8U_yQiijk",
     media: [{
@@ -62,13 +62,36 @@ test("Instagram resolver matches p and reel identities to the same shortcode and
   assert.equal(result.candidates[0].media[0].playbackMode, "inline");
 });
 
+test("Instagram resolver preserves an image-only carousel beyond the former four-slide limit", () => {
+  const carousel = Array.from({ length: 7 }, (_, index) => ({
+    image_versions2: { candidates: [{
+      width: 1080,
+      height: 1350,
+      url: `https://instagram.example.fbcdn.net/v/carousel-${index + 1}.heic?token=${index + 1}`,
+    }] },
+  }));
+  const payload = JSON.stringify({ item: { code: "Carousel_Images_123", carousel_media: carousel } });
+
+  const result = withScripts([payload], () => resolveInstagramStructuredMediaInMainWorld({
+    maxMediaPerCandidate: 20,
+  }));
+
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates[0].media.length, 7);
+  assert.deepEqual(
+    result.candidates[0].media.map((value) => value.url),
+    carousel.map((value, index) => `https://instagram.example.fbcdn.net/v/carousel-${index + 1}.heic?token=${index + 1}`),
+  );
+  assert.equal(result.candidates[0].media.every((value) => value.kind === "image"), true);
+});
+
 test("Instagram resolver rejects hostile media and oversized JSON", () => {
   const hostile = instagramPayload({
     code: "Unsafe_123",
     videos: [{ width: 720, height: 1280, url: "https://attacker.example/video.mp4" }],
     posters: [{ width: 640, height: 1136, url: "https://attacker.example/poster.jpg" }],
   });
-  const oversized = `${"x".repeat(10_000)}video_versions`;
+  const oversized = `${"x".repeat(10_000)}image_versions2`;
 
   const result = withScripts([hostile, oversized], () => resolveInstagramStructuredMediaInMainWorld({
     maxScriptBytes: 8_192,

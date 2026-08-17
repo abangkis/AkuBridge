@@ -3,7 +3,7 @@
 export function resolveInstagramStructuredFeedInMainWorld(request = {}) {
   const runtimeRevision = "instagram-main-world-feed-resolver-v1";
   const maxCandidates = clamp(request.maxCandidates, 1, 12, 5);
-  const maxMediaPerCandidate = clamp(request.maxMediaPerCandidate, 1, 4, 4);
+  const maxMediaPerCandidate = clamp(request.maxMediaPerCandidate, 1, 20, 20);
   const maxScripts = clamp(request.maxScripts, 1, 64, 48);
   const maxDocumentScripts = clamp(request.maxDocumentScripts, 1, 128, 96);
   const maxScriptBytes = clamp(request.maxScriptBytes, 8_192, 512_000, 512_000);
@@ -149,9 +149,10 @@ export function resolveInstagramStructuredFeedInMainWorld(request = {}) {
   }
 
   function collectMedia(value) {
-    const roots = [value];
     const carousel = dataProperty(value, "carousel_media");
-    if (Array.isArray(carousel)) roots.push(...carousel.slice(0, maxMediaPerCandidate));
+    const roots = Array.isArray(carousel) && carousel.length > 0
+      ? carousel.slice(0, maxMediaPerCandidate)
+      : [value];
     const result = [];
     const seen = new Set();
     for (const root of roots) {
@@ -243,7 +244,7 @@ export function resolveInstagramStructuredFeedInMainWorld(request = {}) {
 
   function safeInstagramImageUrl(value) {
     const url = safeInstagramMediaUrl(value);
-    return url && /\.(?:avif|gif|jpe?g|png|webp)$/i.test(new URL(url).pathname) ? url : null;
+    return url && /\.(?:avif|gif|heic|jpe?g|png|webp)$/i.test(new URL(url).pathname) ? url : null;
   }
 
   function safeInstagramMediaUrl(value) {
@@ -316,7 +317,7 @@ export function instagramStructuredFeedObservation(evidence, { capturedAt = new 
       contentExpansion: "not_applicable",
     },
     attachments: [],
-    media: Array.isArray(candidate.media) ? candidate.media.slice(0, 4) : [],
+    media: Array.isArray(candidate.media) ? candidate.media.slice(0, 20) : [],
     links: [],
     mediaRecovery: { outcome: "structured_feed_native" },
     captureQuality: { verdict: "usable_degraded", issues: [] },
@@ -329,7 +330,7 @@ export function instagramStructuredFeedObservation(evidence, { capturedAt = new 
     capturedAt,
     snapshots: [{
       index: 0,
-      adapterVersion: "instagram-dom-v4",
+      adapterVersion: "instagram-dom-v5",
       selectorStrategy: "instagram_structured_feed_json",
       selectorCounts: { structured_feed_candidate: blocks.length },
       selectorCandidateCount: blocks.length,
@@ -349,7 +350,7 @@ export function instagramStructuredFeedObservation(evidence, { capturedAt = new 
       observedBlockCount: blocks.length,
       browserAdapter: "aku-bridge",
       captureMethod: "instagram_structured_feed_json",
-      adapterVersion: "instagram-dom-v4",
+      adapterVersion: "instagram-dom-v5",
       captureQuality: { verdict: "usable_degraded", issues: [] },
       structuredFeedEvidence: evidence?.diagnostics ?? null,
       sourceFreshness: { status: "ready", outcome: "structured_feed_bootstrap" },

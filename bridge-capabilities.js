@@ -4,7 +4,7 @@ import {
   sourceIds,
 } from "./source-catalog.js";
 
-export const BRIDGE_RUNTIME_REVISION = "source-adapters-v100";
+export const BRIDGE_RUNTIME_REVISION = "source-adapters-v101";
 export const BRIDGE_ID = "aku-bridge-chrome-mv3-v0";
 export const BRIDGE_CONTRACT_VERSION = "aku-browser.bridge.v2";
 export const BRIDGE_PROTOCOL_MAJOR = 2;
@@ -59,7 +59,7 @@ export function createBridgeCapabilities(manifest) {
       "reload_self",
     ],
     authority: "read_only_bounded",
-    captureLimits: { maxScrolls: 6, maxSnapshots: 7, maxBlocksPerSnapshot: 20 },
+    captureLimits: { maxScrolls: 6, maxSnapshots: 7, maxBlocksPerSnapshot: 20, maxMediaPerBlock: 20 },
   };
 }
 

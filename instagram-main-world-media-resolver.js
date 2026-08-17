@@ -1,12 +1,12 @@
 // This function is intentionally self-contained so Chrome can serialize it into the MAIN world.
 // It parses only bounded Instagram JSON data and returns shortcodes plus allowlisted media evidence.
 export function resolveInstagramStructuredMediaInMainWorld(request = {}) {
-  const runtimeRevision = "instagram-main-world-media-resolver-v1";
+  const runtimeRevision = "instagram-main-world-media-resolver-v2";
   const maxCandidates = clamp(request.maxCandidates, 1, 24, 16);
-  const maxMediaPerCandidate = clamp(request.maxMediaPerCandidate, 1, 4, 4);
+  const maxMediaPerCandidate = clamp(request.maxMediaPerCandidate, 1, 20, 20);
   const maxScripts = clamp(request.maxScripts, 1, 64, 48);
   const maxDocumentScripts = clamp(request.maxDocumentScripts, 1, 128, 96);
-  const maxScriptBytes = clamp(request.maxScriptBytes, 8_192, 512_000, 256_000);
+  const maxScriptBytes = clamp(request.maxScriptBytes, 8_192, 512_000, 512_000);
   const maxTotalBytes = clamp(request.maxTotalBytes, 64_000, 4_000_000, 2_000_000);
   const maxTraversalNodes = clamp(request.maxTraversalNodes, 500, 40_000, 20_000);
   const maxDepth = clamp(request.maxDepth, 8, 48, 40);
@@ -31,7 +31,7 @@ export function resolveInstagramStructuredMediaInMainWorld(request = {}) {
   for (const script of documentScripts) {
     if (scripts.length >= maxScripts) break;
     const text = typeof script?.textContent === "string" ? script.textContent : "";
-    if (text.includes("video_versions")) scripts.push(script);
+    if (text.includes("image_versions2")) scripts.push(script);
   }
 
   for (const script of scripts) {
@@ -85,7 +85,7 @@ export function resolveInstagramStructuredMediaInMainWorld(request = {}) {
 
   return Object.freeze({
     runtimeRevision,
-    resolverVersion: "instagram-structured-video-v1",
+    resolverVersion: "instagram-structured-carousel-v2",
     candidates: [...candidates.values()],
     diagnostics: Object.freeze({
       documentScriptCount: documentScripts.length,
@@ -105,10 +105,11 @@ export function resolveInstagramStructuredMediaInMainWorld(request = {}) {
     const candidateId = `instagram:post:${shortcode}`;
     const existing = candidates.get(candidateId)?.media ?? [];
     const merged = [];
-    const playbackUrls = new Set();
+    const mediaUrls = new Set();
     for (const entry of [...existing, ...media]) {
-      if (!entry?.playbackUrl || playbackUrls.has(entry.playbackUrl)) continue;
-      playbackUrls.add(entry.playbackUrl);
+      const identity = entry?.playbackUrl || entry?.url;
+      if (!identity || mediaUrls.has(identity)) continue;
+      mediaUrls.add(identity);
       merged.push(entry);
       if (merged.length >= maxMediaPerCandidate) break;
     }
@@ -116,15 +117,15 @@ export function resolveInstagramStructuredMediaInMainWorld(request = {}) {
   }
 
   function mediaFromObject(value) {
-    const direct = mediaFromItem(value);
-    if (direct) return [direct];
     const carousel = dataProperty(value, "carousel_media");
     const result = [];
     for (const item of Array.isArray(carousel) ? carousel.slice(0, maxMediaPerCandidate) : []) {
       const media = mediaFromItem(item);
       if (media) result.push(media);
     }
-    return result;
+    if (result.length > 0) return result;
+    const direct = mediaFromItem(value);
+    return direct ? [direct] : [];
   }
 
   function mediaFromItem(value) {
@@ -141,8 +142,6 @@ export function resolveInstagramStructuredMediaInMainWorld(request = {}) {
     }
     playbackCandidates.sort((left, right) => mediaScore(right) - mediaScore(left));
     const playback = playbackCandidates[0];
-    if (!playback) return null;
-
     const imageVersions = dataProperty(dataProperty(value, "image_versions2"), "candidates");
     const posterCandidates = [];
     for (const entry of Array.isArray(imageVersions) ? imageVersions.slice(0, 8) : []) {
@@ -157,16 +156,24 @@ export function resolveInstagramStructuredMediaInMainWorld(request = {}) {
     posterCandidates.sort((left, right) => mediaScore(right) - mediaScore(left));
     const poster = posterCandidates[0];
     if (!poster) return null;
-    return {
-      kind: "video",
-      url: poster.url,
-      posterUrl: poster.url,
-      playbackUrl: playback.url,
-      playbackMode: "inline",
-      width: playback.width || poster.width,
-      height: playback.height || poster.height,
-      provenance: "instagram_structured_json",
-    };
+    return playback
+      ? {
+          kind: "video",
+          url: poster.url,
+          posterUrl: poster.url,
+          playbackUrl: playback.url,
+          playbackMode: "inline",
+          width: playback.width || poster.width,
+          height: playback.height || poster.height,
+          provenance: "instagram_structured_json",
+        }
+      : {
+          kind: "image",
+          url: poster.url,
+          width: poster.width,
+          height: poster.height,
+          provenance: "instagram_structured_json",
+        };
   }
 
   function shortcodeFromObject(value) {
@@ -200,7 +207,7 @@ export function resolveInstagramStructuredMediaInMainWorld(request = {}) {
 
   function safeInstagramImageUrl(value) {
     const url = safeInstagramMediaUrl(value);
-    if (!url || !/\.(?:avif|gif|jpe?g|png|webp)$/i.test(new URL(url).pathname)) return null;
+    if (!url || !/\.(?:avif|gif|heic|jpe?g|png|webp)$/i.test(new URL(url).pathname)) return null;
     return url;
   }
 

@@ -15,7 +15,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("Instagram is an independently permissioned source with bounded native URLs", () => {
   const definition = sourceDefinition("instagram");
-  assert.equal(definition.adapterVersion, "instagram-dom-v4");
+  assert.equal(definition.adapterVersion, "instagram-dom-v5");
   assert.equal(sourceForUrl("https://www.instagram.com/"), "instagram");
   assert.equal(isCanonicalFeed("https://www.instagram.com/", "instagram"), true);
   assert.equal(isNativePostUrl("https://www.instagram.com/p/ABC_123/", "instagram"), true);
@@ -60,7 +60,7 @@ test("Instagram adapter captures a live-shaped Home Feed article without admitti
   };
   const discovery = adapter.discoverCandidates({ uniqueElements: (items) => [...new Set(items)] });
 
-  assert.equal(adapter.version, "instagram-dom-v4");
+  assert.equal(adapter.version, "instagram-dom-v5");
   assert.equal(adapter.matchesPage(), true);
   assert.equal(adapter.loginRequired(), false);
   assert.equal(adapter.feedRootPresent(), true);
@@ -113,6 +113,22 @@ test("Instagram adapter captures a live-shaped Home Feed article without admitti
       urlSource: "instagram_structured_json",
     }],
   );
+  assert.equal(adapter.structuredMediaEvidence.runtime().ingestStructured({
+    candidates: [{
+      candidateId: "instagram:post:ABC_123",
+      media: Array.from({ length: 7 }, (_, index) => ({
+        kind: "image",
+        url: `https://instagram.example.fbcdn.net/v/carousel-${index + 1}.heic?token=${index + 1}`,
+        width: 1080,
+        height: 1350,
+        provenance: "instagram_structured_json",
+      })),
+    }],
+  }), 1);
+  const carouselMedia = adapter.mediaAcquisition.extractStructuredCandidates(candidate);
+  assert.equal(carouselMedia.length, 7);
+  assert.equal(carouselMedia[4].kind, "image");
+  assert.equal(carouselMedia[4].url, "https://instagram.example.fbcdn.net/v/carousel-5.heic?token=5");
   const readiness = adapter.assessReadiness({
     state: "feed_not_visible",
     feedRootPresent: true,

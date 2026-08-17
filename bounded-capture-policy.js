@@ -11,7 +11,7 @@
     maxPendingContentSettleMs: 2_000,
     maxBlocksPerSnapshot: 20,
     maxBlockCharacters: 4_000,
-    maxMediaPerBlock: 4,
+    maxMediaPerBlock: 20,
     maxQualityRetryBudget: 1,
     maxQualityRetrySettleMs: 1_000,
   });

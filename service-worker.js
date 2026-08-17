@@ -1466,10 +1466,10 @@ async function collectInstagramStructuredMediaEvidence(tabId) {
       func: resolveInstagramStructuredMediaInMainWorld,
       args: [{
         maxCandidates: 16,
-        maxMediaPerCandidate: 4,
+        maxMediaPerCandidate: 20,
         maxScripts: 48,
         maxDocumentScripts: 96,
-        maxScriptBytes: 256_000,
+        maxScriptBytes: 512_000,
         maxTotalBytes: 2_000_000,
         maxTraversalNodes: 20_000,
         maxDepth: 40,
@@ -1478,8 +1478,8 @@ async function collectInstagramStructuredMediaEvidence(tabId) {
     return results?.[0]?.result ?? null;
   } catch (error) {
     return {
-      runtimeRevision: "instagram-main-world-media-resolver-v1",
-      resolverVersion: "instagram-structured-video-v1",
+      runtimeRevision: "instagram-main-world-media-resolver-v2",
+      resolverVersion: "instagram-structured-carousel-v2",
       candidates: [],
       diagnostics: {
         status: "unavailable",
@@ -1670,7 +1670,7 @@ async function collectStructuredFeedFallback(tabId, source, readiness) {
       func: resolveInstagramStructuredFeedInMainWorld,
       args: [{
         maxCandidates: 5,
-        maxMediaPerCandidate: 4,
+        maxMediaPerCandidate: 20,
         maxScripts: 48,
         maxDocumentScripts: 96,
         maxScriptBytes: 512_000,

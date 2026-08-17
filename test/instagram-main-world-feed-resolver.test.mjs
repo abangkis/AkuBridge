@@ -77,6 +77,28 @@ test("Instagram structured feed resolver returns bounded native post evidence", 
   });
 });
 
+test("Instagram structured feed resolver keeps image carousel source order through slide seven", () => {
+  const item = instagramItem({ code: "CarouselFeed_123", username: "aku.example", productType: "carousel_container" });
+  item.video_versions = [];
+  item.carousel_media = Array.from({ length: 7 }, (_, index) => ({
+    image_versions2: { candidates: [{
+      width: 1080,
+      height: 1350,
+      url: `https://instagram.example.fbcdn.net/v/feed-slide-${index + 1}.heic?token=${index + 1}`,
+    }] },
+  }));
+
+  const result = withScripts([JSON.stringify({ item })], () =>
+    resolveInstagramStructuredFeedInMainWorld({ maxMediaPerCandidate: 20 }));
+
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates[0].media.length, 7);
+  assert.deepEqual(
+    result.candidates[0].media.map((value) => value.url),
+    item.carousel_media.map((_, index) => `https://instagram.example.fbcdn.net/v/feed-slide-${index + 1}.heic?token=${index + 1}`),
+  );
+});
+
 test("structured feed observation is admissible but explicitly degraded", () => {
   const evidence = withScripts([JSON.stringify({ item: instagramItem({
     code: "ColdStart_456",

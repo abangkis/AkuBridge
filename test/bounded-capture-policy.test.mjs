@@ -166,6 +166,19 @@ test("captured media is bounded to rendered source CDN images", () => {
   assert.equal(Object.isFrozen(linkedInMedia), true);
 });
 
+test("captured carousel media keeps slides five through twenty but remains bounded", () => {
+  const policy = loadPolicy();
+  const media = policy.normalizeMediaCandidates("facebook", Array.from({ length: 24 }, (_, index) => ({
+    url: `https://scontent.example.fbcdn.net/carousel-${index + 1}.jpg`,
+    width: 1080,
+    height: 1350,
+  })));
+
+  assert.equal(media.length, 20);
+  assert.equal(media[4].url, "https://scontent.example.fbcdn.net/carousel-5.jpg");
+  assert.equal(media[19].url, "https://scontent.example.fbcdn.net/carousel-20.jpg");
+});
+
 test("trusted X media roots survive unknown background geometry with bounded diagnostics", () => {
   const policy = loadPolicy();
   const media = policy.normalizeMediaCandidates("x", [
