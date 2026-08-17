@@ -330,7 +330,7 @@ export function instagramStructuredFeedObservation(evidence, { capturedAt = new 
     capturedAt,
     snapshots: [{
       index: 0,
-      adapterVersion: "instagram-dom-v5",
+      adapterVersion: "instagram-dom-v6",
       selectorStrategy: "instagram_structured_feed_json",
       selectorCounts: { structured_feed_candidate: blocks.length },
       selectorCandidateCount: blocks.length,
@@ -350,7 +350,7 @@ export function instagramStructuredFeedObservation(evidence, { capturedAt = new 
       observedBlockCount: blocks.length,
       browserAdapter: "aku-bridge",
       captureMethod: "instagram_structured_feed_json",
-      adapterVersion: "instagram-dom-v5",
+      adapterVersion: "instagram-dom-v6",
       captureQuality: { verdict: "usable_degraded", issues: [] },
       structuredFeedEvidence: evidence?.diagnostics ?? null,
       sourceFreshness: { status: "ready", outcome: "structured_feed_bootstrap" },

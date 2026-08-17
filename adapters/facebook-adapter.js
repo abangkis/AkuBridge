@@ -26,7 +26,7 @@
 
   registry.register({
     source: "facebook",
-    version: "facebook-dom-v18",
+    version: "facebook-dom-v19",
     mediaHosts: Object.freeze(["fbcdn.net", "fbsbx.com"]),
     structuredMediaEvidence: Object.freeze({
       payloadField: "facebookStructuredMediaEvidence",
@@ -447,7 +447,12 @@
     if (typeof readStyle !== "function") return "";
     for (const anchor of container.querySelectorAll('a[target="_blank"]')) {
       const glyphs = [...anchor.querySelectorAll("span")].map((span) => {
-        const value = String(span.textContent ?? "").trim();
+        // Facebook inserts invisible combining/control characters between the
+        // visible timestamp glyphs. Remove only those format characters before
+        // validating each rendered glyph; CSS geometry still rejects decoys.
+        const value = String(span.textContent ?? "")
+          .replace(/[\u034f\u200b-\u200d\u2060\ufeff]/g, "")
+          .trim();
         if (!/^[0-9smhdwy]$/i.test(value)) return null;
         const style = readStyle(span);
         const rect = span.getBoundingClientRect?.();

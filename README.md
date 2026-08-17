@@ -1,7 +1,7 @@
 # AkuBridge
 
 Current release candidate identity: **`0.8.0`** / Chrome manifest
-**`0.8.0.0`** / runtime **`source-adapters-v101`**.
+**`0.8.0.0`** / runtime **`source-adapters-v102`**.
 
 Runtime v73 adds bounded background command dispatch for AkuBrowser Auto
 Update. After a trusted local AkuBrowser page configures the loopback endpoint
@@ -64,8 +64,8 @@ flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
     DOM --> XA["X adapter<br/>x-dom-v22<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
     DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v20<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v2"]
-    DOM --> FA["Facebook adapter<br/>facebook-dom-v18<br/>facebook-media-acquisition-v2"]
-    DOM --> IA["Instagram adapter<br/>instagram-dom-v5<br/>instagram-media-acquisition-v2"]
+    DOM --> FA["Facebook adapter<br/>facebook-dom-v19<br/>facebook-media-acquisition-v2"]
+    DOM --> IA["Instagram adapter<br/>instagram-dom-v6<br/>instagram-media-acquisition-v2"]
     XA --> R["Source-adapter registry"]
     LA --> R
     FA --> R

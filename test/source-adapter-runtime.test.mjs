@@ -20,8 +20,8 @@ test("source adapters register independently behind one contract", () => {
     [
       { source: "x", version: "x-dom-v22" },
       { source: "linkedin", version: "linkedin-dom-v20" },
-      { source: "facebook", version: "facebook-dom-v18" },
-      { source: "instagram", version: "instagram-dom-v5" },
+      { source: "facebook", version: "facebook-dom-v19" },
+      { source: "instagram", version: "instagram-dom-v6" },
     ],
   );
   assert.equal(
@@ -297,8 +297,8 @@ test("the complete adapter bundle can replace its current registry generation", 
     [
       { source: "x", version: "x-dom-v22" },
       { source: "linkedin", version: "linkedin-dom-v20" },
-      { source: "facebook", version: "facebook-dom-v18" },
-      { source: "instagram", version: "instagram-dom-v5" },
+      { source: "facebook", version: "facebook-dom-v19" },
+      { source: "instagram", version: "instagram-dom-v6" },
     ],
   );
 });

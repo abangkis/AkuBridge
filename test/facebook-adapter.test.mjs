@@ -20,8 +20,8 @@ test("source catalog exposes Facebook without changing the X media capability", 
   assert.deepEqual(sourceAdapterVersions(), {
     x: "x-dom-v22",
     linkedin: "linkedin-dom-v20",
-    facebook: "facebook-dom-v18",
-    instagram: "instagram-dom-v5",
+    facebook: "facebook-dom-v19",
+    instagram: "instagram-dom-v6",
   });
   assert.equal(sourceForUrl("https://www.facebook.com/"), "facebook");
   assert.equal(isCanonicalFeed("https://www.facebook.com/", "facebook"), true);
@@ -58,7 +58,7 @@ test("Facebook adapter passes synthetic Home Feed conformance", () => {
   const discovery = adapter.discoverCandidates({ uniqueElements: (items) => [...new Set(items)] });
   const helpers = { compactText, normalizeHttpUrl, structuredText: (element) => element?.innerText ?? "" };
 
-  assert.equal(adapter.version, "facebook-dom-v18");
+  assert.equal(adapter.version, "facebook-dom-v19");
   assert.equal(adapter.captureTuning.scrollStepMultiplier, 2);
   assert.equal(adapter.captureTuning.scrollStrategy, "next_candidate");
   assert.deepEqual([...adapter.evidenceProfile.modalities], ["text", "image", "video", "attachment", "quoted_post"]);
@@ -258,7 +258,7 @@ test("Facebook adapter reads the current profile-link header and rendered relati
     compareDocumentPosition: () => 4,
   };
   const fakeGlyph = glyph("q", 0, "absolute");
-  const renderedGlyphs = [glyph("1", 10), glyph("2", 16), glyph("h", 24)];
+  const renderedGlyphs = [glyph("1\u034f", 10), glyph("2\u034f", 16), glyph("h\u034f", 24)];
   const timestampAnchor = { querySelectorAll: (selector) => selector === "span" ? [fakeGlyph, ...renderedGlyphs] : [] };
   const candidate = {
     innerText: "Aku Example\nA bounded Facebook post",

@@ -43,7 +43,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "facebook",
     displayName: "Facebook",
-    adapterVersion: "facebook-dom-v18",
+    adapterVersion: "facebook-dom-v19",
     adapterScript: "adapters/facebook-adapter.js",
     supportScripts: Object.freeze([]),
     feedUrl: "https://www.facebook.com/",
@@ -64,7 +64,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "instagram",
     displayName: "Instagram",
-    adapterVersion: "instagram-dom-v5",
+    adapterVersion: "instagram-dom-v6",
     adapterScript: "adapters/instagram-adapter.js",
     supportScripts: Object.freeze([]),
     feedUrl: "https://www.instagram.com/",

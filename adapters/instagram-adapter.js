@@ -22,7 +22,7 @@
 
   registry.register({
     source: "instagram",
-    version: "instagram-dom-v5",
+    version: "instagram-dom-v6",
     mediaHosts: Object.freeze(["fbcdn.net", "cdninstagram.com"]),
     structuredMediaEvidence: Object.freeze({
       payloadField: "instagramStructuredMediaEvidence",
