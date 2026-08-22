@@ -23,7 +23,7 @@ export function planNativeRuntimeLifecycle(event, details = {}) {
     return Object.freeze({
       action,
       trigger: `installed_${reason}`,
-      openSetup: reason === "install",
+      openSetup: reason === "install" && distribution === "production",
     });
   }
   if (event === "startup") {

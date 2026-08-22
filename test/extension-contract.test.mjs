@@ -156,8 +156,9 @@ test("AkuBrowser setup page presents a component and permission timeline", () =>
   assert.match(setupScript, /Simulation mode uses the real runtime action controls/);
   assert.match(setupHtml, /setup-timeline/);
   assert.match(setupHtml, /About AkuBrowser/);
-  assert.match(setupHtml, /AkuSidecar/);
-  assert.match(setupHtml, /C2PA Verification/);
+  assert.match(setupHtml, /AkuBrowser runtime/);
+  assert.match(setupHtml, /Using the AkuBrowser desktop app\?/);
+  assert.doesNotMatch(setupHtml, /C2PA Verification/);
   assert.match(setupHtml, /Codex App/);
   assert.match(setupHtml, /id="codex-action"/);
   assert.match(setupHtml, /Download and install Codex App/);

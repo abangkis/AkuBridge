@@ -40,7 +40,7 @@ test("Chrome and shared-module updates only reconcile the compatible runtime", (
 });
 
 test("unpacked development reload and Chrome startup never start the installed runtime", () => {
-  for (const reason of ["update", "chrome_update", "shared_module_update"]) {
+  for (const reason of ["install", "update", "chrome_update", "shared_module_update"]) {
     assert.deepEqual(planNativeRuntimeLifecycle("installed", { reason, distribution: "development" }), {
       action: "none",
       trigger: `installed_${reason}`,
