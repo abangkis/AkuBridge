@@ -591,15 +591,35 @@ async function resumePendingSelfReload() {
   const stored = await chrome.storage.local.get(PENDING_SELF_RELOAD_KEY);
   const pending = stored[PENDING_SELF_RELOAD_KEY];
   if (!pending) return;
-  await chrome.storage.local.remove(PENDING_SELF_RELOAD_KEY);
   if (
     !Number.isInteger(pending.tabId) ||
     !Number.isFinite(pending.requestedAt) ||
     Date.now() - pending.requestedAt > PENDING_SELF_RELOAD_MAX_AGE_MS
-  ) return;
-  // The new extension runtime owns this navigation, so the injected content
-  // script remains valid and can publish the post-reload heartbeat.
-  await chrome.tabs.reload(pending.tabId);
+  ) {
+    await chrome.storage.local.remove(PENDING_SELF_RELOAD_KEY);
+    return;
+  }
+  const tab = await chrome.tabs.get(pending.tabId).catch(() => null);
+  if (!isTrustedAkuBrowserTab(tab)) {
+    await chrome.storage.local.remove(PENDING_SELF_RELOAD_KEY);
+    return;
+  }
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "ISOLATED",
+    files: [AKU_BROWSER_TAB_BRIDGE_FILE],
+  });
+  const origin = new URL(tab.url).origin;
+  const ping = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "ISOLATED",
+    func: postAkuBrowserBridgePing,
+    args: [origin],
+  });
+  if (ping?.[0]?.result !== true) {
+    throw new Error("AkuBridge post-reload relay ping was rejected by the trusted tab origin.");
+  }
+  await chrome.storage.local.remove(PENDING_SELF_RELOAD_KEY);
 }
 
 async function dispatchRun(message) {
