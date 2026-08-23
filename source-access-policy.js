@@ -128,6 +128,16 @@ export function sourceAccessDefinitions() {
   }));
 }
 
+export function sourceAccessDefinition(source) {
+  const definition = SOURCE_ACCESS[source];
+  if (!definition) return null;
+  return {
+    id: source,
+    displayName: definition.displayName,
+    origins: [...definition.origins],
+  };
+}
+
 export function setupSelectedSources(grantedSources, savedSelection) {
   const allSources = Object.keys(SOURCE_ACCESS);
   if (!savedSelection || ![1, SOURCE_ACCESS_SELECTION_SCHEMA_VERSION].includes(savedSelection.schemaVersion) || !Array.isArray(savedSelection.selectedSources)) {

@@ -6,6 +6,7 @@ import {
   reconcileRegisteredSourceScripts,
   registeredScriptsForSources,
   setupSelectedSources,
+  sourceAccessDefinition,
   sourceAccessSelectionNeedsDefaultMigration,
   sourceAccessGranted,
   sourceAccessReadiness,
@@ -28,6 +29,12 @@ test("setup preselects every registered source by default", () => {
 });
 
 test("source permissions are exact, optional, and independently selectable", () => {
+  assert.deepEqual(sourceAccessDefinition("x"), {
+    id: "x",
+    displayName: "X",
+    origins: ["https://x.com/*"],
+  });
+  assert.equal(sourceAccessDefinition("unknown"), null);
   assert.deepEqual(originsForSources(["x"]), ["https://x.com/*"]);
   assert.deepEqual(originsForSources(["linkedin"]), ["https://www.linkedin.com/*"]);
   assert.deepEqual(originsForSources(["facebook"]), [

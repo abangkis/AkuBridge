@@ -2055,8 +2055,19 @@ async function openSourceFeed(source) {
   }
   const definition = sourceDefinition(source);
   if (!definition?.feedUrl) throw new Error("Source has no canonical feed URL.");
+  if (!await sourceAccessGranted(chrome, source)) {
+    const permissionUrl = chrome.runtime.getURL(
+      `source-permission.html?source=${encodeURIComponent(source)}`,
+    );
+    const tab = await chrome.tabs.create({ url: permissionUrl, active: true });
+    return {
+      source,
+      state: "permission_required",
+      url: tab?.url ?? permissionUrl,
+    };
+  }
   const tab = await chrome.tabs.create({ url: definition.feedUrl, active: true });
-  return { source, url: tab?.url ?? definition.feedUrl };
+  return { source, state: "source_opened", url: tab?.url ?? definition.feedUrl };
 }
 
 async function probeSourceFreshness(tabId, source) {

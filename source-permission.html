@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Allow source access · AkuBrowser</title>
+    <link rel="icon" type="image/svg+xml" href="icons/setup-favicon.svg">
+    <link rel="stylesheet" href="source-permission.css">
+  </head>
+  <body>
+    <main class="permission-shell">
+      <p class="eyebrow">AkuBrowser source access</p>
+      <h1 id="permission-title">Allow source access</h1>
+      <p id="permission-intro" class="intro">
+        AkuBrowser needs your permission before it can read this source.
+      </p>
+
+      <section class="permission-card" aria-labelledby="permission-title">
+        <div class="source-mark" id="source-mark" aria-hidden="true">AB</div>
+        <div>
+          <h2 id="source-name">Selected source</h2>
+          <p>
+            Access is read-only and limited to the source shown here. AkuBrowser
+            does not receive your password or copy your browser cookies.
+          </p>
+          <p class="origin-label">Requested website</p>
+          <code id="source-origin"></code>
+        </div>
+      </section>
+
+      <p id="permission-status" class="status" role="status" aria-live="polite"></p>
+      <div class="actions">
+        <button id="allow-source" class="primary" type="button">Allow and continue</button>
+        <button id="back-to-akubrowser" type="button">Back to AkuBrowser</button>
+      </div>
+      <p class="footnote">
+        After permission is granted, this tab continues to the source. The
+        source will show either its feed or its own sign-in page.
+      </p>
+    </main>
+    <script type="module" src="source-permission.js"></script>
+  </body>
+</html>

@@ -77,7 +77,9 @@
           throw new Error(response?.message || "AkuBridge could not open the source.");
         }
         window.postMessage({
-          type: "AKU_BROWSER_SOURCE_OPENED",
+          type: response.state === "permission_required"
+            ? "AKU_BROWSER_SOURCE_PERMISSION_REQUIRED"
+            : "AKU_BROWSER_SOURCE_OPENED",
           source: response.source,
           url: response.url,
         }, allowedOrigin);
