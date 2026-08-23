@@ -46,6 +46,51 @@
       return;
     }
 
+    if (message.type === "AKU_BROWSER_PROBE_SOURCE_SESSIONS") {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "AKU_BRIDGE_PROBE_SOURCE_SESSIONS",
+        });
+        if (!response?.ok) {
+          throw new Error(response?.message || "AkuBridge source session probe failed.");
+        }
+        window.postMessage({
+          type: "AKU_BROWSER_SOURCE_SESSIONS_RESULT",
+          sessions: response.sessions ?? {},
+        }, allowedOrigin);
+      } catch (error) {
+        window.postMessage({
+          type: "AKU_BROWSER_SOURCE_SESSIONS_FAILED",
+          message: String(error?.message ?? error),
+        }, allowedOrigin);
+      }
+      return;
+    }
+
+    if (message.type === "AKU_BROWSER_OPEN_SOURCE") {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "AKU_BRIDGE_OPEN_SOURCE",
+          source: message.source,
+        });
+        if (!response?.ok) {
+          throw new Error(response?.message || "AkuBridge could not open the source.");
+        }
+        window.postMessage({
+          type: "AKU_BROWSER_SOURCE_OPENED",
+          source: response.source,
+          url: response.url,
+        }, allowedOrigin);
+      } catch (error) {
+        window.postMessage({
+          type: "AKU_BROWSER_SOURCE_OPEN_FAILED",
+          source: message.source,
+          message: String(error?.message ?? error),
+        }, allowedOrigin);
+      }
+      return;
+    }
+
     if (message.type === "AKU_BROWSER_BRIDGE_RELOAD_SELF") {
       try {
         const response = await chrome.runtime.sendMessage({

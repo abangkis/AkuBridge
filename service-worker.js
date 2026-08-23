@@ -95,6 +95,11 @@ import {
   sourceRequiresVisualHydration,
   sourceHydrationTimeout,
 } from "./source-catalog.js";
+import {
+  SOURCE_SESSION_MAX_TABS,
+  createSourceSessionObservation,
+  sourceSessionStateForTabs,
+} from "./session-readiness-policy.js";
 
 const AKU_BROWSER_ORIGIN = AKU_BROWSER_LOOPBACK_ORIGIN;
 const AKU_BROWSER_ORIGINS = new Set([
@@ -293,6 +298,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "AKU_BRIDGE_GET_CAPABILITIES") {
     bridgeCapabilitiesWithSourceAccess()
       .then((capabilities) => sendResponse({ ok: true, capabilities }))
+      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+    return true;
+  }
+  if (message?.type === "AKU_BRIDGE_PROBE_SOURCE_SESSIONS") {
+    if (!isAkuBrowserOrigin(sender.url)) {
+      sendResponse({ ok: false, message: "Source session probe rejected: invalid AkuBrowser origin." });
+      return false;
+    }
+    probeSourceSessions()
+      .then((sessions) => sendResponse({ ok: true, sessions }))
+      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+    return true;
+  }
+  if (message?.type === "AKU_BRIDGE_OPEN_SOURCE") {
+    if (!isAkuBrowserOrigin(sender.url)) {
+      sendResponse({ ok: false, message: "Open source rejected: invalid AkuBrowser origin." });
+      return false;
+    }
+    openSourceFeed(message.source)
+      .then((result) => sendResponse({ ok: true, ...result }))
       .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
     return true;
   }
@@ -1964,6 +1989,54 @@ async function probeSourceReadiness(tabId, source) {
     structuralCandidateCount: 0,
     visibleStructuralCandidateCount: 0,
   };
+}
+
+async function probeSourceSessions() {
+  const observedAt = new Date().toISOString();
+  const sessions = {};
+  for (const source of sourceIds()) {
+    const tabs = await chrome.tabs.query({ url: matchPatternsFor(source) }).catch(() => []);
+    const candidates = tabs
+      .filter((tab) => Number.isInteger(tab?.id))
+      .sort((left, right) => Number(right.active) - Number(left.active) ||
+        Number(right.lastAccessed ?? 0) - Number(left.lastAccessed ?? 0))
+      .slice(0, SOURCE_SESSION_MAX_TABS);
+    const observations = [];
+    for (const tab of candidates) {
+      const readiness = await probeSourceReadiness(tab.id, source).catch(() => null);
+      observations.push({
+        tab,
+        readiness: tab.status && tab.status !== "complete"
+          ? { state: "loading" }
+          : readiness,
+      });
+    }
+    const state = observations.length === 0
+      ? "not_observed"
+      : sourceSessionStateForTabs(observations);
+    sessions[source] = createSourceSessionObservation({
+      source,
+      state,
+      observedAt,
+      tabCount: observations.length,
+      detail: state === "not_observed"
+        ? "No existing source tab was observed."
+        : state === "unknown"
+          ? "Existing source tab did not expose a conclusive readiness state."
+          : null,
+    });
+  }
+  return sessions;
+}
+
+async function openSourceFeed(source) {
+  if (!sourceIds().includes(source)) {
+    throw new Error("Source is not in the AkuBrowser allowlist.");
+  }
+  const definition = sourceDefinition(source);
+  if (!definition?.feedUrl) throw new Error("Source has no canonical feed URL.");
+  const tab = await chrome.tabs.create({ url: definition.feedUrl, active: true });
+  return { source, url: tab?.url ?? definition.feedUrl };
 }
 
 async function probeSourceFreshness(tabId, source) {

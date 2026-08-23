@@ -202,6 +202,34 @@ test("X adapter uses response-backed avatar evidence when the DOM avatar is not 
   );
 });
 
+test("X adapter conservatively identifies login pages without treating feed absence as login", () => {
+  const loginDocument = {
+    querySelector(selector) {
+      return selector.includes('input[autocomplete="username"]') ? {} : null;
+    },
+    querySelectorAll() { return []; },
+  };
+  const loginContext = vm.createContext({
+    document: loginDocument,
+    window: { document: loginDocument, location: { hostname: "x.com", pathname: "/home" } },
+    URL,
+  });
+  loginContext.globalThis = loginContext;
+  run(loginContext, "source-adapter-runtime.js");
+  run(loginContext, "adapters/x-adapter.js");
+  assert.equal(loginContext.AkuSourceAdapters.get("x").loginRequired(), true);
+
+  const pathContext = vm.createContext({
+    document: { querySelector: () => null, querySelectorAll: () => [] },
+    window: { document: {}, location: { hostname: "x.com", pathname: "/i/flow/login" } },
+    URL,
+  });
+  pathContext.globalThis = pathContext;
+  run(pathContext, "source-adapter-runtime.js");
+  run(pathContext, "adapters/x-adapter.js");
+  assert.equal(pathContext.AkuSourceAdapters.get("x").loginRequired(), true);
+});
+
 function syntheticDocument(source, selector, candidate) {
   return {
     body: {},

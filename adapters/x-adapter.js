@@ -81,7 +81,12 @@
       extractCandidates: extractXRecoveryCandidates,
     }),
     matchesPage: () => window.location.hostname === "x.com",
-    loginRequired: () => false,
+    loginRequired: () => (
+      /^(?:\/login|\/i\/flow\/login|\/i\/flow\/signup)/i.test(window.location.pathname) ||
+      Boolean(document.querySelector(
+        'input[autocomplete="username"], input[name="password"], [data-testid="LoginForm_Login_Button"]',
+      ))
+    ),
     feedRootPresent: () => Boolean(document.querySelector("main")),
     assessReadiness: assessXReadiness,
     discoverCandidates: ({ uniqueElements }) => {
