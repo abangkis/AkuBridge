@@ -13,6 +13,27 @@ test("first Store install opens setup without contacting the native host", () =>
   });
 });
 
+test("development and installed-app installs keep setup in AkuSidecar", () => {
+  for (const mode of ["development", "production-app"]) {
+    assert.equal(
+      planNativeRuntimeLifecycle("installed", {
+        reason: "install",
+        distribution: mode === "development" ? "development" : "production",
+        mode,
+      }).openSetup,
+      false,
+    );
+  }
+  assert.equal(
+    planNativeRuntimeLifecycle("installed", {
+      reason: "install",
+      distribution: "production",
+      mode: "production-store",
+    }).openSetup,
+    true,
+  );
+});
+
 test("Chrome and PC restart reconcile a stopped or crashed runtime", () => {
   assert.deepEqual(planNativeRuntimeLifecycle("startup", { distribution: "production" }), {
     action: "reconcile_runtime",

@@ -49,6 +49,18 @@ import {
 } from "./native-runtime-lifecycle.js";
 import { BRIDGE_DEPLOYMENT } from "./bridge-deployment.js";
 import {
+  AKU_BROWSER_INSTALL_RECOVERY_ALARM,
+  AKU_BROWSER_INSTALL_RECOVERY_MAX_TABS,
+  AKU_BROWSER_INSTALL_RECOVERY_STORAGE_KEY,
+  AKU_BROWSER_TAB_BRIDGE_FILE,
+  AKU_BROWSER_LOOPBACK_URL_PATTERNS,
+  createInstalledAkuBrowserTabRecovery,
+  isCurrentInstalledAkuBrowserTabRecovery,
+  isTrustedAkuBrowserTab,
+  selectInstalledAkuBrowserTabs,
+  shouldRecoverInstalledAkuBrowserTabs,
+} from "./extension-install-recovery-policy.js";
+import {
   NATIVE_RUNTIME_CHECK_ALARM,
   createNativeRuntimeScheduler,
 } from "./native-runtime-scheduler.js";
@@ -100,6 +112,7 @@ const BACKGROUND_RELEASE_PUMP_MS = 55_000;
 const BACKGROUND_RELEASE_POLL_MS = 650;
 let backgroundDispatching = false;
 let sourceAccessReconciliation = Promise.resolve();
+let installedTabRecoveryQueue = Promise.resolve();
 const commandGuard = createCommandGuard();
 const nativeRuntimeClient = createChromeNativeRuntimeClient(chrome);
 const NATIVE_RUNTIME_BACKGROUND_TIMEOUT_MS = 195_000;
@@ -149,8 +162,17 @@ void restoreBackgroundDispatch()
 void nativeRuntimeScheduler.restore().catch(() => {
   console.warn("AkuBridge could not restore the native runtime update schedule.");
 });
+void resumePendingInstalledAkuBrowserTabRecovery().catch((error) => {
+  console.warn("AkuBridge could not resume the pending install tab recovery.", error);
+});
 
 chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === AKU_BROWSER_INSTALL_RECOVERY_ALARM) {
+    void expireInstalledAkuBrowserTabRecovery().catch((error) => {
+      console.warn("AkuBridge could not expire the install tab recovery.", error);
+    });
+    return;
+  }
   if (alarm.name === NATIVE_RUNTIME_CHECK_ALARM) {
     void nativeRuntimeScheduler.checkNow("scheduled_alarm").catch(() => {
       console.warn("AkuBridge could not complete the scheduled native runtime check.");
@@ -161,10 +183,20 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   void pollBackgroundDispatch().catch((error) => console.warn("AkuBridge background dispatch deferred.", error));
 });
 
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "complete") return;
+  // The event's tab URL may be omitted without the broad `tabs` permission.
+  // When it is available, reject foreign pages before touching storage; the
+  // recovery query below remains restricted to the two loopback URL patterns.
+  if (tab?.url && !isTrustedAkuBrowserTab({ ...tab, id: tabId })) return;
+  queueInstalledAkuBrowserTabRecovery(() => recoverPendingInstalledAkuBrowserTabs());
+});
+
 chrome.runtime.onInstalled.addListener((details) => {
   const plan = planNativeRuntimeLifecycle("installed", {
     ...details,
     distribution: NATIVE_RUNTIME_DISTRIBUTION,
+    mode: BRIDGE_DEPLOYMENT.mode,
   });
   if (plan.openSetup) {
     chrome.tabs.create({ url: chrome.runtime.getURL("setup.html"), active: true });
@@ -177,6 +209,9 @@ chrome.runtime.onInstalled.addListener((details) => {
   }).catch(() => {
     console.warn("AkuBrowser could not record native runtime installation state.");
   });
+  void beginInstalledAkuBrowserTabRecovery(details).catch((error) => {
+    console.warn("AkuBridge could not recover the first AkuBrowser tab after install.", error);
+  });
   void scheduleSourceAccessReconciliation().catch(() => {
     console.warn("AkuBrowser could not reconcile approved source access.");
   });
@@ -187,6 +222,9 @@ chrome.runtime.onStartup.addListener(() => {
     distribution: NATIVE_RUNTIME_DISTRIBUTION,
   }), { scheduleNext: true }).catch(() => {
     console.warn("AkuBrowser could not record native runtime startup state.");
+  });
+  void resumePendingInstalledAkuBrowserTabRecovery().catch((error) => {
+    console.warn("AkuBridge could not resume the startup tab recovery.", error);
   });
   void scheduleSourceAccessReconciliation().catch(() => {
     console.warn("AkuBrowser could not reconcile approved source access.");
@@ -356,6 +394,123 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
   return true;
 });
+
+function queueInstalledAkuBrowserTabRecovery(task) {
+  installedTabRecoveryQueue = installedTabRecoveryQueue
+    .catch(() => undefined)
+    .then(task);
+  return installedTabRecoveryQueue;
+}
+
+async function beginInstalledAkuBrowserTabRecovery(details = {}) {
+  if (!shouldRecoverInstalledAkuBrowserTabs({
+    mode: BRIDGE_DEPLOYMENT.mode,
+    reason: details.reason,
+  })) return;
+
+  const version = String(chrome.runtime.getManifest().version);
+  const existing = (await chrome.storage.local.get(AKU_BROWSER_INSTALL_RECOVERY_STORAGE_KEY))?.[
+    AKU_BROWSER_INSTALL_RECOVERY_STORAGE_KEY
+  ];
+  const state = existing?.eventKey === `${details.reason}:${version}` &&
+    isCurrentInstalledAkuBrowserTabRecovery(existing)
+    ? existing
+    : createInstalledAkuBrowserTabRecovery({ reason: details.reason, version });
+  await chrome.storage.local.set({ [AKU_BROWSER_INSTALL_RECOVERY_STORAGE_KEY]: state });
+  await chrome.alarms.create(AKU_BROWSER_INSTALL_RECOVERY_ALARM, { when: state.expiresAt });
+  await queueInstalledAkuBrowserTabRecovery(() => recoverPendingInstalledAkuBrowserTabs());
+}
+
+async function resumePendingInstalledAkuBrowserTabRecovery() {
+  await queueInstalledAkuBrowserTabRecovery(() => recoverPendingInstalledAkuBrowserTabs());
+}
+
+async function recoverPendingInstalledAkuBrowserTabs() {
+  const state = (await chrome.storage.local.get(AKU_BROWSER_INSTALL_RECOVERY_STORAGE_KEY))?.[
+    AKU_BROWSER_INSTALL_RECOVERY_STORAGE_KEY
+  ];
+  if (!state) return;
+  if (!isCurrentInstalledAkuBrowserTabRecovery(state)) {
+    await clearInstalledAkuBrowserTabRecovery();
+    return;
+  }
+  if (!shouldRecoverInstalledAkuBrowserTabs({
+    mode: BRIDGE_DEPLOYMENT.mode,
+    reason: state.reason,
+  })) {
+    await clearInstalledAkuBrowserTabRecovery();
+    return;
+  }
+
+  const tabs = await chrome.tabs.query({ url: AKU_BROWSER_LOOPBACK_URL_PATTERNS });
+  const attemptedTabIds = Array.isArray(state.attemptedTabIds)
+    ? state.attemptedTabIds.filter((tabId) => Number.isInteger(tabId))
+    : [];
+  const remainingTabSlots = AKU_BROWSER_INSTALL_RECOVERY_MAX_TABS - attemptedTabIds.length;
+  if (remainingTabSlots <= 0) return;
+  const candidates = selectInstalledAkuBrowserTabs(tabs, {
+    ...state,
+    limit: remainingTabSlots,
+  });
+  if (candidates.length === 0) return;
+
+  for (const tab of candidates) {
+    if (attemptedTabIds.includes(tab.id)) continue;
+    const currentTab = await chrome.tabs.get(tab.id).catch(() => null);
+    if (!isTrustedAkuBrowserTab(currentTab) ||
+      (currentTab.status !== undefined && currentTab.status !== "complete")) continue;
+    attemptedTabIds.push(tab.id);
+    await chrome.storage.local.set({
+      [AKU_BROWSER_INSTALL_RECOVERY_STORAGE_KEY]: {
+        ...state,
+        attemptedTabIds: [...attemptedTabIds],
+      },
+    });
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: currentTab.id },
+        world: "ISOLATED",
+        files: [AKU_BROWSER_TAB_BRIDGE_FILE],
+      });
+      const origin = new URL(currentTab.url).origin;
+      const ping = await chrome.scripting.executeScript({
+        target: { tabId: currentTab.id },
+        world: "ISOLATED",
+        func: postAkuBrowserBridgePing,
+        args: [origin],
+      });
+      if (ping?.[0]?.result !== true) {
+        throw new Error("AkuBridge relay ping was rejected by the trusted tab origin.");
+      }
+    } catch (error) {
+      console.warn(`AkuBridge could not install the relay in trusted AkuBrowser tab ${tab.id}.`, error);
+    }
+  }
+}
+
+function postAkuBrowserBridgePing(expectedOrigin) {
+  if (window.location.origin !== expectedOrigin) return false;
+  window.postMessage({
+    type: "AKU_BROWSER_BRIDGE_PING",
+    protocolMajor: 2,
+    protocolMinor: 0,
+  }, expectedOrigin);
+  return true;
+}
+
+async function expireInstalledAkuBrowserTabRecovery() {
+  const state = (await chrome.storage.local.get(AKU_BROWSER_INSTALL_RECOVERY_STORAGE_KEY))?.[
+    AKU_BROWSER_INSTALL_RECOVERY_STORAGE_KEY
+  ];
+  if (!state || !isCurrentInstalledAkuBrowserTabRecovery(state)) {
+    await clearInstalledAkuBrowserTabRecovery();
+  }
+}
+
+async function clearInstalledAkuBrowserTabRecovery() {
+  await chrome.storage.local.remove(AKU_BROWSER_INSTALL_RECOVERY_STORAGE_KEY);
+  await chrome.alarms.clear(AKU_BROWSER_INSTALL_RECOVERY_ALARM);
+}
 
 function isTrustedSourceContentSender(sender) {
   if (!Number.isInteger(sender.tab?.id) || typeof sender.url !== "string") return false;

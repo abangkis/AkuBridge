@@ -4,6 +4,7 @@ const INSTALLED_REASONS = new Set([
   "chrome_update",
   "shared_module_update",
 ]);
+const LEGACY_SETUP_MODES = new Set(["production-store", "acceptance"]);
 
 export function planNativeRuntimeLifecycle(event, details = {}) {
   const distribution = details.distribution ?? "production";
@@ -23,7 +24,11 @@ export function planNativeRuntimeLifecycle(event, details = {}) {
     return Object.freeze({
       action,
       trigger: `installed_${reason}`,
-      openSetup: reason === "install" && distribution === "production",
+      // The Store and pre-Store acceptance lanes still own their historical
+      // options-page onboarding. Development and the isolated installed-app
+      // lane have a Sidecar-owned setup surface, so they must never open the
+      // legacy Bridge page as an install side effect.
+      openSetup: reason === "install" && LEGACY_SETUP_MODES.has(String(details.mode ?? "production-store")),
     });
   }
   if (event === "startup") {

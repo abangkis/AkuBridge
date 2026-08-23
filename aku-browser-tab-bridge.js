@@ -1,13 +1,12 @@
 (() => {
-  if (globalThis.__akuBrowserTabBridgeInstalled) return;
-  globalThis.__akuBrowserTabBridgeInstalled = true;
-
   const allowedOrigins = new Set([
     "http://127.0.0.1:11122",
     "http://localhost:11122",
   ]);
   const allowedOrigin = window.location.origin;
   if (!allowedOrigins.has(allowedOrigin)) return;
+  if (globalThis.__akuBrowserTabBridgeInstalled) return;
+  globalThis.__akuBrowserTabBridgeInstalled = true;
   let sidecarProtocolMajor = 0;
 
   window.addEventListener("message", async (event) => {

@@ -565,6 +565,24 @@ test("initial stale-tab recovery is bounded and follow-up remains anchored", () 
   assert.match(contentScript, /discarded one stale initial tab reference/);
 });
 
+test("first installed-app recovery installs the relay before sending a protocol-v2 ping", () => {
+  const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
+  const recovery = worker.slice(
+    worker.indexOf("async function recoverPendingInstalledAkuBrowserTabs"),
+    worker.indexOf("async function expireInstalledAkuBrowserTabRecovery"),
+  );
+
+  assert.match(recovery, /chrome\.scripting\.executeScript/);
+  assert.match(recovery, /files: \[AKU_BROWSER_TAB_BRIDGE_FILE\]/);
+  assert.match(recovery, /world: "ISOLATED"/);
+  assert.match(recovery, /func: postAkuBrowserBridgePing/);
+  assert.match(recovery, /AKU_BROWSER_BRIDGE_PING/);
+  assert.match(recovery, /protocolMajor: 2/);
+  assert.doesNotMatch(recovery, /chrome\.tabs\.reload/);
+  assert.match(worker, /AKU_BROWSER_INSTALL_RECOVERY_MAX_TABS/);
+  assert.match(worker, /AKU_BROWSER_LOOPBACK_URL_PATTERNS/);
+});
+
 test("AkuBridge exposes additive read-only capabilities and structured failures", () => {
   const tabBridge = fs.readFileSync(path.join(projectRoot, "aku-browser-tab-bridge.js"), "utf8");
   const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
