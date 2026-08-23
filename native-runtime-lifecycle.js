@@ -28,7 +28,9 @@ export function planNativeRuntimeLifecycle(event, details = {}) {
       // options-page onboarding. Development and the isolated installed-app
       // lane have a Sidecar-owned setup surface, so they must never open the
       // legacy Bridge page as an install side effect.
-      openSetup: reason === "install" && LEGACY_SETUP_MODES.has(String(details.mode ?? "production-store")),
+      openSetup: reason === "install" && LEGACY_SETUP_MODES.has(String(
+        details.mode ?? (distribution === "development" ? "development" : "production-store"),
+      )),
     });
   }
   if (event === "startup") {
