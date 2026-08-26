@@ -288,7 +288,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v104/);
+  assert.match(contentScript, /source-adapters-v105/);
   assert.match(contentScript, /AKU_BROWSER_RECOVER_SOURCE_READINESS/);
   assert.match(serviceWorker, /recoverSourceReadiness/);
   assert.match(contentScript, /candidateDiagnostics: normalizeCandidateDiagnostics/);
@@ -456,9 +456,12 @@ test("LinkedIn capture composes readiness with generic freshness recovery", () =
   assert.doesNotMatch(worker, /workingTabPreserved = focusOutcome\.preserved/);
 });
 
-test("background X capture activates for the full bounded capture so scrolled media can hydrate", () => {
+test("initial background X capture retains hydration while continuation uses feed readiness", () => {
   const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
   const contentScript = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
+  const findSourceTabStart = worker.indexOf("async function findOrOpenSourceTab(");
+  const prepareSourceTabStart = worker.indexOf("async function prepareSourceTab(", findSourceTabStart);
+  const findSourceTabBody = worker.slice(findSourceTabStart, prepareSourceTabStart);
   const surfaceTelemetry = fs.readFileSync(
     path.join(projectRoot, "capture-surface-telemetry.js"),
     "utf8",
@@ -469,7 +472,10 @@ test("background X capture activates for the full bounded capture so scrolled me
     /if \(readinessPolicy\.activateWhenBackground === true && backgroundAtDispatch\) \{[\s\S]*?await activate\(\);[\s\S]*?waitForSourceReady\([\s\S]*?\{ requireVisualHydration \}/,
   );
   assert.match(worker, /const requireVisualHydration = options\.requireVisualHydration \?\? sourceRequiresVisualHydration\(source\)/);
-  assert.match(worker, /requireVisualHydration: !targetUrl \|\| visibilityPlan\.foregroundAuthorized/);
+  assert.match(worker, /const requireVisualHydration = captureRequiresVisualHydration\(\{/);
+  assert.match(worker, /command\.payload\.sourceHydrationTimeoutMs,\s*command\.payload\.acquisitionRound,/);
+  assert.match(findSourceTabBody, /if \(!targetUrl\) \{[\s\S]*?requireVisualHydration,/);
+  assert.doesNotMatch(findSourceTabBody, /command\.payload/);
   assert.match(
     worker,
     /function isSourceCaptureReady\(readiness\) \{\s*return readiness\.state === "feed_ready" \|\| readiness\.state === "feed_empty";/,
@@ -601,8 +607,8 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /protocolMajor: sidecarProtocolMajor/);
   const capabilities = createBridgeCapabilities({ version: "0.8.0.0", version_name: "0.8.0", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.8.0");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v104");
-  assert.equal(capabilities.buildId, "aku-bridge-0.8.0-source-adapters-v104");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v105");
+  assert.equal(capabilities.buildId, "aku-bridge-0.8.0-source-adapters-v105");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.equal(capabilities.protocolMajor, 2);
   assert.equal(capabilities.protocolMinor, 0);
@@ -645,6 +651,8 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(worker, /wrapped\.captureSurfaceLifecycle = lifecycleEvents/);
   assert.match(worker, /api\/bridge\/commands\/pending/);
   assert.match(worker, /rememberBackgroundLease/);
+  assert.match(worker, /queueBackgroundSessionPump\(message\.endpoint, message\.token\)/);
+  assert.match(worker, /createSingleFlightSessionPump\(pumpBackgroundSession\)/);
   assert.match(worker, /releaseTerminalBackgroundLease/);
   assert.match(worker, /refreshBackgroundHeartbeat/);
   assert.match(worker, /bridgeCapabilitiesForProtocol/);
@@ -652,6 +660,7 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(worker, /bridgeCapabilitiesWithSourceAccess/);
   assert.match(worker, /grantedSources: sourcesForGrantedOrigins/);
   assert.match(worker, /activeLeaseId/);
+  assert.match(worker, /captureRequiresVisualHydration/);
   assert.match(worker, /dispatchMediaRecapture/);
   assert.match(worker, /assertRecaptureTarget/);
   assert.match(worker, /managed\.openTargetTab/);

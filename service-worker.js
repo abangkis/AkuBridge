@@ -100,6 +100,8 @@ import {
   createSourceSessionObservation,
   sourceSessionStateForTabs,
 } from "./session-readiness-policy.js";
+import { createSingleFlightSessionPump } from "./background-session-pump.js";
+import { captureRequiresVisualHydration } from "./capture-readiness-policy.js";
 
 const AKU_BROWSER_ORIGIN = AKU_BROWSER_LOOPBACK_ORIGIN;
 const AKU_BROWSER_ORIGINS = new Set([
@@ -414,7 +416,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   dispatchRun(message)
-    .then(() => bridgeCapabilitiesWithSourceAccess())
+    .then(() => {
+      void queueBackgroundSessionPump(message.endpoint, message.token).catch((error) => {
+        console.warn("AkuBridge session pump deferred after page dispatch.", error);
+      });
+      return bridgeCapabilitiesWithSourceAccess();
+    })
     .then((capabilities) => sendResponse({ ok: true, capabilities }))
     .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
   return true;
@@ -630,11 +637,10 @@ async function dispatchRun(message) {
     throw new AkuBridgeError("duplicate_command", "dispatch", `AkuBridge rejected duplicate command ${command.id}.`);
   }
 
-  if (message.background === true && typeof command.payload.captureLeaseId === "string") {
-    await rememberBackgroundLease(message.endpoint, message.token, command.payload.captureLeaseId);
-  }
-
   try {
+    if (typeof command.payload.captureLeaseId === "string") {
+      await rememberBackgroundLease(message.endpoint, message.token, command.payload.captureLeaseId);
+    }
     if (command.type !== "collect_visible") {
       throw new Error(`Unsupported browser command: ${command.type}.`);
     }
@@ -912,7 +918,7 @@ async function pollBackgroundDispatch() {
     if (typeof runId !== "string" || !runId) return;
     try {
       await dispatchRun({ endpoint: config.endpoint, token: config.token, runId, background: true });
-      await pumpBackgroundSession(config.endpoint, config.token);
+      await queueBackgroundSessionPump(config.endpoint, config.token);
     } catch (error) {
       if (error?.message === "No queued browser command was available for this run.") return;
       console.error("AkuBridge background command failed.", error);
@@ -959,6 +965,8 @@ async function pumpBackgroundSession(endpoint, token) {
     }
   }
 }
+
+const queueBackgroundSessionPump = createSingleFlightSessionPump(pumpBackgroundSession);
 
 async function releaseCaptureSurfaceWithTelemetry(message) {
   const stored = await chrome.storage.local.get(BACKGROUND_DISPATCH_CONFIG_KEY);
@@ -1134,6 +1142,7 @@ async function captureWithSourceTabRecovery(command) {
         command.payload.targetUrl,
         command.payload.foregroundAuthorized === true,
         command.payload.sourceHydrationTimeoutMs,
+        command.payload.acquisitionRound,
       );
       const observation = await capturePreparedSource(command, prepared, attempt);
       if (observationEvidenceBlockCount(observation) === 0) {
@@ -1348,11 +1357,18 @@ async function findOrOpenSourceTab(
   targetUrl = null,
   foregroundAuthorized = false,
   requestedHydrationTimeoutMs = null,
+  acquisitionRound = 1,
 ) {
   const visibilityPlan = planCaptureVisibility({
     policy: requestedVisibilityPolicy,
     mode,
     foregroundAuthorized,
+  });
+  const requireVisualHydration = captureRequiresVisualHydration({
+    source,
+    acquisitionRound,
+    targetUrl,
+    foregroundAuthorized: visibilityPlan.foregroundAuthorized,
   });
   const readyReusable = visibilityPlan.initialMode === "managed_window" && !targetUrl
     ? await findReadyReusableSourceTab(source)
@@ -1365,6 +1381,7 @@ async function findOrOpenSourceTab(
       workingTabPreserved: true,
       openedTabDisposition: "preserve",
       hydrationTimeoutMs: requestedHydrationTimeoutMs,
+      requireVisualHydration,
       prevalidatedReadiness: readyReusable.readiness,
       passiveReadyReuse: true,
       lifecycleEvents: [captureSurfaceEvent("reused", source, {
@@ -1415,7 +1432,7 @@ async function findOrOpenSourceTab(
                 captureVisibilityMode: "managed_window",
                 workingTabPreserved: true,
                 openedTabDisposition: "close_after_session",
-                requireVisualHydration: true,
+                requireVisualHydration,
                 restoreFocus: managed.verifyFocus,
                 hydrationTimeoutMs: requestedHydrationTimeoutMs,
                 lifecycleEvents: managed.lifecycleEvents,
@@ -1498,7 +1515,7 @@ async function findOrOpenSourceTab(
         captureVisibilityMode,
         workingTabPreserved: true,
         openedTabDisposition: targetUrl ? "close_after_capture" : "close_after_session",
-        requireVisualHydration: !targetUrl || visibilityPlan.foregroundAuthorized,
+        requireVisualHydration,
         restoreFocus: managed.verifyFocus,
         hydrationTimeoutMs: requestedHydrationTimeoutMs,
         lifecycleEvents: managed.lifecycleEvents,
@@ -1582,6 +1599,7 @@ async function findOrOpenSourceTab(
     captureVisibilityMode: "same_window",
     openedTabDisposition: bridgeOwned ? "close_after_session" : "preserve",
     hydrationTimeoutMs: requestedHydrationTimeoutMs,
+    requireVisualHydration,
     lifecycleEvents,
   });
 }

@@ -1,12 +1,12 @@
 {
   "name": "@aku-browser/bridge",
   "version": "0.8.0",
-  "akuRuntimeRevision": "source-adapters-v104",
+  "akuRuntimeRevision": "source-adapters-v105",
   "private": true,
   "type": "module",
   "description": "AkuBridge read-only Chrome extension for AkuBrowser",
   "scripts": {
-    "pretest": "node --check popup.js && node --check navigation-readiness-policy.js",
+    "pretest": "node --check popup.js && node --check navigation-readiness-policy.js && node --check background-session-pump.js && node --check capture-readiness-policy.js",
     "test": "node --test --test-isolation=none",
     "native:test": "cd native-host && go test -count=1 ./...",
     "version:patch": "node scripts/bump-version.mjs",
