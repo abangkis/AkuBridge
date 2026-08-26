@@ -17,6 +17,20 @@
     'a[href*="/article/"]',
   ].join(", ");
 
+  function canonicalizeXPermalink(value) {
+    try {
+      const url = new URL(String(value ?? ""), "https://x.com/");
+      if (url.protocol !== "https:" || url.hostname !== "x.com" || url.username || url.password || url.port) {
+        return null;
+      }
+      const match = url.pathname.match(/^\/([^/]+)\/status\/(\d+)(?:\/.*)?$/);
+      if (!match) return null;
+      return `https://x.com/${match[1]}/status/${match[2]}`;
+    } catch {
+      return null;
+    }
+  }
+
   registry.register({
     source: "x",
     version: "x-dom-v22",
@@ -28,6 +42,7 @@
       coverageKey: "xStructuredMediaEvidence",
       label: "X media evidence",
     }),
+    canonicalizePermalink: canonicalizeXPermalink,
     platformIdFromCandidates: (values) => {
       for (const value of Array.isArray(values) ? values : []) {
         const statusId = String(value ?? "").match(/\/status\/(\d+)/)?.[1];
@@ -163,7 +178,7 @@
       const relationshipType = quoted ? "quote" : socialContext ? "repost" : reply ? "reply" : "original";
       const relationshipContainer = quoted || container;
       const parentLink = [...relationshipContainer.querySelectorAll('a[href*="/status/"]')]
-        .map((anchor) => normalizeHttpUrl(anchor.href))
+        .map((anchor) => canonicalizeXPermalink(anchor.href))
         .find(Boolean) ?? null;
       const ownVideo = [...container.querySelectorAll(
         'video, [data-testid="previewInterstitial"], [data-testid="videoPlayer"], '
@@ -200,7 +215,7 @@
         : compactText(textRoot?.innerText);
       if (!text) return null;
       const time = quoted.querySelector("time");
-      const permalink = normalizeHttpUrl(
+      const permalink = canonicalizeXPermalink(
         time?.closest?.("a[href]")?.href ||
         [...quoted.querySelectorAll('a[href*="/status/"]')][0]?.href,
       );

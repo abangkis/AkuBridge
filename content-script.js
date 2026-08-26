@@ -1241,15 +1241,16 @@
 
   function findPermalinkDetails(container, source, time) {
     const adapter = sourceAdapters.get(source);
+    const normalizePermalink = (value) => adapter.canonicalizePermalink?.(value) ?? normalizeHttpUrl(value);
     const timedLink = time?.closest("a[href]")?.href;
-    if (normalizeHttpUrl(timedLink)) return { url: normalizeHttpUrl(timedLink), source: "time_anchor" };
+    if (normalizePermalink(timedLink)) return { url: normalizePermalink(timedLink), source: "time_anchor" };
     const specialized = adapter.findPermalinkDetails?.(container, { normalizeHttpUrl, time });
     if (specialized?.url) return specialized;
     const anchors = [...container.querySelectorAll("a[href]")];
     const match = anchors.find((anchor) => (adapter.permalinkPatterns ?? []).some(
       (pattern) => pattern.test(anchor.pathname) || pattern.test(anchor.href),
     ));
-    const linkedUrl = normalizeHttpUrl(match?.href);
+    const linkedUrl = normalizePermalink(match?.href);
     if (linkedUrl) return { url: linkedUrl, source: "direct_anchor" };
     const domEvidence = adapter.findDomPermalink?.(container) ?? null;
     return domEvidence

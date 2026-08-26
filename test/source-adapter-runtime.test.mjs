@@ -51,6 +51,18 @@ test("source adapters register independently behind one contract", () => {
   );
 });
 
+test("X canonicalizes native post action routes to the base post", () => {
+  const context = createBrowserContext();
+  runScript(context, "source-adapter-runtime.js");
+  runScript(context, path.join("adapters", "x-adapter.js"));
+  const canonicalize = context.AkuSourceAdapters.get("x").canonicalizePermalink;
+
+  assert.equal(canonicalize("https://x.com/author/status/123/analytics?ref=feed#detail"), "https://x.com/author/status/123");
+  assert.equal(canonicalize("https://x.com/author/status/123/photo/1"), "https://x.com/author/status/123");
+  assert.equal(canonicalize("https://example.com/author/status/123/analytics"), null);
+  assert.equal(canonicalize("https://x.com/home"), null);
+});
+
 test("X and Instagram diagnose unhydrated feed shells through the generic contract", () => {
   const context = createBrowserContext();
   runScript(context, "source-adapter-runtime.js");
