@@ -50,6 +50,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
     matchPatterns: Object.freeze(["https://www.facebook.com/*", "https://facebook.com/*"]),
     hostnames: Object.freeze(["www.facebook.com", "facebook.com"]),
     canonicalFeedPath: /^\/$/,
+    managedFeedRedirectPath: /^\/home\.php$/,
     nativePostPath: /\/(?:posts\/|permalink\/|story\.php|photo|videos\/|reel\/)/,
     mediaEvidenceAdapterVersion: "facebook-structured-video-v1",
     structuredMediaCollector: "facebook_structured",
@@ -165,6 +166,20 @@ export function isCanonicalFeed(rawUrl, source) {
     return url.protocol === "https:" &&
       definition.hostnames.includes(url.hostname) &&
       definition.canonicalFeedPath.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+export function isManagedFeedNavigation(rawUrl, source) {
+  if (isCanonicalFeed(rawUrl, source)) return true;
+  const definition = sourceDefinition(source);
+  if (!definition?.managedFeedRedirectPath || !rawUrl) return false;
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === "https:" &&
+      definition.hostnames.includes(url.hostname) &&
+      definition.managedFeedRedirectPath.test(url.pathname);
   } catch {
     return false;
   }

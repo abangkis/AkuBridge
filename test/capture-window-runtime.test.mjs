@@ -319,6 +319,50 @@ test("managed Facebook capture resets an internal redirect instead of leaking a 
   assert.equal(chrome.createdWindowOptionsList.length, 1);
 });
 
+test("native-post adoption detaches the reader window and creates a fresh update window", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const first = await runtime.prepare("x", { leaseId: "session-1" });
+  const nativePostUrl = "https://x.com/aku/status/123";
+  await chrome.tabs.update(first.tab.id, { url: nativePostUrl });
+
+  const second = await runtime.prepare("x", { leaseId: "session-1" });
+
+  assert.notEqual(second.tab.windowId, first.tab.windowId);
+  assert.equal(chrome.createdWindowOptionsList.length, 2);
+  assert.equal((await chrome.tabs.get(first.tab.id)).url, nativePostUrl);
+  assert.equal(chrome.windowsById.has(first.tab.windowId), true);
+  assert.equal(chrome.removedWindowIds.includes(first.tab.windowId), false);
+
+  await runtime.release("session-1");
+  await runtime.reconcile();
+  assert.equal(chrome.removedWindowIds.includes(second.tab.windowId), true);
+  assert.equal(chrome.removedWindowIds.includes(first.tab.windowId), false);
+  assert.equal(chrome.windowsById.has(first.tab.windowId), true);
+  assert.equal(second.lifecycleEvents.some((event) =>
+    event.event === "preserved_user_owned" &&
+    event.outcome === "navigation_adopted_by_user"
+  ), true, JSON.stringify(second.lifecycleEvents));
+});
+
+test("a native reader tab added beside a managed feed forces a separate update window", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const first = await runtime.prepare("x", { leaseId: "session-1" });
+  const reader = chrome.addTab(first.tab.windowId, "https://x.com/aku/status/456", 31);
+  await chrome.tabs.update(reader.id, { active: true });
+  chrome.focusedWindowId = first.tab.windowId;
+
+  const second = await runtime.prepare("linkedin", { leaseId: "session-1" });
+
+  assert.notEqual(second.tab.windowId, first.tab.windowId);
+  assert.equal(chrome.createdWindowOptionsList.length, 2);
+  assert.equal((await chrome.tabs.get(reader.id)).url, "https://x.com/aku/status/456");
+  assert.equal(chrome.activeByWindow.get(first.tab.windowId), reader.id);
+  assert.equal(chrome.focusedWindowId, first.tab.windowId);
+  assert.equal(chrome.removedWindowIds.includes(first.tab.windowId), false);
+});
+
 test("source cleanup closes a Bridge-owned Facebook tab after an internal redirect", async () => {
   const chrome = fakeChrome();
   const runtime = createManagedCaptureWindowRuntime(chrome);

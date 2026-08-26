@@ -269,6 +269,13 @@ still controls whether either policy may create its required source tab;
 may use the active page for the selected source. A follow-up round never opens
 a replacement tab.
 
+Managed ownership is limited to each source's canonical feed and its explicit
+feed-only redirects. A native post is always user-owned: when a managed binding
+has navigated to one, AkuBridge preserves that reader window, detaches the
+shared binding, and creates a separate non-focused window for the next Quiet
+update. It never resets or activates the native-post tab as capture
+infrastructure.
+
 Chrome's extension focus APIs identify the last focused Chrome window, not the
 foreground desktop application. Creating or activating several managed windows
 while another application is foreground can therefore make Chrome surface

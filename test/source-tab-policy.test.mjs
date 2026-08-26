@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chooseSourceTab, expectedFeedUrl, isCanonicalFeedUrl } from "../source-tab-policy.js";
+import {
+  chooseSourceTab,
+  expectedFeedUrl,
+  isBridgeOwnedFeedUrl,
+  isCanonicalFeedUrl,
+} from "../source-tab-policy.js";
 
 test("Catch Up prefers a canonical LinkedIn feed over a newer profile tab", () => {
   const selected = chooseSourceTab(
@@ -44,4 +49,14 @@ test("Manual Live may use the active source page", () => {
   );
 
   assert.equal(selected?.id, 2);
+});
+
+test("Bridge ownership excludes native posts but retains explicit feed redirects", () => {
+  assert.equal(isBridgeOwnedFeedUrl("https://x.com/aku/status/123", "x"), false);
+  assert.equal(
+    isBridgeOwnedFeedUrl("https://www.linkedin.com/feed/update/urn:li:activity:123", "linkedin"),
+    false,
+  );
+  assert.equal(isBridgeOwnedFeedUrl("https://www.facebook.com/home.php", "facebook"), true);
+  assert.equal(isBridgeOwnedFeedUrl("https://www.facebook.com/posts/123", "facebook"), false);
 });

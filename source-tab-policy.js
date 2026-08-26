@@ -1,4 +1,8 @@
-import { expectedFeedUrlFor, isCanonicalFeed } from "./source-catalog.js";
+import {
+  expectedFeedUrlFor,
+  isCanonicalFeed,
+  isManagedFeedNavigation,
+} from "./source-catalog.js";
 
 export function expectedFeedUrl(source) {
   return expectedFeedUrlFor(source);
@@ -7,6 +11,11 @@ export function expectedFeedUrl(source) {
 export function isCanonicalFeedUrl(rawUrl, source) {
   if (!rawUrl) return false;
   return isCanonicalFeed(rawUrl, source);
+}
+
+export function isBridgeOwnedFeedUrl(rawUrl, source) {
+  if (!rawUrl) return false;
+  return isManagedFeedNavigation(rawUrl, source);
 }
 
 export function chooseSourceTab(tabs, { source, mode }) {

@@ -1,5 +1,9 @@
-import { expectedFeedUrl, isCanonicalFeedUrl } from "./source-tab-policy.js";
-import { sourceForUrl, sourceIds } from "./source-catalog.js";
+import {
+  expectedFeedUrl,
+  isBridgeOwnedFeedUrl,
+  isCanonicalFeedUrl,
+} from "./source-tab-policy.js";
+import { sourceIds } from "./source-catalog.js";
 
 export const CAPTURE_WINDOW_STORAGE_KEY = "akuBridgeManagedCaptureWindowV1";
 export const CAPTURE_SURFACE_LEDGER_STORAGE_KEY = "akuBridgeManagedCaptureSurfaceLedgerV2";
@@ -209,10 +213,9 @@ function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
         }
         delete state.transientTabs[source];
         await persistRemainingState(chromeApi, state);
-        const stillBridgeOwned = Boolean(transientTab && (
-          isCanonicalFeedUrl(transientTab.url, source) ||
-          sourceForUrl(transientTab.url) === source
-        ));
+        const stillBridgeOwned = Boolean(
+          transientTab && isBridgeOwnedFeedUrl(transientTab.url, source),
+        );
         if (stillBridgeOwned) {
           await chromeApi.tabs.remove(transientTabId);
         }
@@ -655,7 +658,7 @@ async function reconcileLedger(chromeApi, state, incomingLeaseId = null) {
         events.push(lifecycleEvent("reconciled", source, { outcome: "owned_tab_already_closed" }));
         continue;
       }
-      if (!isCanonicalFeedUrl(tab.url, source) && sourceForUrl(tab.url) !== source) {
+      if (!isBridgeOwnedFeedUrl(tab.url, source)) {
         delete surface.bindings[source];
         appendLedgerReceipt(ledger, "preserved_user_owned", source, "navigation_adopted_by_user");
         events.push(lifecycleEvent("preserved_user_owned", source, {
@@ -821,6 +824,18 @@ async function validateBinding(chromeApi, state, source, isolation) {
     await persistRemainingState(chromeApi, state);
     return null;
   }
+  const surfaceBindings = isolatedBinding
+    ? { [source]: isolatedBinding.tabId }
+    : state.tabs;
+  const ownedIds = new Set(
+    ownedTabsInWindow(window.tabs ?? [], surfaceBindings).map((tab) => tab.id),
+  );
+  const userTabs = (window.tabs ?? []).filter((tab) => !ownedIds.has(tab.id));
+  if (userTabs.length > 0) {
+    detachAdoptedSurface(state, source, isolatedBinding !== null);
+    await persistRemainingState(chromeApi, state);
+    return null;
+  }
   const rememberedId = isolatedBinding?.tabId ?? state.tabs[source];
   const tab = (window.tabs ?? []).find((candidate) =>
     !candidate.discarded && candidate.id === rememberedId
@@ -833,14 +848,14 @@ async function validateBinding(chromeApi, state, source, isolation) {
   if (isCanonicalFeedUrl(tab.url, source)) {
     return { windowId: window.id, tabId: tab.id, state, reset: false };
   }
-  if (sourceForUrl(tab.url) === source) {
+  if (isBridgeOwnedFeedUrl(tab.url, source)) {
     await chromeApi.tabs.update(tab.id, {
       url: expectedFeedUrl(source),
       active: true,
     });
     return { windowId: window.id, tabId: tab.id, state, reset: true };
   }
-  removeSourceBinding(state, source, isolatedBinding !== null);
+  detachAdoptedSurface(state, source, isolatedBinding !== null);
   await persistRemainingState(chromeApi, state);
   return null;
 }
@@ -886,10 +901,7 @@ function ownedTabsInWindow(tabs, bindings) {
   return sourceIds().flatMap((source) => {
     const id = bindings[source];
     const tab = tabs.find((candidate) =>
-      candidate.id === id && (
-        isCanonicalFeedUrl(candidate.url, source) ||
-        sourceForUrl(candidate.url) === source
-      )
+      candidate.id === id && isBridgeOwnedFeedUrl(candidate.url, source)
     );
     return tab ? [tab] : [];
   });
@@ -917,6 +929,19 @@ function removeSourceBinding(state, source, isolated) {
   }
 }
 
+function detachAdoptedSurface(state, source, isolated) {
+  if (isolated) {
+    delete state.sourceWindows[source];
+    return;
+  }
+  // A shared managed window becomes user-owned as soon as one of its bound
+  // tabs leaves the bounded feed lane. Do not add another update tab to that
+  // window or reset the adopted native post. A fresh capture window is created
+  // for the current lease instead.
+  state.windowId = null;
+  state.tabs = {};
+}
+
 function normalizeWindowIsolation(value) {
   return value === "per_source" ? "per_source" : "shared";
 }
@@ -932,7 +957,7 @@ async function closeTrackedTabs(chromeApi, bindings) {
     } catch {
       continue;
     }
-    if (isCanonicalFeedUrl(tab.url, source)) {
+    if (isBridgeOwnedFeedUrl(tab.url, source)) {
       closeIds.push(id);
       closedBySource[source] = true;
     } else {
