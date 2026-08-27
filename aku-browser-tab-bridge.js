@@ -258,6 +258,25 @@
       return;
     }
 
+    if (message.type === "AKU_BROWSER_REVOKE_SOURCE_ACCESS") {
+      try {
+        const response = await chrome.runtime.sendMessage({ type: "AKU_BRIDGE_REVOKE_SOURCE_ACCESS" });
+        if (!response?.ok) throw new Error(response?.message || "AkuBridge rejected source access revocation.");
+        window.postMessage({
+          type: "AKU_BROWSER_REVOKE_SOURCE_ACCESS_RESULT",
+          requestId: message.requestId,
+          grantedSources: response.grantedSources ?? [],
+        }, allowedOrigin);
+      } catch (error) {
+        window.postMessage({
+          type: "AKU_BROWSER_REVOKE_SOURCE_ACCESS_FAILED",
+          requestId: message.requestId,
+          message: String(error?.message ?? error),
+        }, allowedOrigin);
+      }
+      return;
+    }
+
     if (message.type !== "AKU_BROWSER_DISPATCH") return;
     try {
       const response = await chrome.runtime.sendMessage({

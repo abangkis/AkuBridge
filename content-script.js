@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v105";
+  const runtimeRevision = "source-adapters-v106";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {

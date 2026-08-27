@@ -67,6 +67,7 @@ import {
 } from "./native-runtime-scheduler.js";
 import {
   reconcileRegisteredSourceScripts,
+  revokeAllSourceAccess,
   sourceAccessGranted,
   sourceAccessReadiness,
   sourcesForGrantedOrigins,
@@ -342,6 +343,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     chrome.tabs.create({ url: chrome.runtime.getURL("setup.html"), active: true })
       .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+    return true;
+  }
+  if (message?.type === "AKU_BRIDGE_REVOKE_SOURCE_ACCESS") {
+    if (!isAkuBrowserOrigin(sender.url)) {
+      sendResponse({ ok: false, message: "Revoke rejected: invalid AkuBrowser origin." });
+      return false;
+    }
+    revokeAllSourceAccess(chrome)
+      .then((state) => sendResponse({ ok: true, grantedSources: state?.grantedSources ?? [] }))
       .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
     return true;
   }

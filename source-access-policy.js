@@ -195,6 +195,20 @@ export async function sourceAccessGranted(chromeApi, source) {
   return chromeApi.permissions.contains({ origins: [...definition.origins] });
 }
 
+// revokeAllSourceAccess removes every optional source host permission and
+// re-reconciles dynamic content scripts against the now-empty grant set.
+// Full reset uses this so a clean database is paired with a clean capture
+// surface instead of resurrecting the previous setup's grants.
+export async function revokeAllSourceAccess(chromeApi) {
+  const origins = originsForSources(Object.keys(SOURCE_ACCESS));
+  const granted = await chromeApi.permissions.getAll();
+  const removable = origins.filter((origin) => (granted.origins ?? []).includes(origin));
+  if (removable.length > 0) {
+    await chromeApi.permissions.remove({ origins: removable });
+  }
+  return reconcileRegisteredSourceScripts(chromeApi);
+}
+
 export async function reconcileRegisteredSourceScripts(chromeApi, now = () => Date.now()) {
   const permissions = await chromeApi.permissions.getAll();
   const sources = sourcesForGrantedOrigins(permissions.origins);

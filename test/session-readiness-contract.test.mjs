@@ -48,3 +48,45 @@ test("source session result remains separate from Bridge heartbeat capabilities"
   assert.match(relay, /AKU_BROWSER_SOURCE_SESSIONS_RESULT/);
   assert.doesNotMatch(relay, /AKU_BROWSER_BRIDGE_READY[\s\S]{0,500}sessions/);
 });
+
+test("source access revocation removes optional permissions and reconciles scripts", async () => {
+  const { revokeAllSourceAccess } = await import("../source-access-policy.js");
+  const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
+  const relay = fs.readFileSync(path.join(projectRoot, "aku-browser-tab-bridge.js"), "utf8");
+
+  assert.match(worker, /AKU_BRIDGE_REVOKE_SOURCE_ACCESS/);
+  assert.match(relay, /AKU_BROWSER_REVOKE_SOURCE_ACCESS/);
+  assert.match(relay, /AKU_BROWSER_REVOKE_SOURCE_ACCESS_RESULT/);
+  assert.match(relay, /AKU_BROWSER_REVOKE_SOURCE_ACCESS_FAILED/);
+
+  const removed = [];
+  const remainingOrigins = () => ["https://x.com/*", "https://www.linkedin.com/*", "https://example.com/*"]
+    .filter((origin) => !removed.includes(origin));
+  const api = {
+    permissions: {
+      getAll: async () => ({ origins: remainingOrigins() }),
+      remove: async (request) => removed.push(...request.origins),
+    },
+    scripting: {
+      getRegisteredContentScripts: async () => [{ id: "aku-source-x-feed" }, { id: "aku-source-linkedin-feed" }],
+      unregisterContentScripts: async (request) => removed.push(...request.ids),
+      registerContentScripts: async () => {
+        throw new Error("revoke must not register scripts");
+      },
+    },
+    storage: {
+      local: {
+        get: async (key) => ({}),
+        set: async () => {},
+      },
+    },
+  };
+  const state = await revokeAllSourceAccess(api);
+  assert.deepEqual(removed.sort(), [
+    "aku-source-linkedin-feed",
+    "aku-source-x-feed",
+    "https://www.linkedin.com/*",
+    "https://x.com/*",
+  ]);
+  assert.deepEqual(state.grantedSources, []);
+});
