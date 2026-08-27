@@ -93,6 +93,33 @@
       return;
     }
 
+    if (message.type === "AKU_BROWSER_OPEN_NATIVE_POST") {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "AKU_BRIDGE_OPEN_NATIVE_POST",
+          source: message.source,
+          url: message.url,
+        });
+        if (!response?.ok) {
+          throw new Error(response?.message || "AkuBridge could not open the native post.");
+        }
+        window.postMessage({
+          type: "AKU_BROWSER_NATIVE_POST_OPENED",
+          requestId: message.requestId,
+          source: response.source,
+          url: response.url,
+        }, allowedOrigin);
+      } catch (error) {
+        window.postMessage({
+          type: "AKU_BROWSER_NATIVE_POST_OPEN_FAILED",
+          requestId: message.requestId,
+          source: message.source,
+          message: String(error?.message ?? error),
+        }, allowedOrigin);
+      }
+      return;
+    }
+
     if (message.type === "AKU_BROWSER_BRIDGE_RELOAD_SELF") {
       try {
         const response = await chrome.runtime.sendMessage({

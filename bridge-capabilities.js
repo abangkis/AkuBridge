@@ -53,6 +53,7 @@ export function createBridgeCapabilities(manifest) {
       "report_frontier",
       "manage_source_tab_lifecycle",
       "manage_capture_window",
+      "open_native_reader_window",
       "release_capture_surface",
       "preserve_working_tab",
       "report_source_events",

@@ -22,6 +22,7 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
     reconcile: (...args) => serialize(() => runtime.reconcile(...args)),
     trackOpenedTab: (...args) => serialize(() => runtime.trackOpenedTab(...args)),
     isTrackedTab: (...args) => serialize(() => runtime.isTrackedTab(...args)),
+    windowIds: (...args) => serialize(() => runtime.windowIds(...args)),
     releaseSource: (...args) => serialize(() => runtime.releaseSource(...args)),
     release: (...args) => serialize(() => runtime.release(...args)),
   });
@@ -193,6 +194,19 @@ function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
       const state = await loadState(chromeApi);
       return state.leaseId === normalizeLeaseId(leaseId) &&
         state.transientTabs[source] === tabId;
+    },
+    async windowIds() {
+      const state = await loadState(chromeApi);
+      const ids = new Set(managedSurfaces(state).map((surface) => surface.windowId));
+      for (const tabId of Object.values(state.transientTabs)) {
+        try {
+          const tab = await chromeApi.tabs.get(tabId);
+          if (Number.isInteger(tab?.windowId)) ids.add(tab.windowId);
+        } catch {
+          // Stale transient bindings are reconciled by the normal release path.
+        }
+      }
+      return [...ids];
     },
     async releaseSource(source, leaseId) {
       if (!sourceIds().includes(source)) {

@@ -423,6 +423,7 @@ test("LinkedIn capture composes readiness with generic freshness recovery", () =
   const contentScript = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
   const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
   const recovery = fs.readFileSync(path.join(projectRoot, "source-freshness-recovery.js"), "utf8");
+  const captureWindowRuntime = fs.readFileSync(path.join(projectRoot, "capture-window-runtime.js"), "utf8");
 
   assert.match(contentScript, /AKU_BROWSER_PROBE_SOURCE_READY/);
   assert.match(contentScript, /selector_mismatch/);
@@ -447,7 +448,7 @@ test("LinkedIn capture composes readiness with generic freshness recovery", () =
   assert.match(worker, /BACKGROUND_RELEASE_PUMP_MS = 55_000/);
   assert.match(worker, /\/api\/bridge\/capture-surfaces\/events/);
   assert.match(worker, /captureSurfaceEvent\("release_requested"/);
-  assert.match(worker, /captureSurfaceEvent\("created", source/);
+  assert.match(captureWindowRuntime, /lifecycleEvent\(opened \? "created" : "reused", source/);
   assert.match(worker, /captureSurfaceEvent\("reused", source/);
   assert.match(worker, /readiness\.state === "source_unavailable"/);
   assert.match(worker, /new AkuBridgeError\(\s*"source_unavailable"/);
@@ -532,6 +533,24 @@ test("X media enrichment stays passive, bounded, and media-only", () => {
     worker.indexOf('message?.type === "AKU_BRIDGE_GET_CAPABILITIES"'),
   );
   assert.doesNotMatch(lookupHandler, /chrome\.tabs\.(?:create|update)/);
+});
+
+test("native post reading uses an allowlisted reader window isolated from capture", () => {
+  const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
+  const tabBridge = fs.readFileSync(path.join(projectRoot, "aku-browser-tab-bridge.js"), "utf8");
+  const readerRuntime = fs.readFileSync(path.join(projectRoot, "reader-window-runtime.js"), "utf8");
+
+  assert.match(tabBridge, /AKU_BROWSER_OPEN_NATIVE_POST/);
+  assert.match(tabBridge, /AKU_BROWSER_NATIVE_POST_OPENED/);
+  assert.match(tabBridge, /AKU_BROWSER_NATIVE_POST_OPEN_FAILED/);
+  assert.match(worker, /message\?\.type === "AKU_BRIDGE_OPEN_NATIVE_POST"/);
+  assert.match(worker, /isAkuBrowserOrigin\(sender\.url\)/);
+  assert.match(worker, /sourceForUrl\(url\.href\) !== source \|\| !isNativePostUrl/);
+  assert.match(worker, /excludedWindowIds: await managedCaptureWindow\.windowIds\(\)/);
+  assert.match(worker, /\.filter\(\(candidate\) => candidate\.windowId !== readerWindowId\)/);
+  assert.match(worker, /captureVisibilityMode: "managed_window_adaptive"/);
+  assert.match(readerRuntime, /chromeApi\.tabs\.create\(\{\s*windowId,/);
+  assert.match(readerRuntime, /chromeApi\.windows\.create/);
 });
 
 test("extension packaging derives dynamic source files from the permission registry", () => {
@@ -670,6 +689,7 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(worker, /managed_window_foreground/);
   assert.match(worker, /if \(managed\) await managed\.verifyFocus\(\)\.catch/);
   assert.ok(capabilities.actions.includes("manage_capture_window"));
+  assert.ok(capabilities.actions.includes("open_native_reader_window"));
   assert.ok(capabilities.actions.includes("release_capture_surface"));
   assert.ok(capabilities.actions.includes("preserve_working_tab"));
   assert.match(tabBridge, /capability handshake returned no capabilities/);

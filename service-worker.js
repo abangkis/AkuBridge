@@ -24,6 +24,7 @@ import {
   planCaptureVisibility,
 } from "./capture-visibility-policy.js";
 import { createManagedCaptureWindowRuntime } from "./capture-window-runtime.js";
+import { createReaderWindowRuntime } from "./reader-window-runtime.js";
 import { inspectCaptureSurface } from "./capture-surface-telemetry.js";
 import {
   sourceCaptureSurfaceReleasable,
@@ -133,6 +134,7 @@ const nativeRuntimeScheduler = createNativeRuntimeScheduler({
   }),
 });
 const managedCaptureWindow = createManagedCaptureWindowRuntime(chrome);
+const readerWindow = createReaderWindowRuntime(chrome);
 const xMediaEvidenceStore = createXMediaEvidenceStore(chrome.storage.local);
 const xAvatarEvidenceStore = createXAvatarEvidenceStore(chrome.storage.local);
 const structuredMediaCollectors = new Map([
@@ -319,6 +321,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
     openSourceFeed(message.source)
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+    return true;
+  }
+  if (message?.type === "AKU_BRIDGE_OPEN_NATIVE_POST") {
+    if (!isAkuBrowserOrigin(sender.url)) {
+      sendResponse({ ok: false, message: "Open native post rejected: invalid AkuBrowser origin." });
+      return false;
+    }
+    openNativePostInReaderWindow(message.source, message.url)
       .then((result) => sendResponse({ ok: true, ...result }))
       .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
     return true;
@@ -1562,7 +1574,12 @@ async function findOrOpenSourceTab(
   }
 
   const patterns = matchPatternsFor(source);
-  const tabs = await chrome.tabs.query({ url: patterns });
+  const captureWindowIds = await managedCaptureWindow.windowIds();
+  const readerWindowId = await readerWindow.currentWindowId({
+    excludedWindowIds: captureWindowIds,
+  });
+  const tabs = (await chrome.tabs.query({ url: patterns }))
+    .filter((candidate) => candidate.windowId !== readerWindowId);
   const selected = chooseSourceTab(tabs, { source, mode });
   let tab = selected;
   let opened = false;
@@ -1573,15 +1590,34 @@ async function findOrOpenSourceTab(
       throw new Error(`No open, rendered ${source}${expectation} was found.`);
     }
   } else if (!tab) {
-    const url = expectedFeedUrl(source);
-    tab = await chrome.tabs.create({ url, active: false });
-    opened = true;
-    await waitForTabComplete(tab.id, 20_000);
-    tab = await chrome.tabs.get(tab.id);
-    await managedCaptureWindow.trackOpenedTab(source, tab.id, captureLeaseId);
-    lifecycleEvents.push(captureSurfaceEvent("created", source, {
-      isolation: "shared_adaptive",
-    }));
+    const managed = await managedCaptureWindow.prepare(source, {
+      openIfMissing: true,
+      leaseId: captureLeaseId,
+      windowIsolation: "shared",
+    });
+    lifecycleEvents.push(...(managed.lifecycleEvents ?? []));
+    tab = managed.tab;
+    opened = managed.opened;
+    if (managed.opened || managed.reset) {
+      await waitForTabComplete(tab.id, 20_000, {
+        source,
+        phase: managed.reset ? "adaptive_feed_reset" : "adaptive_capture_window_created",
+      });
+      tab = await chrome.tabs.get(tab.id);
+    }
+    const prepared = await prepareSourceTab(tab, source, opened, {
+      ownership: "managed",
+      captureVisibilityPolicy: visibilityPlan.policy,
+      captureVisibilityMode: "managed_window_adaptive",
+      workingTabPreserved: true,
+      openedTabDisposition: "close_after_session",
+      hydrationTimeoutMs: requestedHydrationTimeoutMs,
+      requireVisualHydration,
+      restoreFocus: managed.verifyFocus,
+      lifecycleEvents,
+    });
+    prepared.closeOnExit = false;
+    return prepared;
   }
   const bridgeOwned = opened || await managedCaptureWindow.isTrackedTab(
     source,
@@ -2086,6 +2122,25 @@ async function openSourceFeed(source) {
   }
   const tab = await chrome.tabs.create({ url: definition.feedUrl, active: true });
   return { source, state: "source_opened", url: tab?.url ?? definition.feedUrl };
+}
+
+async function openNativePostInReaderWindow(source, value) {
+  if (!sourceIds().includes(source)) {
+    throw new Error("Native reader source is not in the AkuBrowser allowlist.");
+  }
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("Native reader URL is invalid.");
+  }
+  if (sourceForUrl(url.href) !== source || !isNativePostUrl(url.href, source)) {
+    throw new Error("Native reader URL is not an allowlisted post for this source.");
+  }
+  const result = await readerWindow.open(url.href, {
+    excludedWindowIds: await managedCaptureWindow.windowIds(),
+  });
+  return { source, state: "native_post_opened", url: result.url };
 }
 
 async function probeSourceFreshness(tabId, source) {
