@@ -29,7 +29,7 @@ var pinnedUpdatePublicKey = ""
 
 // Production builds inject the independently versioned native helper version.
 // Keeping a valid development default makes local contract tests deterministic.
-var runtimeHostVersion = "0.8.0"
+var runtimeHostVersion = "0.9.0"
 var sha256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 var errHostUpgradeRequired = errors.New("native runtime host upgrade required")
 

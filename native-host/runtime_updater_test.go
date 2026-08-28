@@ -62,7 +62,7 @@ func TestSignedRuntimeUpdaterClassifiesSignedMinimumHostUpgrade(t *testing.T) {
 	fixture := newIndependentRuntimeUpdateFixture(t)
 	publicKey, privateKey := updateTestKey()
 	manifest := sidecarUpdateManifestForTest("0.8.1", "sidecar-runtime-v101", legacyWindowsArchitecture)
-	manifest.MinHostVersion = "0.8.1"
+	manifest.MinHostVersion = "0.9.1"
 	fixture.transport.manifest = signSidecarUpdateManifestForTest(t, privateKey, manifest)
 	fixture.updater.PublicKey = base64.StdEncoding.EncodeToString(publicKey)
 
