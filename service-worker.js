@@ -206,10 +206,8 @@ chrome.runtime.onInstalled.addListener((details) => {
   const plan = planNativeRuntimeLifecycle("installed", {
     ...details,
     distribution: NATIVE_RUNTIME_DISTRIBUTION,
-    mode: BRIDGE_DEPLOYMENT.mode,
   });
-  if (plan.openSetup) {
-    chrome.tabs.create({ url: chrome.runtime.getURL("setup.html"), active: true });
+  if (details.reason === "install") {
     void nativeRuntimeScheduler.scheduleInitial().catch(() => {
       console.warn("AkuBrowser could not schedule the first native runtime update check.");
     });
@@ -333,16 +331,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     openNativePostInReaderWindow(message.source, message.url)
       .then((result) => sendResponse({ ok: true, ...result }))
-      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
-    return true;
-  }
-  if (message?.type === "AKU_BRIDGE_OPEN_SETUP") {
-    if (!isAkuBrowserOrigin(sender.url)) {
-      sendResponse({ ok: false, message: "Open setup rejected: invalid AkuBrowser origin." });
-      return false;
-    }
-    chrome.tabs.create({ url: chrome.runtime.getURL("setup.html"), active: true })
-      .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
     return true;
   }

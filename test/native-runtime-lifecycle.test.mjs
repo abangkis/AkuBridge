@@ -5,40 +5,38 @@ import {
   planNativeRuntimeLifecycle,
 } from "../native-runtime-lifecycle.js";
 
-test("first Store install opens setup without contacting the native host", () => {
+test("first install does not open legacy setup or contact the native host", () => {
   assert.deepEqual(planNativeRuntimeLifecycle("installed", { reason: "install" }), {
     action: "none",
     trigger: "installed_install",
-    openSetup: true,
   });
 });
 
-test("development and installed-app installs keep setup in AkuSidecar", () => {
+test("install planning is independent of the removed setup page", () => {
   for (const mode of ["development", "production-app"]) {
-    assert.equal(
-      planNativeRuntimeLifecycle("installed", {
-        reason: "install",
-        distribution: mode === "development" ? "development" : "production",
-        mode,
-      }).openSetup,
-      false,
-    );
-  }
-  assert.equal(
-    planNativeRuntimeLifecycle("installed", {
+    assert.deepEqual(planNativeRuntimeLifecycle("installed", {
       reason: "install",
-      distribution: "production",
-      mode: "production-store",
-    }).openSetup,
-    true,
-  );
+      distribution: mode === "development" ? "development" : "production",
+      mode,
+    }), {
+      action: "none",
+      trigger: "installed_install",
+    });
+  }
+  assert.deepEqual(planNativeRuntimeLifecycle("installed", {
+    reason: "install",
+    distribution: "production",
+    mode: "production-store",
+  }), {
+    action: "none",
+    trigger: "installed_install",
+  });
 });
 
 test("Chrome and PC restart reconcile a stopped or crashed runtime", () => {
   assert.deepEqual(planNativeRuntimeLifecycle("startup", { distribution: "production" }), {
     action: "reconcile_runtime",
     trigger: "startup",
-    openSetup: false,
   });
 });
 
@@ -46,7 +44,6 @@ test("an AkuBridge package update checks the signed Sidecar feed immediately", (
   assert.deepEqual(planNativeRuntimeLifecycle("installed", { reason: "update", distribution: "production" }), {
     action: "ensure_runtime",
     trigger: "installed_update",
-    openSetup: false,
   });
 });
 
@@ -55,7 +52,6 @@ test("Chrome and shared-module updates only reconcile the compatible runtime", (
     assert.deepEqual(planNativeRuntimeLifecycle("installed", { reason, distribution: "production" }), {
       action: "reconcile_runtime",
       trigger: `installed_${reason}`,
-      openSetup: false,
     });
   }
 });
@@ -65,13 +61,11 @@ test("unpacked development reload and Chrome startup never start the installed r
     assert.deepEqual(planNativeRuntimeLifecycle("installed", { reason, distribution: "development" }), {
       action: "none",
       trigger: `installed_${reason}`,
-      openSetup: false,
     });
   }
   assert.deepEqual(planNativeRuntimeLifecycle("startup", { distribution: "development" }), {
     action: "none",
     trigger: "startup",
-    openSetup: false,
   });
 });
 

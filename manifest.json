@@ -35,7 +35,6 @@
     "service_worker": "service-worker.js",
     "type": "module"
   },
-  "options_page": "setup.html",
   "content_scripts": [
     {
       "matches": [

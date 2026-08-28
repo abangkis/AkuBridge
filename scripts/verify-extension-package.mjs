@@ -21,7 +21,6 @@ const pending = [];
 const referenced = new Set();
 addReference("manifest.json");
 addReference(manifest.background?.service_worker);
-addReference(manifest.options_page);
 addReference(manifest.action?.default_popup);
 addReference("source-permission.html");
 for (const file of Object.values(manifest.icons ?? {})) addReference(file);

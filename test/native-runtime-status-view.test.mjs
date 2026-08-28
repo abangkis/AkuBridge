@@ -46,7 +46,7 @@ test("popup surfaces required security updates while compatible capture remains 
   });
 });
 
-test("popup requests one updater-host refresh without declaring the current runtime unusable", () => {
+test("popup routes updater-host refresh through the local AkuBrowser app", () => {
   assert.deepEqual(nativeRuntimeStatusView({
     state: "runtime_ready",
     hostUpgradeRequired: true,
@@ -54,11 +54,11 @@ test("popup requests one updater-host refresh without declaring the current runt
   }), {
     tone: "mandatory",
     title: "AkuSidecar updater needs refresh",
-    detail: "Open Setup and run this Bridge release's compatible installer. Your current runtime remains usable.",
+    detail: "Open AkuBrowser's local app shell; it will guide you through the compatible installer. Your current runtime remains usable.",
   });
 });
 
-test("legacy host refresh remains the actionable recovery when its update check also fails", () => {
+test("updater-host recovery remains actionable when its update check also fails", () => {
   assert.deepEqual(nativeRuntimeStatusView({
     state: "runtime_failed",
     hostUpgradeRequired: true,
@@ -68,7 +68,7 @@ test("legacy host refresh remains the actionable recovery when its update check 
   }), {
     tone: "mandatory",
     title: "AkuSidecar updater needs refresh",
-    detail: "Open Setup and run this Bridge release's compatible installer to refresh the update helper.",
+    detail: "Open AkuBrowser's local app shell; it will guide you through the compatible installer to refresh the update helper.",
   });
 });
 
@@ -81,7 +81,7 @@ test("non-retryable activation failure outranks mandatory-update urgency", () =>
   }), {
     tone: "error",
     title: "AkuSidecar update needs attention",
-    detail: "Open Setup for recovery options.",
+    detail: "Open AkuBrowser's local app shell for recovery options.",
   });
 });
 

@@ -1,7 +1,7 @@
 # AkuBridge
 
 Current release candidate identity: **`0.8.0`** / Chrome manifest
-**`0.8.0.0`** / runtime **`source-adapters-v106`**.
+**`0.8.0.0`** / runtime **`source-adapters-v107`**.
 
 Runtime v73 adds bounded background command dispatch for AkuBrowser Auto
 Update. After a trusted local AkuBrowser page configures the loopback endpoint
@@ -20,7 +20,12 @@ window; AkuBridge clamps the value again before using it.
 
 AkuBridge is the read-only Chrome extension used by AkuBrowser to collect a bounded set of visible observations from X, LinkedIn, Facebook, or Instagram.
 
-## Chrome Store runtime bootstrap
+## Historical Chrome Store runtime bootstrap
+
+The Native Messaging and companion-runtime details below are retained for the
+frozen Store package and shipped portable tuples. They are compatibility
+history, not a current onboarding path: new installations start in the
+AkuSidecar loopback app described in the Development section.
 
 The extension-side Native Messaging client lives in
 `native-runtime-client.js`. The separate Go host lives under `native-host/`
@@ -33,11 +38,10 @@ and one exact v1 migration fallback. It derives all runtime paths from
 installer-owned local metadata. See
 `native-host/README.md` for its build and filesystem contract.
 
-Production Store installs persist a 24-hour Sidecar update cadence anchored to
-the local installation time, so routine GitHub release checks remain naturally
-distributed across users. A later AkuBridge package update checks the signed
-Sidecar feed immediately, then returns to that original daily anchor instead of
-moving every user to the Bridge publication time.
+The frozen Store lane persists a 24-hour Sidecar update cadence anchored to the
+local installation time, so its routine GitHub release checks remain naturally
+distributed across existing users. No new Store builds are published; current
+first-run onboarding and repair remain Sidecar-owned.
 
 ## OpenAI Build Week role
 
@@ -185,40 +189,22 @@ npm run check
 npm run package:verify
 ```
 
-Production users install AkuBrowser from Chrome Web Store. Load this directory
-as an unpacked extension only for development or portable-fallback recovery.
-When the registered runtime is missing, Setup links to the fixed `.exe` asset
-on Windows or fixed `.pkg` asset on macOS. Linux intentionally exposes no
-installer action until 0.7.10.
+The AkuBridge popup has one action: **Open AkuBrowser**. It opens the Sidecar
+loopback application, which owns first-run onboarding, runtime repair, provider
+readiness, source intent, calibration, and Timeline state. AkuBridge no longer
+hosts a setup page or simulates runtime states.
 
-To preview the first-run runtime download state without uninstalling a working
-local runtime, open the unpacked extension page with:
+For development, start AkuSidecar through the normal local process owner, then
+open `http://127.0.0.1:11122` (or `http://localhost:11122`). Load this directory
+as an unpacked extension once in the dedicated development profile. Sidecar's
+onboarding advances from browser connection through per-source permission and
+login readiness, provider selection, and calibration; the extension-owned
+`source-permission.html` broker remains the only permission prompt surface.
 
-```text
-chrome-extension://<extension-id>/setup.html?simulateRuntime=not-installed
-```
-
-Additional setup states can be previewed with `update-required`, `stopped`, and
-`running`. These simulations bypass local runtime detection for the setup page
-only, while their buttons retain the real action wiring. Remove the query string
-to return to the initial **Not checked** state; live detection starts only after
-the user selects **Check runtime**.
-
-The first explicit runtime check has a 30-second Native Messaging timeout. Each
-consecutive **Try again** adds 10 seconds (40, 50, 60, and so on). A Setup action
-sends exactly one native request: **Check runtime** uses `status`, while
-**Run AkuBrowser**, **Update runtime**, and **Try again** use `ensure_runtime`.
-When the runtime is active, **Stop runtime** uses the bounded
-`shutdown_if_idle` action and refuses to stop active work.
-
-Release numbers and runtime compatibility are separate. A running installed
-runtime with the same Bridge contract remains usable while Setup offers the
-matching update; a newer contract-compatible runtime is never downgraded. The
-Native Messaging host may stop the installed runtime across release-number
-differences because the private runtime control token, not an exact version
-match, proves process ownership. A loopback-only portable runtime is explicitly
-shown as unmanaged: Setup tells the user to stop it manually and offers
-**Check after stopping** instead of sending installed-host control commands.
+The popup still renders honest native-runtime status. If repair or update is
+needed, it directs the user back to the Sidecar local app shell; capture and
+source permissions remain independently observable and are never inferred from
+the popup alone.
 
 The adapter foundation separates X, LinkedIn, Facebook, and Instagram DOM knowledge into source adapters loaded behind a common registry and catalog. The content runtime owns bounded scrolling, restoration, evidence normalization, and messaging; each adapter owns source matching, candidate discovery, author discovery, media exclusions, and pending-content labels. Instagram is opt-in and initially uses native-post fallback for blob-backed video while image evidence remains allowlisted to Instagram CDN hosts.
 

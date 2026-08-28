@@ -10,7 +10,6 @@ import {
 } from "../bridge-capabilities.js";
 import {
   registeredScriptsForSources,
-  sourceAccessDefinitions,
 } from "../source-access-policy.js";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -61,12 +60,15 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   ]);
   assert.equal(manifest.content_scripts.length, 1);
   assert.equal(manifest.action.default_popup, "popup.html");
+  assert.equal(manifest.options_page, undefined);
   const popupHtml = fs.readFileSync(path.join(projectRoot, "popup.html"), "utf8");
   const popupScript = fs.readFileSync(path.join(projectRoot, "popup.js"), "utf8");
-  assert.match(popupHtml, /Open AkuBrowser/);
-  assert.match(popupHtml, /Setup &amp; source access|Setup & source access/);
-  assert.match(popupScript, /chrome\.runtime\.getURL\("setup\.html"\)/);
+  assert.match(popupHtml, /id="open-akubrowser"/);
+  assert.doesNotMatch(popupHtml, /id="open-setup"/);
+  assert.doesNotMatch(popupHtml, /Setup &amp; source access|Setup & source access/);
+  assert.doesNotMatch(popupScript, /chrome\.runtime\.getURL\("setup\.html"\)/);
   assert.match(popupScript, /AKU_BROWSER_LOOPBACK_ORIGIN/);
+  assert.match(popupScript, /openTab\(`\$\{AKU_BROWSER_LOOPBACK_ORIGIN\}\/`\)/);
 
   const source = [
     "service-worker.js",
@@ -98,6 +100,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   }
   assert.equal(source.includes("SIGNAL" + "_GATEWAY"), false);
   assert.equal(source.includes("X-" + "Signal-Bridge"), false);
+  assert.doesNotMatch(source, /setup\.html|AKU_BROWSER_OPEN_BRIDGE_SETUP|AKU_BRIDGE_OPEN_SETUP/);
   assert.match(source, /const AKU_BROWSER_ORIGINS = new Set\(/);
   assert.match(source, /new URL\(value\)\.origin/);
   assert.match(source, /const allowedOrigin = window\.location\.origin/);
@@ -117,7 +120,9 @@ test("AkuBridge checks the bounded native runtime lifecycle without gating captu
   assert.match(worker, /nativeRuntimeClient\.status/);
   assert.match(worker, /scheduleNext:\s*details\.reason !== "install"/);
   assert.match(worker, /checkNow\(plan\.trigger\)/);
-  assert.match(worker, /chrome\.runtime\.getURL\("setup\.html"\)/);
+  assert.match(worker, /nativeRuntimeScheduler\.scheduleInitial\(\)/);
+  assert.doesNotMatch(worker, /chrome\.runtime\.getURL\("setup\.html"\)/);
+  assert.doesNotMatch(worker, /AKU_BRIDGE_OPEN_SETUP/);
   assert.doesNotMatch(worker, /chrome\.action\.onClicked/);
   assert.match(nativeClient, /com\.akubrowser\.runtime/);
   assert.match(nativeClient, /runtime\.sendNativeMessage/);
@@ -125,140 +130,31 @@ test("AkuBridge checks the bounded native runtime lifecycle without gating captu
   assert.doesNotMatch(nativeClient, /(?:command|executablePath|downloadUrl):/);
 });
 
-test("AkuBrowser setup page presents a component and permission timeline", () => {
-  const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"));
-  const setupHtml = fs.readFileSync(path.join(projectRoot, "setup.html"), "utf8");
-  const setupFavicon = fs.readFileSync(path.join(projectRoot, "icons", "setup-favicon.svg"), "utf8");
-  const setupScript = fs.readFileSync(path.join(projectRoot, "setup.js"), "utf8");
-  const setupRuntimeView = fs.readFileSync(path.join(projectRoot, "setup-runtime-view.js"), "utf8");
-  const setupRuntimeInstaller = fs.readFileSync(
-    path.join(projectRoot, "setup-runtime-installer.js"),
+test("legacy setup artifacts are deleted while the source-permission broker remains", () => {
+  for (const file of [
+    "setup.html",
+    "setup.css",
+    "setup.js",
+    "setup-platform.js",
+    "setup-runtime-view.js",
+    "setup-runtime-installer.js",
+    "setup-runtime-simulation.js",
+    "setup-codex-view.js",
+    path.join("icons", "setup-favicon.svg"),
+    path.join("test", "setup-platform.test.mjs"),
+    path.join("test", "setup-runtime-view.test.mjs"),
+    path.join("test", "setup-runtime-installer.test.mjs"),
+    path.join("test", "setup-runtime-simulation.test.mjs"),
+    path.join("test", "setup-codex-view.test.mjs"),
+  ]) {
+    assert.equal(fs.existsSync(path.join(projectRoot, file)), false, `${file} must be retired`);
+  }
+  assert.equal(fs.existsSync(path.join(projectRoot, "source-permission.html")), true);
+  const verifier = fs.readFileSync(
+    path.join(projectRoot, "scripts", "verify-extension-package.mjs"),
     "utf8",
   );
-
-  assert.equal(manifest.options_page, "setup.html");
-  assert.equal(manifest.options_ui, undefined);
-  for (const source of sourceAccessDefinitions()) {
-    assert.match(
-      setupHtml,
-      new RegExp(`input[^>]+type=["']checkbox["'][^>]+value=["']${source.id}["']`),
-      `setup consent must expose ${source.id}`,
-    );
-  }
-  assert.match(setupHtml, /setup\.css/);
-  assert.match(setupHtml, /setup\.js/);
-  assert.match(setupHtml, /rel="icon" type="image\/svg\+xml" href="icons\/setup-favicon\.svg"/);
-  assert.match(setupFavicon, /aria-label="Set up AkuBrowser"/);
-  assert.match(setupFavicon, /#f0aa24/);
-  assert.match(setupScript, /client\.status/);
-  assert.match(setupScript, /client\.ensureRuntime/);
-  assert.match(setupScript, /simulatedRuntimeOutcome/);
-  assert.match(setupScript, /Simulation mode uses the real runtime action controls/);
-  assert.match(setupHtml, /setup-timeline/);
-  assert.match(setupHtml, /About AkuBrowser/);
-  assert.match(setupHtml, /AkuBrowser runtime/);
-  assert.match(setupHtml, /Using the AkuBrowser desktop app\?/);
-  assert.doesNotMatch(setupHtml, /C2PA Verification/);
-  assert.match(setupHtml, /Codex App/);
-  assert.match(setupHtml, /id="codex-action"/);
-  assert.match(setupHtml, /Download and install Codex App/);
-  assert.match(setupHtml, /Open Codex App and sign in/);
-  assert.match(setupHtml, /I am signed in and Codex is ready/);
-  assert.match(setupScript, /client\.checkCodex/);
-  assert.match(setupScript, /codex_available/);
-  assert.doesNotMatch(setupScript, /^void performCodexAction\(\)/m);
-  assert.match(setupHtml, /id="runtime-action"/);
-  assert.match(setupHtml, /Open <code>AkuBrowserRuntimeSetup\.exe<\/code>/);
-  assert.doesNotMatch(setupHtml, /Check installation/);
-  assert.match(setupScript, /runtimeSetupView/);
-  assert.match(setupHtml, /id="runtime-executable-location"/);
-  assert.match(setupScript, /runtimeExecutablePath\.textContent = runtimeView\.executableLocation/);
-  assert.match(
-    setupScript,
-    /windowsInstallerAvailable:\s*windowsRuntimeInstallerAvailable/,
-  );
-  assert.match(setupScript, /runtime_unchecked/);
-  assert.match(setupScript, /RUNTIME_SETUP_ACTIONS\.CHECK/);
-  assert.match(setupScript, /RUNTIME_SETUP_ACTIONS\.ENSURE/);
-  assert.match(setupScript, /runtimeCheckTimeoutMs/);
-  assert.match(setupScript, /statusOnly\s*\?\s*await client\.status/);
-  assert.match(setupScript, /:\s*await client\.ensureRuntime/);
-  assert.match(setupScript, /client\.shutdownIfIdle/);
-  assert.match(setupScript, /RUNTIME_SETUP_ACTIONS\.STOP/);
-  assert.match(setupScript, /runtimeSource:\s*"loopback"/);
-  assert.match(setupRuntimeView, /Check native host again/);
-  assert.match(setupRuntimeView, /Check after stopping/);
-  assert.doesNotMatch(setupScript, /if \(!statusOnly/);
-  assert.doesNotMatch(setupScript, /void reconcile\(\{ statusOnly: true \}\);/);
-  assert.doesNotMatch(setupScript, /visibilitychange/);
-  assert.match(setupScript, /Chrome cannot run downloaded applications automatically/);
-  assert.match(setupScript, /Download started — run the installer next/);
-  assert.match(setupScript, /runtimeInstallerDownload/);
-  assert.match(setupScript, /stable package is unsigned and not notarized/);
-  assert.match(setupScript, /Never disable Gatekeeper globally/);
-  assert.match(setupScript, /detectSetupPlatform/);
-  assert.match(setupHtml, /Windows Security, Avast, or another\s+antivirus may warn, quarantine, block, or sandbox them/);
-  assert.match(setupHtml, /Do not disable antivirus\s+protection or exclude your Downloads folder/);
-  assert.match(setupHtml, /Avast CyberCapture may open this unsigned installer twice/);
-  assert.match(setupHtml, /Complete only the first Setup window/);
-  assert.match(setupHtml, /id="antivirus-help"/);
-  assert.match(setupHtml, /release\/windows\/README\.md#antivirus-warning/);
-  assert.match(setupScript, /If Avast opens another Setup window, select No or Cancel/);
-  assert.match(setupHtml, /Access is denied/);
-  assert.match(setupHtml, /%LOCALAPPDATA%\\Programs\\AkuBrowser\\/);
-  assert.match(setupHtml, /Stop the\s+running <code>AkuSidecar\.exe<\/code>/);
-  assert.match(setupHtml, /Automatic setup could not finish/);
-  assert.match(setupHtml, /Download manual Windows bundle/);
-  assert.match(setupHtml, /Do not run installed and\s+portable runtimes at the same time/);
-  assert.match(setupHtml, /id="runtime-conflict-dialog"/);
-  assert.match(setupHtml, /I've stopped it — check again/);
-  assert.match(setupHtml, /AkuBrowser cannot stop it\s+securely from Chrome/);
-  assert.match(setupHtml, /AkuBrowser Portable Runtime/);
-  assert.match(setupHtml, /Task Manager → Details process: <code>AkuSidecar\.exe<\/code>/);
-  assert.match(setupHtml, /Do not end <code>AkuBrowserRuntimeHost\.exe<\/code>/);
-  assert.match(setupScript, /RUNTIME_SETUP_ACTIONS\.RESOLVE_CONFLICT/);
-  assert.match(setupScript, /runtimeConflictDialog\.showModal/);
-  assert.match(setupScript, /runtimePortableFallbackURL/);
-  assert.match(setupScript, /preStoreAcceptance = BRIDGE_DEPLOYMENT\.mode === "acceptance"/);
-  assert.match(setupScript, /offlineBundle = BRIDGE_DEPLOYMENT\.mode === "production-offline"/);
-  assert.match(setupScript, /Run the matching local acceptance runtime/);
-  assert.match(setupScript, /Run the local \$\{platformName\} acceptance installer/);
-  assert.match(setupScript, /this pre-Store package does not download an unpublished GitHub asset/);
-  assert.match(setupScript, /runtimeLocalAcceptanceView/);
-  assert.doesNotMatch(setupScript, /Show local installer/);
-  assert.match(setupScript, /preStoreAcceptance\s*\?\s*""/);
-  assert.match(setupScript, /Start the bundled AkuBrowser Runtime/);
-  assert.match(setupScript, /windowsAntivirusNote\.hidden = !windowsRuntimeInstallerAvailable/);
-  assert.match(setupScript, /runtimeInstallerAttempted\.v1/);
-  assert.match(setupScript, /runtimeInstallerAttempted/);
-  assert.match(setupScript, /SIDECAR_BOOTSTRAP_VERSION/);
-  assert.match(setupRuntimeInstaller, /download\/v\$\{sidecarBootstrapVersion\}\/\$\{name\}/);
-  assert.doesNotMatch(setupRuntimeInstaller, /latest(?:\/download)?/);
-  assert.doesNotMatch(setupScript, /hostUpgradeRequired:\s*currentRuntimeOutcome/);
-  assert.match(setupScript, /installerAvailable:\s*runtimeInstallerAvailable/);
-  assert.match(setupRuntimeInstaller, /AkuBrowserRuntimeSetup-\$\{version\}\.exe/);
-  assert.match(setupRuntimeInstaller, /AkuBrowserRuntimeSetup-\$\{version\}-unsigned-local\.exe/);
-  assert.match(setupRuntimeInstaller, /AkuBrowserRuntimeSetup-\$\{version\}-macos-universal\.pkg/);
-  assert.match(
-    setupHtml,
-    /https:\/\/get\.microsoft\.com\/installer\/download\/9PLM9XGG6VKS\?cid=website_cta_psi/,
-  );
-  assert.doesNotMatch(setupScript, /downloads?\.(?:download|open)/);
-  assert.match(setupHtml, /Privacy &amp; consent|Privacy & consent/);
-  assert.match(setupHtml, /OpenAI through your Codex App/);
-  assert.match(setupHtml, /I agree &amp; enable|I agree & enable/);
-  assert.match(setupScript, /akuBrowserCodexPrerequisiteConfirmed/);
-  assert.match(setupScript, /chrome\.storage\.local\.set/);
-  assert.match(setupScript, /chrome\.permissions\.request/);
-  assert.match(setupScript, /chrome\.permissions\.remove/);
-  assert.match(setupScript, /sourceSelectionRecorded/);
-  assert.match(setupHtml, /id="open-anyway-dialog"/);
-  assert.match(setupHtml, /Fix setup first/);
-  assert.match(setupHtml, /Open anyway/);
-  assert.doesNotMatch(setupHtml, /id="open"[^>]+disabled/);
-  assert.doesNotMatch(setupScript, /open\.disabled\s*=/);
-  assert.match(setupScript, /incompleteSetupItems/);
-  assert.match(setupScript, /openAnywayDialog\.showModal/);
+  assert.doesNotMatch(verifier, /options_page|setup\.html|setup-runtime/);
 });
 
 test("AkuBridge recognizes the current LinkedIn feed container", () => {
@@ -288,7 +184,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v106/);
+  assert.match(contentScript, /source-adapters-v107/);
   assert.match(contentScript, /AKU_BROWSER_RECOVER_SOURCE_READINESS/);
   assert.match(serviceWorker, /recoverSourceReadiness/);
   assert.match(contentScript, /candidateDiagnostics: normalizeCandidateDiagnostics/);
@@ -559,6 +455,7 @@ test("extension packaging derives dynamic source files from the permission regis
     "utf8",
   );
   assert.match(verifier, /sourceAccessDefinitions\(\)\.map/);
+  assert.doesNotMatch(verifier, /options_page/);
   assert.doesNotMatch(verifier, /registeredScriptsForSources\(\["x", "linkedin", "facebook"\]\)/);
 });
 
@@ -614,9 +511,9 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   const runtimePolicy = fs.readFileSync(path.join(projectRoot, "bridge-runtime-policy.js"), "utf8");
 
   assert.match(tabBridge, /AKU_BRIDGE_GET_CAPABILITIES/);
-  assert.match(tabBridge, /AKU_BROWSER_OPEN_BRIDGE_SETUP/);
-  assert.match(worker, /AKU_BRIDGE_OPEN_SETUP/);
-  assert.match(worker, /chrome\.runtime\.getURL\("setup\.html"\)/);
+  assert.doesNotMatch(tabBridge, /AKU_BROWSER_OPEN_BRIDGE_SETUP/);
+  assert.doesNotMatch(worker, /AKU_BRIDGE_OPEN_SETUP/);
+  assert.doesNotMatch(worker, /chrome\.runtime\.getURL\("setup\.html"\)/);
   assert.match(tabBridge, /AKU_BROWSER_BRIDGE_RELOAD_SELF/);
   assert.match(tabBridge, /AKU_BROWSER_MEDIA_RECAPTURE/);
   assert.match(tabBridge, /capabilitiesForSidecar/);
@@ -626,8 +523,8 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /protocolMajor: sidecarProtocolMajor/);
   const capabilities = createBridgeCapabilities({ version: "0.8.0.0", version_name: "0.8.0", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.8.0");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v106");
-  assert.equal(capabilities.buildId, "aku-bridge-0.8.0-source-adapters-v106");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v107");
+  assert.equal(capabilities.buildId, "aku-bridge-0.8.0-source-adapters-v107");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.equal(capabilities.protocolMajor, 2);
   assert.equal(capabilities.protocolMinor, 0);

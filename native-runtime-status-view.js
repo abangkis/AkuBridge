@@ -8,15 +8,15 @@ export function nativeRuntimeStatusView(state) {
       "mandatory",
       "AkuSidecar updater needs refresh",
       state.state === "runtime_ready"
-        ? "Open Setup and run this Bridge release's compatible installer. Your current runtime remains usable."
-        : "Open Setup and run this Bridge release's compatible installer to refresh the update helper.",
+        ? "Open AkuBrowser's local app shell; it will guide you through the compatible installer. Your current runtime remains usable."
+        : "Open AkuBrowser's local app shell; it will guide you through the compatible installer to refresh the update helper.",
     );
   }
   if (state.errorCode && state.silentError !== true) {
     return status(
       "error",
       "AkuSidecar update needs attention",
-      state.retryable ? "It will retry automatically." : "Open Setup for recovery options.",
+      state.retryable ? "It will retry automatically." : "Open AkuBrowser's local app shell for recovery options.",
     );
   }
   if (["required", "security"].includes(state.update?.urgency)) {
@@ -32,10 +32,10 @@ export function nativeRuntimeStatusView(state) {
   if (state.silentError === true) return null;
 
   if (state.state === "runtime_install_required") {
-    return status("mandatory", "AkuSidecar is required", "Open Setup to install it.");
+    return status("mandatory", "AkuSidecar is required", "Install AkuBrowser, then open its local app shell to continue.");
   }
   if (state.state === "runtime_incompatible") {
-    return status("mandatory", "AkuSidecar update required", "Open Setup to restore compatibility.");
+    return status("mandatory", "AkuSidecar update required", "Open AkuBrowser's local app shell to restore compatibility.");
   }
   if (state.state === "runtime_restart_required") {
     return status("mandatory", "Restart required", "Restart Chrome to finish the AkuSidecar update.");
@@ -44,7 +44,7 @@ export function nativeRuntimeStatusView(state) {
     return status(
       "error",
       "AkuSidecar update needs attention",
-      state.retryable ? "It will retry automatically." : "Open Setup for recovery options.",
+      state.retryable ? "It will retry automatically." : "Open AkuBrowser's local app shell for recovery options.",
     );
   }
   if (state.state === "runtime_busy" || phase === "waiting_for_idle") {

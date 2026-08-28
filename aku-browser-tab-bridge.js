@@ -245,19 +245,6 @@
       return;
     }
 
-    if (message.type === "AKU_BROWSER_OPEN_BRIDGE_SETUP") {
-      try {
-        const response = await chrome.runtime.sendMessage({ type: "AKU_BRIDGE_OPEN_SETUP" });
-        if (!response?.ok) throw new Error(response?.message || "AkuBridge setup could not be opened.");
-      } catch (error) {
-        window.postMessage({
-          type: "AKU_BROWSER_BRIDGE_ERROR",
-          message: String(error?.message ?? error),
-        }, allowedOrigin);
-      }
-      return;
-    }
-
     if (message.type === "AKU_BROWSER_REVOKE_SOURCE_ACCESS") {
       try {
         const response = await chrome.runtime.sendMessage({ type: "AKU_BRIDGE_REVOKE_SOURCE_ACCESS" });
