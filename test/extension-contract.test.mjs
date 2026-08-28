@@ -184,7 +184,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v107/);
+  assert.match(contentScript, /source-adapters-v108/);
   assert.match(contentScript, /AKU_BROWSER_RECOVER_SOURCE_READINESS/);
   assert.match(serviceWorker, /recoverSourceReadiness/);
   assert.match(contentScript, /candidateDiagnostics: normalizeCandidateDiagnostics/);
@@ -523,8 +523,8 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /protocolMajor: sidecarProtocolMajor/);
   const capabilities = createBridgeCapabilities({ version: "0.8.0.0", version_name: "0.8.0", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.8.0");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v107");
-  assert.equal(capabilities.buildId, "aku-bridge-0.8.0-source-adapters-v107");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v108");
+  assert.equal(capabilities.buildId, "aku-bridge-0.8.0-source-adapters-v108");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.equal(capabilities.protocolMajor, 2);
   assert.equal(capabilities.protocolMinor, 0);
@@ -571,6 +571,8 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(worker, /createSingleFlightSessionPump\(pumpBackgroundSession\)/);
   assert.match(worker, /releaseTerminalBackgroundLease/);
   assert.match(worker, /refreshBackgroundHeartbeat/);
+  assert.match(worker, /AKU_BROWSER_RECONCILE_SOURCE_ACCESS[\s\S]*reconcileSourceAccessAndRefreshHeartbeat\(\)/);
+  assert.match(worker, /async function reconcileSourceAccessAndRefreshHeartbeat\(\)[\s\S]*return state;/);
   assert.match(worker, /bridgeCapabilitiesForProtocol/);
   assert.match(worker, /config\.sidecarProtocolMajor/);
   assert.match(worker, /bridgeCapabilitiesWithSourceAccess/);

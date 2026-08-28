@@ -253,7 +253,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, message: "Source access reconciliation rejected." });
       return false;
     }
-    scheduleSourceAccessReconciliation()
+    reconcileSourceAccessAndRefreshHeartbeat()
       .then((state) => sendResponse({ ok: true, state }))
       .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
     return true;
@@ -734,10 +734,11 @@ function scheduleSourceAccessReconciliation() {
 }
 
 async function reconcileSourceAccessAndRefreshHeartbeat() {
-  await scheduleSourceAccessReconciliation().catch(() => undefined);
+  const state = await scheduleSourceAccessReconciliation();
   const stored = await chrome.storage.local.get(BACKGROUND_DISPATCH_CONFIG_KEY).catch(() => ({}));
   const config = stored?.[BACKGROUND_DISPATCH_CONFIG_KEY];
   if (config) await refreshBackgroundHeartbeat(config).catch(() => undefined);
+  return state;
 }
 
 function isTrustedExtensionPage(sender) {
