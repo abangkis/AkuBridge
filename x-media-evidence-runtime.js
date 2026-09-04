@@ -688,7 +688,13 @@
     try {
       const url = new URL(value);
       url.hash = "";
-      if (url.hostname.toLowerCase() === "pbs.twimg.com") url.searchParams.delete("name");
+      if (url.hostname.toLowerCase() === "pbs.twimg.com") {
+        if (/^\/media\//i.test(url.pathname)) {
+          url.pathname = url.pathname.replace(/\.(?:jpe?g|png|gif|webp|avif)$/i, "");
+          url.searchParams.delete("format");
+        }
+        url.searchParams.delete("name");
+      }
       url.searchParams.sort();
       return url.href;
     } catch {

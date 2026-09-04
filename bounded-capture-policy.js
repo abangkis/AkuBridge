@@ -123,7 +123,7 @@
   }
 
   function normalizeMediaCandidates(source, values) {
-    const seen = new Set();
+    const seen = new Map();
     const media = [];
     const diagnostics = {
       candidateCount: 0,
@@ -152,10 +152,6 @@
         if (rawURL) diagnostics.rejectedHostCount += 1;
         continue;
       }
-      if (seen.has(url)) {
-        diagnostics.duplicateCount += 1;
-        continue;
-      }
       const playbackUrl = kind === "video" ? safeMediaUrl(source, value.playbackUrl) : null;
       const width = clampInteger(Math.round(value.width), 0, 8_192, 0);
       const height = clampInteger(Math.round(value.height), 0, 8_192, 0);
@@ -168,21 +164,19 @@
         continue;
       }
       if (trustedUnknownGeometry) diagnostics.trustedUnknownGeometryAcceptedCount += 1;
-      seen.add(url);
-      media.push(Object.freeze({
-        kind,
-        url,
-        posterUrl: kind === "video" ? url : null,
-        playbackUrl,
-        playbackMode: kind === "video" && playbackUrl && value.playbackMode !== "native"
-          ? "inline"
-          : kind === "video"
-            ? "native"
-            : null,
-        alt: typeof value.alt === "string" ? value.alt.trim().slice(0, 300) : "",
-        width,
-        height,
-      }));
+      const identity = mediaIdentity(source, url);
+      const previous = seen.get(identity);
+      if (previous) {
+        diagnostics.duplicateCount += 1;
+        if (preferMediaCandidate(value, previous.input, url, previous.url)) {
+          media[previous.index] = createMediaCandidate(value, kind, url, playbackUrl, width, height);
+          seen.set(identity, { ...previous, input: value, url });
+        }
+        continue;
+      }
+      const candidate = createMediaCandidate(value, kind, url, playbackUrl, width, height);
+      seen.set(identity, { index: media.length, input: value, url });
+      media.push(candidate);
       if (media.length >= limits.maxMediaPerBlock) break;
     }
     diagnostics.acceptedCount = media.length;
@@ -194,6 +188,113 @@
       writable: false,
     });
     return Object.freeze(media);
+  }
+
+  function createMediaCandidate(value, kind, url, playbackUrl, width, height) {
+    return Object.freeze({
+      kind,
+      url,
+      posterUrl: kind === "video" ? url : null,
+      playbackUrl,
+      playbackMode: kind === "video" && playbackUrl && value.playbackMode !== "native"
+        ? "inline"
+        : kind === "video"
+          ? "native"
+          : null,
+      alt: typeof value.alt === "string" ? value.alt.trim().slice(0, 300) : "",
+      width,
+      height,
+    });
+  }
+
+  function mediaIdentity(source, url) {
+    // A poster identifies the rendered media item. Playback is enrichment for
+    // that item and must not turn the same poster into a second carousel slot.
+    return assetIdentity(source, url);
+  }
+
+  function assetIdentity(source, value) {
+    if (source === "x") return xAssetIdentity(value);
+    if (typeof value !== "string") return "";
+    try {
+      const url = new URL(value);
+      url.hash = "";
+      url.searchParams.sort();
+      return url.href;
+    } catch {
+      return String(value ?? "");
+    }
+  }
+
+  // X serves the same pbs.twimg.com media entity both as `/ID.jpg` from its
+  // response payload and as `/ID?format=jpg&name=small` in the hydrated DOM.
+  // Keep those presentation URLs intact, but use one stable identity for all
+  // size/format variants of a `/media/` entity.
+  function xAssetIdentity(value) {
+    if (typeof value !== "string") return "";
+    try {
+      const url = new URL(value);
+      url.hash = "";
+      if (url.hostname.toLowerCase() === "pbs.twimg.com") {
+        if (/^\/media\//i.test(url.pathname)) {
+          url.pathname = url.pathname.replace(/\.(?:jpe?g|png|gif|webp|avif)$/i, "");
+          url.searchParams.delete("format");
+        }
+        url.searchParams.delete("name");
+      }
+      url.searchParams.sort();
+      return url.href;
+    } catch {
+      return String(value ?? "");
+    }
+  }
+
+  function preferMediaCandidate(candidate, previous, candidateURL, previousURL) {
+    const candidateArea = mediaDimensionScore(candidate);
+    const previousArea = mediaDimensionScore(previous);
+    if (candidateArea !== previousArea) return candidateArea > previousArea;
+    const candidateSource = mediaSourceRank(candidate);
+    const previousSource = mediaSourceRank(previous);
+    if (candidateSource !== previousSource) return candidateSource > previousSource;
+    const candidateVariant = mediaVariantRank(candidateURL);
+    const previousVariant = mediaVariantRank(previousURL);
+    if (candidateVariant !== previousVariant) return candidateVariant > previousVariant;
+    return String(candidateURL).length < String(previousURL).length;
+  }
+
+  function mediaDimensionScore(value) {
+    const width = Number(value?.width) || 0;
+    const height = Number(value?.height) || 0;
+    return width * height;
+  }
+
+  function mediaSourceRank(value) {
+    const source = String(value?.urlSource || value?.provenance || "").toLowerCase();
+    return {
+      x_response_graphql: 50,
+      main_structured_state: 40,
+      current_src: 30,
+      src_property: 25,
+      src_attribute: 20,
+      observed_dom: 15,
+      css_background: 10,
+    }[source] || 0;
+  }
+
+  function mediaVariantRank(value) {
+    try {
+      const url = new URL(value);
+      const name = (url.searchParams.get("name") || "").toLowerCase();
+      return {
+        orig: 50,
+        original: 50,
+        large: 40,
+        medium: 30,
+        small: 20,
+      }[name] || (name ? 10 : 35);
+    } catch {
+      return 0;
+    }
   }
 
   function safeMediaUrl(source, value) {

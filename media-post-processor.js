@@ -133,7 +133,7 @@
     for (const structuredValue of structured) {
       const match = primary.find((primaryValue) => (
         unusedPrimary.has(primaryValue) && (
-          samePoster(primaryValue, structuredValue) ||
+          samePoster(primaryValue, structuredValue, source) ||
           primaryValue.kind === "video" && structuredValue.kind === "video" &&
             primaryVideos.length === 1 && structuredVideos.length === 1
         )
@@ -313,16 +313,23 @@
     return /^[a-z0-9:_-]{1,160}$/i.test(text) ? text : null;
   }
 
-  function samePoster(left, right) {
+  function samePoster(left, right, source) {
     const leftURL = left?.posterUrl || left?.url;
     const rightURL = right?.posterUrl || right?.url;
-    return Boolean(leftURL && rightURL && assetIdentity(leftURL) === assetIdentity(rightURL));
+    return Boolean(leftURL && rightURL && assetIdentity(source, leftURL) === assetIdentity(source, rightURL));
   }
 
-  function assetIdentity(value) {
+  function assetIdentity(source, value) {
     try {
       const url = new URL(value);
       url.hash = "";
+      if (source === "x" && url.hostname.toLowerCase() === "pbs.twimg.com") {
+        if (/^\/media\//i.test(url.pathname)) {
+          url.pathname = url.pathname.replace(/\.(?:jpe?g|png|gif|webp|avif)$/i, "");
+          url.searchParams.delete("format");
+        }
+        url.searchParams.delete("name");
+      }
       url.searchParams.sort();
       return url.href;
     } catch {

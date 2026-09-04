@@ -85,12 +85,25 @@ test("the sanitizer rejects profile avatars and deceptive hostnames", () => {
 
 test("X image size variants consume one media slot", () => {
   const media = sanitizeXMediaEvidence([
+    { url: "https://pbs.twimg.com/media/same.jpg" },
     { url: "https://pbs.twimg.com/media/same?format=jpg&name=small" },
     { url: "https://pbs.twimg.com/media/same?name=large&format=jpg" },
     { url: "https://pbs.twimg.com/media/other?format=jpg&name=large" },
   ]);
   assert.deepEqual(media.map((value) => value.url), [
-    "https://pbs.twimg.com/media/same?format=jpg&name=small",
+    "https://pbs.twimg.com/media/same.jpg",
     "https://pbs.twimg.com/media/other?format=jpg&name=large",
+  ]);
+});
+
+test("X media entities with distinct IDs remain separate", () => {
+  const media = sanitizeXMediaEvidence([
+    { url: "https://pbs.twimg.com/media/first.jpg" },
+    { url: "https://pbs.twimg.com/media/second?format=jpg&name=small" },
+  ]);
+
+  assert.deepEqual(media.map((value) => value.url), [
+    "https://pbs.twimg.com/media/first.jpg",
+    "https://pbs.twimg.com/media/second?format=jpg&name=small",
   ]);
 });

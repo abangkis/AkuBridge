@@ -66,6 +66,29 @@ test("generic media-post processor promotes an exact LinkedIn poster image to vi
   assert.equal(result.media[0].width, primary.width);
 });
 
+test("generic media-post processor joins X extension and format poster variants", () => {
+  const processor = processorContext().AkuMediaPostProcessor;
+  const primary = {
+    kind: "image",
+    url: "https://pbs.twimg.com/media/example.jpg",
+    width: 1_200,
+    height: 800,
+  };
+  const structured = {
+    kind: "image",
+    url: "https://pbs.twimg.com/media/example?format=jpg&name=small",
+    width: 516,
+    height: 344,
+    provenance: "x_response_graphql",
+  };
+
+  const result = processor.process("x", [primary], [structured]);
+
+  assert.equal(result.enrichedCount, 0);
+  assert.equal(result.media.length, 1);
+  assert.equal(result.media[0].url, primary.url);
+});
+
 test("structured Instagram carousel order wins over partially rendered DOM neighbors", () => {
   const processor = processorContext().AkuMediaPostProcessor;
   const structured = Array.from({ length: 7 }, (_, index) => ({

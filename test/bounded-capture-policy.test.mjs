@@ -166,6 +166,35 @@ test("captured media is bounded to rendered source CDN images", () => {
   assert.equal(Object.isFrozen(linkedInMedia), true);
 });
 
+test("X media URL variants share an identity and keep the best display candidate", () => {
+  const policy = loadPolicy();
+  const media = policy.normalizeMediaCandidates("x", [
+    {
+      url: "https://pbs.twimg.com/media/example?format=jpg&name=small",
+      width: 516,
+      height: 344,
+      urlSource: "css_background",
+    },
+    {
+      url: "https://pbs.twimg.com/media/example.jpg",
+      width: 1_200,
+      height: 800,
+      urlSource: "x_response_graphql",
+    },
+    {
+      url: "https://pbs.twimg.com/media/distinct.jpg",
+      width: 1_200,
+      height: 800,
+      urlSource: "x_response_graphql",
+    },
+  ]);
+
+  assert.equal(media.length, 2);
+  assert.equal(media[0].url, "https://pbs.twimg.com/media/example.jpg");
+  assert.equal(media[1].url, "https://pbs.twimg.com/media/distinct.jpg");
+  assert.equal(media.diagnostics.duplicateCount, 1);
+});
+
 test("captured carousel media keeps slides five through twenty but remains bounded", () => {
   const policy = loadPolicy();
   const media = policy.normalizeMediaCandidates("facebook", Array.from({ length: 24 }, (_, index) => ({
