@@ -48,13 +48,62 @@ test("managed capture restores focus only when its own window took focus", async
   });
   chrome.focusedWindowId = 2;
 
-  assert.deepEqual(await prepared.verifyFocus(), {
+  assert.deepEqual(await prepared.requireFocus("target_loaded"), {
     changed: true,
     restored: true,
     preserved: true,
   });
   assert.equal(chrome.focusedWindowId, 1);
   assert.equal(chrome.activeByWindow.get(1), 11);
+  assert.deepEqual(chrome.windowUpdates, [{ id: 1, focused: true }]);
+  assert.deepEqual(prepared.lifecycleEvents.at(-1).detail, { phase: "target_loaded", restored: true });
+});
+
+test("managed capture never restores a last-focused Chrome window when another app was initially focused", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const first = await runtime.prepare("x");
+  chrome.focusedWindowId = first.tab.windowId;
+  chrome.chromeFocused = false;
+  const prepared = await runtime.prepare("x");
+
+  assert.equal(prepared.focusSnapshot, null);
+  assert.deepEqual(await prepared.verifyFocus(), { changed: false, restored: false, preserved: true });
+  assert.deepEqual(chrome.windowUpdates, []);
+  assert.equal(chrome.chromeFocused, false);
+  assert.equal(prepared.lifecycleEvents.some((event) => event.event === "focus_intervention"), false);
+});
+
+test("managed capture respects switching to another app during capture", async () => {
+  const chrome = fakeChrome();
+  const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x");
+  chrome.focusedWindowId = prepared.tab.windowId;
+  chrome.chromeFocused = false;
+
+  assert.deepEqual(await prepared.requireFocus("target_loaded"), { changed: false, restored: false, preserved: true });
+  assert.deepEqual(await prepared.verifyFocus(), { changed: false, restored: false, preserved: true });
+  assert.deepEqual(chrome.windowUpdates, []);
+  assert.equal(chrome.chromeFocused, false);
+});
+
+test("managed capture respects an app switch while restoring the working tab", async () => {
+  const chrome = fakeChrome();
+  const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x");
+  chrome.focusedWindowId = prepared.tab.windowId;
+  chrome.afterTabUpdate = () => { chrome.chromeFocused = false; };
+
+  assert.deepEqual(await prepared.verifyFocus(), { changed: false, restored: false, preserved: true });
+  assert.deepEqual(chrome.windowUpdates, []);
+});
+
+test("managed capture does not report restored focus when Chrome loses focus before verification", async () => {
+  const chrome = fakeChrome();
+  const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x");
+  chrome.focusedWindowId = prepared.tab.windowId;
+  chrome.afterWindowUpdate = () => { chrome.chromeFocused = false; };
+
+  assert.deepEqual(await prepared.verifyFocus(), { changed: true, restored: false, preserved: false });
+  assert.deepEqual(chrome.windowUpdates, [{ id: 1, focused: true }]);
 });
 
 test("managed capture accepts a transient focus change that it successfully restores", async () => {
@@ -509,6 +558,10 @@ function fakeChrome() {
   const activeByWindow = new Map([[1, 11]]);
   const state = {
     focusedWindowId: 1,
+    chromeFocused: true,
+    windowUpdates: [],
+    afterTabUpdate: null,
+    afterWindowUpdate: null,
     activeByWindow,
     createdWindowOptions: null,
     createdWindowOptionsList: [],
@@ -531,7 +584,7 @@ function fakeChrome() {
       async remove(key) { delete storage[key]; },
     } },
     windows: {
-      async getLastFocused() { return { id: state.focusedWindowId }; },
+      async getLastFocused() { return { id: state.focusedWindowId, focused: state.chromeFocused }; },
       async get(id, { populate } = {}) {
         const window = windows.get(id);
         if (!window) throw new Error("No window");
@@ -549,8 +602,11 @@ function fakeChrome() {
         return { id: windowId, tabs: [tab] };
       },
       async update(id, options) {
+        state.windowUpdates.push({ id, ...options });
         if (options.focused && state.failFocusRestore) throw new Error("Focus restore blocked");
         if (options.focused) state.focusedWindowId = id;
+        if (options.focused) state.chromeFocused = true;
+        if (state.afterWindowUpdate) state.afterWindowUpdate();
         return { id };
       },
       async remove(id) {
@@ -581,6 +637,7 @@ function fakeChrome() {
           activeByWindow.set(tab.windowId, id);
           if (state.focusManagedWindowOnTabActivation) state.focusedWindowId = tab.windowId;
         }
+        if (state.afterTabUpdate) state.afterTabUpdate();
         return {
           ...tab,
           active: activeByWindow.get(tab.windowId) === id,

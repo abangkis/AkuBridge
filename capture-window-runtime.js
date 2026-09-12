@@ -992,7 +992,9 @@ function normalizeLeaseId(value) {
 async function captureWorkingFocus(chromeApi) {
   try {
     const window = await chromeApi.windows.getLastFocused();
-    if (!Number.isInteger(window?.id)) return null;
+    // getLastFocused also returns a Chrome window when another app owns focus.
+    // Such a window is not a working surface we are authorized to foreground.
+    if (!Number.isInteger(window?.id) || window.focused !== true) return null;
     const activeTab = (await chromeApi.tabs.query({ active: true, windowId: window.id }))[0];
     return { windowId: window.id, tabId: activeTab?.id ?? null };
   } catch {
@@ -1013,7 +1015,7 @@ async function preserveWorkingFocus(chromeApi, snapshot, managedWindowId) {
 
   // Focus outside the managed surface belongs to the user. Do not undo a tab
   // or window change that happened while a bounded capture was running.
-  if (currentWindow?.id !== managedWindowId) {
+  if (currentWindow?.focused !== true || currentWindow.id !== managedWindowId) {
     return { changed: false, restored: false, preserved: true };
   }
 
@@ -1021,13 +1023,20 @@ async function preserveWorkingFocus(chromeApi, snapshot, managedWindowId) {
     if (Number.isInteger(snapshot.tabId)) {
       await chromeApi.tabs.update(snapshot.tabId, { active: true });
     }
+    // Tab activation is asynchronous; respect an app/window switch during it.
+    const beforeRestore = await chromeApi.windows.getLastFocused();
+    if (beforeRestore?.focused !== true || (
+      beforeRestore.id !== managedWindowId && beforeRestore.id !== snapshot.windowId
+    )) {
+      return { changed: false, restored: false, preserved: true };
+    }
     await chromeApi.windows.update(snapshot.windowId, { focused: true });
     const verifiedWindow = await chromeApi.windows.getLastFocused();
     const verifiedTab = (await chromeApi.tabs.query({
       active: true,
       windowId: snapshot.windowId,
     }))[0];
-    const restored = verifiedWindow?.id === snapshot.windowId && (
+    const restored = verifiedWindow?.focused === true && verifiedWindow.id === snapshot.windowId && (
       !Number.isInteger(snapshot.tabId) || verifiedTab?.id === snapshot.tabId
     );
     return { changed: true, restored, preserved: restored };
