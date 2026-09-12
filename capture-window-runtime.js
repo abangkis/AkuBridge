@@ -35,6 +35,7 @@ function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
       { openIfMissing = true, leaseId = null, windowIsolation = "shared" } = {},
     ) {
       const focusSnapshot = await captureWorkingFocus(chromeApi);
+      focusSnapshot.source = source;
       const state = await loadState(chromeApi);
       const isolation = normalizeWindowIsolation(windowIsolation);
       const reconciliationEvents = await reconcileLedger(
@@ -42,7 +43,7 @@ function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
         state,
         normalizeLeaseId(leaseId),
       );
-      let binding = await validateBinding(chromeApi, state, source, isolation);
+      let binding = await validateBinding(chromeApi, state, source, isolation, focusSnapshot);
       let opened = false;
       let reset = binding?.reset === true;
 
@@ -53,7 +54,7 @@ function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
             { source, reason: "managed_tab_missing" },
           );
         }
-        binding = await createBinding(chromeApi, state, source, isolation);
+        binding = await createBinding(chromeApi, state, source, isolation, focusSnapshot);
         opened = true;
         reset = false;
       }
@@ -81,23 +82,44 @@ function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
         created: opened,
       });
 
-      const current = await chromeApi.tabs.get(binding.tabId);
-      if (current.active !== true) await chromeApi.tabs.update(binding.tabId, { active: true });
-      const focusOutcome = await requirePreservedFocus(chromeApi, focusSnapshot, binding.windowId, {
-        source,
-        reason: "managed_window_took_focus",
-        phase: "prepare",
-      });
+      let focusOutcome;
+      try {
+        const current = await chromeApi.tabs.get(binding.tabId);
+        if (current.active !== true) await chromeApi.tabs.update(binding.tabId, { active: true });
+        focusOutcome = await requirePreservedFocus(chromeApi, focusSnapshot, binding.windowId, {
+          source,
+          reason: "managed_window_took_focus",
+          phase: "prepare",
+        });
+      } catch (error) {
+        if (opened) {
+          try {
+            const cleanup = await this.releaseSource(source, claimedState.leaseId);
+            focusSnapshot.events.push(...(cleanup.events ?? []));
+          } catch (cleanupError) {
+            focusSnapshot.events.push(lifecycleEvent("release_requested", source, {
+              outcome: "prepare_cleanup_failed",
+              reason: String(cleanupError?.message ?? cleanupError).slice(0, 200),
+            }));
+          }
+        }
+        error.captureSurfaceLifecycle = [...focusSnapshot.events];
+        throw error;
+      }
       const lifecycleEvents = [
+        ...focusSnapshot.events,
         ...reconciliationEvents,
         lifecycleEvent(opened ? "created" : "reused", source, {
           isolation,
           reset,
           focusIntervention: focusOutcome.changed === true,
           focusRestored: focusOutcome.restored === true,
+          focusContext: focusSnapshot.kind,
+          focusContained: focusOutcome.contained ?? null,
         }),
       ];
-      if (focusOutcome.changed === true) {
+      focusSnapshot.events = lifecycleEvents;
+      if (focusOutcome.changed === true && focusSnapshot.kind === "chrome") {
         lifecycleEvents.push(lifecycleEvent("focus_intervention", source, {
           phase: "prepare",
           restored: focusOutcome.restored === true,
@@ -119,7 +141,7 @@ function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
           lifecycleEvents,
         ),
         showForeground: async () => {
-          const result = await chromeApi.windows.update(binding.windowId, { focused: true });
+          const result = await chromeApi.windows.update(binding.windowId, { state: "normal", focused: true });
           lifecycleEvents.push(lifecycleEvent("focus_intervention", source, {
             phase: "foreground_authorized",
             restored: false,
@@ -139,7 +161,7 @@ function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
             binding.windowId,
             { source, reason: "managed_window_took_focus", phase },
           );
-          if (outcome.changed === true) {
+          if (outcome.changed === true && focusSnapshot.kind === "chrome") {
             lifecycleEvents.push(lifecycleEvent("focus_intervention", source, {
               phase,
               restored: outcome.restored === true,
@@ -453,7 +475,7 @@ async function openManagedTargetTab(
       reason: "managed_target_creation_took_focus",
       phase: "target_created",
     });
-    if (createdFocus.changed === true) {
+    if (createdFocus.changed === true && focusSnapshot.kind === "chrome") {
       lifecycleEvents.push(lifecycleEvent("focus_intervention", source, {
         phase: "target_created",
         restored: createdFocus.restored === true,
@@ -465,7 +487,7 @@ async function openManagedTargetTab(
       reason: "managed_target_activation_took_focus",
       phase: "target_activated",
     });
-    if (activatedFocus.changed === true) {
+    if (activatedFocus.changed === true && focusSnapshot.kind === "chrome") {
       lifecycleEvents.push(lifecycleEvent("focus_intervention", source, {
         phase: "target_activated",
         restored: activatedFocus.restored === true,
@@ -819,7 +841,7 @@ async function persistRemainingState(chromeApi, state) {
   await saveState(chromeApi, state);
 }
 
-async function validateBinding(chromeApi, state, source, isolation) {
+async function validateBinding(chromeApi, state, source, isolation, focusSnapshot) {
   const isolatedBinding = isolation === "per_source"
     ? state.sourceWindows[source]
     : null;
@@ -860,9 +882,11 @@ async function validateBinding(chromeApi, state, source, isolation) {
     return null;
   }
   if (isCanonicalFeedUrl(tab.url, source)) {
+    if (focusSnapshot.kind !== "chrome") await requirePreservedFocus(chromeApi, focusSnapshot, window.id, { source, phase: "reuse" });
     return { windowId: window.id, tabId: tab.id, state, reset: false };
   }
   if (isBridgeOwnedFeedUrl(tab.url, source)) {
+    if (focusSnapshot.kind !== "chrome") await requirePreservedFocus(chromeApi, focusSnapshot, window.id, { source, phase: "reset" });
     await chromeApi.tabs.update(tab.id, {
       url: expectedFeedUrl(source),
       active: true,
@@ -874,7 +898,7 @@ async function validateBinding(chromeApi, state, source, isolation) {
   return null;
 }
 
-async function createBinding(chromeApi, state, source, isolation) {
+async function createBinding(chromeApi, state, source, isolation, focusSnapshot) {
   let windowId = isolation === "per_source" ? null : state.windowId;
   let tab;
   if (!windowId) {
@@ -882,12 +906,12 @@ async function createBinding(chromeApi, state, source, isolation) {
       url: expectedFeedUrl(source),
       focused: false,
       type: "normal",
-      width: 960,
-      height: 900,
+      ...(focusSnapshot.kind === "chrome" ? { width: 960, height: 900 } : { state: "minimized" }),
     });
     windowId = created.id;
     tab = created.tabs?.[0] ?? null;
   } else {
+    if (focusSnapshot.kind !== "chrome") await requirePreservedFocus(chromeApi, focusSnapshot, windowId, { source, phase: "create_tab" });
     tab = await chromeApi.tabs.create({
       windowId,
       url: expectedFeedUrl(source),
@@ -994,17 +1018,36 @@ async function captureWorkingFocus(chromeApi) {
     const window = await chromeApi.windows.getLastFocused();
     // getLastFocused also returns a Chrome window when another app owns focus.
     // Such a window is not a working surface we are authorized to foreground.
-    if (!Number.isInteger(window?.id) || window.focused !== true) return null;
+    if (!Number.isInteger(window?.id) || typeof window.focused !== "boolean") return { kind: "unknown", events: [] };
+    if (window.focused !== true) return { kind: "external", events: [] };
     const activeTab = (await chromeApi.tabs.query({ active: true, windowId: window.id }))[0];
-    return { windowId: window.id, tabId: activeTab?.id ?? null };
+    return { kind: "chrome", windowId: window.id, tabId: activeTab?.id ?? null, events: [] };
   } catch {
-    return null;
+    return { kind: "unknown", events: [] };
   }
 }
 
 async function preserveWorkingFocus(chromeApi, snapshot, managedWindowId) {
-  if (!snapshot?.windowId) {
-    return { changed: false, restored: false, preserved: true };
+  if (snapshot.kind !== "chrome") {
+    let changed = false;
+    let contained = false;
+    let focusKnown = false;
+    try {
+      const window = await chromeApi.windows.get(managedWindowId);
+      changed = window.state !== "minimized" || window.focused === true;
+      if (changed) await chromeApi.windows.update(managedWindowId, { state: "minimized" });
+      const verified = await chromeApi.windows.get(managedWindowId);
+      const focused = await chromeApi.windows.getLastFocused();
+      contained = verified.state === "minimized" && !(focused.focused === true && focused.id === managedWindowId);
+      focusKnown = typeof focused.focused === "boolean";
+    } catch {
+      // No OS application handle is available: containment is not restoration.
+    }
+    const outcome = { changed, restored: false, preserved: contained && focusKnown, contained, focusContext: snapshot.kind };
+    if (changed || outcome.preserved !== true) {
+      snapshot.events.push(lifecycleEvent("focus_intervention", snapshot.source, { phase: "external_focus_containment", ...outcome }));
+    }
+    return outcome;
   }
   let currentWindow;
   try {
@@ -1047,7 +1090,7 @@ async function preserveWorkingFocus(chromeApi, snapshot, managedWindowId) {
 
 async function requirePreservedFocus(chromeApi, snapshot, managedWindowId, details) {
   const focusOutcome = await preserveWorkingFocus(chromeApi, snapshot, managedWindowId);
-  if (focusOutcome.changed && focusOutcome.preserved !== true) {
+  if (focusOutcome.preserved !== true) {
     throw visibilityError(
       "Chrome focused the managed capture surface and AkuBridge could not restore the user's working surface.",
       { ...details, focusOutcome },
