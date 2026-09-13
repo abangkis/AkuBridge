@@ -9,8 +9,45 @@ import {
   isCurrentInstalledAkuBrowserTabRecovery,
   isTrustedAkuBrowserTab,
   selectInstalledAkuBrowserTabs,
+  retryInstalledAkuBrowserTabRecovery,
   shouldRecoverInstalledAkuBrowserTabs,
 } from "../extension-install-recovery-policy.js";
+
+test("transient injection failure recovers without a new tab event or reload", async () => {
+  let calls = 0;
+  const waits = [];
+  assert.equal(await retryInstalledAkuBrowserTabRecovery(async () => {
+    if (++calls === 1) throw new Error("frame navigated");
+    return true;
+  }, { expiresAt: 1000, now: () => 0, wait: async (ms) => waits.push(ms) }), true);
+  assert.equal(calls, 2);
+  assert.deepEqual(waits, [250]);
+});
+
+test("persistent injection failures stop after three attempts", async () => {
+  let calls = 0;
+  await assert.rejects(retryInstalledAkuBrowserTabRecovery(async () => {
+    calls++;
+    throw new Error("injection unavailable");
+  }, { expiresAt: 1000, now: () => 0, wait: async () => {} }), /injection unavailable/);
+  assert.equal(calls, 3);
+});
+
+test("recovery expires between retries and does not retry a rejected tab", async () => {
+  let calls = 0;
+  let now = 0;
+  assert.equal(await retryInstalledAkuBrowserTabRecovery(async () => {
+    calls++;
+    throw new Error("navigation");
+  }, { expiresAt: 100, now: () => now, wait: async () => { now = 100; } }), false);
+  assert.equal(calls, 1);
+  calls = 0;
+  assert.equal(await retryInstalledAkuBrowserTabRecovery(async () => {
+    calls++;
+    return false;
+  }, { expiresAt: 100, now: () => 0 }), false);
+  assert.equal(calls, 1);
+});
 
 test("development and installed-app lanes recover only after install or update", () => {
   for (const mode of ["development", "production-app"]) {

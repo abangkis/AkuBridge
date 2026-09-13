@@ -59,6 +59,8 @@ import {
   isCurrentInstalledAkuBrowserTabRecovery,
   isTrustedAkuBrowserTab,
   selectInstalledAkuBrowserTabs,
+  retryInstalledAkuBrowserTabRecovery,
+  AKU_BROWSER_INSTALL_RECOVERY_MAX_TOTAL_ATTEMPTS,
   shouldRecoverInstalledAkuBrowserTabs,
 } from "./extension-install-recovery-policy.js";
 import {
@@ -489,41 +491,68 @@ async function recoverPendingInstalledAkuBrowserTabs() {
   const attemptedTabIds = Array.isArray(state.attemptedTabIds)
     ? state.attemptedTabIds.filter((tabId) => Number.isInteger(tabId))
     : [];
-  const remainingTabSlots = AKU_BROWSER_INSTALL_RECOVERY_MAX_TABS - attemptedTabIds.length;
-  if (remainingTabSlots <= 0) return;
-  const candidates = selectInstalledAkuBrowserTabs(tabs, {
-    ...state,
-    limit: remainingTabSlots,
+  const attemptCounts = { ...(state.attemptCounts ?? {}) };
+  const reservedTabIds = new Set([...attemptedTabIds, ...Object.keys(attemptCounts).map(Number)]);
+  const exhaustedTabIds = Object.keys(attemptCounts)
+    .filter((id) => attemptCounts[id] >= AKU_BROWSER_INSTALL_RECOVERY_MAX_TOTAL_ATTEMPTS)
+    .map(Number);
+  const eligibleTabs = reservedTabIds.size >= AKU_BROWSER_INSTALL_RECOVERY_MAX_TABS
+    ? tabs.filter((tab) => reservedTabIds.has(tab.id))
+    : tabs;
+  const candidates = selectInstalledAkuBrowserTabs(eligibleTabs, {
+    attemptedTabIds: [...attemptedTabIds, ...exhaustedTabIds],
   });
   if (candidates.length === 0) return;
 
+  const persist = () => chrome.storage.local.set({
+    [AKU_BROWSER_INSTALL_RECOVERY_STORAGE_KEY]: {
+      ...state,
+      attemptedTabIds: [...attemptedTabIds],
+      attemptCounts: { ...attemptCounts },
+    },
+  });
+
   for (const tab of candidates) {
     if (attemptedTabIds.includes(tab.id)) continue;
+    if (!reservedTabIds.has(tab.id) && reservedTabIds.size >= AKU_BROWSER_INSTALL_RECOVERY_MAX_TABS) continue;
     const currentTab = await chrome.tabs.get(tab.id).catch(() => null);
     if (!isTrustedAkuBrowserTab(currentTab) ||
       (currentTab.status !== undefined && currentTab.status !== "complete")) continue;
-    attemptedTabIds.push(tab.id);
-    await chrome.storage.local.set({
-      [AKU_BROWSER_INSTALL_RECOVERY_STORAGE_KEY]: {
-        ...state,
-        attemptedTabIds: [...attemptedTabIds],
-      },
-    });
+    reservedTabIds.add(tab.id);
     try {
-      await chrome.scripting.executeScript({
-        target: { tabId: currentTab.id },
-        world: "ISOLATED",
-        files: [AKU_BROWSER_TAB_BRIDGE_FILE],
-      });
-      const origin = new URL(currentTab.url).origin;
-      const ping = await chrome.scripting.executeScript({
-        target: { tabId: currentTab.id },
-        world: "ISOLATED",
-        func: postAkuBrowserBridgePing,
-        args: [origin],
-      });
-      if (ping?.[0]?.result !== true) {
-        throw new Error("AkuBridge relay ping was rejected by the trusted tab origin.");
+      const recovered = await retryInstalledAkuBrowserTabRecovery(async () => {
+        const count = attemptCounts[tab.id] ?? 0;
+        if (count >= AKU_BROWSER_INSTALL_RECOVERY_MAX_TOTAL_ATTEMPTS) return false;
+        // Persist the bounded budget before async injection, but mark a tab
+        // completed only after relay + ping succeeds. A later complete event
+        // can recover transient navigation without restarting the app.
+        attemptCounts[tab.id] = count + 1;
+        await persist();
+        const currentTab = await chrome.tabs.get(tab.id).catch(() => null);
+        if (!isTrustedAkuBrowserTab(currentTab)) return false;
+        if (currentTab.status !== undefined && currentTab.status !== "complete") {
+          throw new Error("AkuBrowser tab is still navigating.");
+        }
+        await chrome.scripting.executeScript({
+          target: { tabId: currentTab.id },
+          world: "ISOLATED",
+          files: [AKU_BROWSER_TAB_BRIDGE_FILE],
+        });
+        const origin = new URL(currentTab.url).origin;
+        const ping = await chrome.scripting.executeScript({
+          target: { tabId: currentTab.id },
+          world: "ISOLATED",
+          func: postAkuBrowserBridgePing,
+          args: [origin],
+        });
+        if (ping?.[0]?.result !== true) {
+          throw new Error("AkuBridge relay ping was rejected by the trusted tab origin.");
+        }
+        return true;
+      }, { expiresAt: state.expiresAt });
+      if (recovered) {
+        attemptedTabIds.push(tab.id);
+        await persist();
       }
     } catch (error) {
       console.warn(`AkuBridge could not install the relay in trusted AkuBrowser tab ${tab.id}.`, error);

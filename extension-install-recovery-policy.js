@@ -12,6 +12,27 @@ export const AKU_BROWSER_INSTALL_RECOVERY_STORAGE_KEY = "akuBridgeInstallRecover
 export const AKU_BROWSER_INSTALL_RECOVERY_ALARM = "akuBridgeInstallRecoveryExpiry";
 export const AKU_BROWSER_INSTALL_RECOVERY_TTL_MS = 30_000;
 export const AKU_BROWSER_INSTALL_RECOVERY_MAX_TABS = 4;
+export const AKU_BROWSER_INSTALL_RECOVERY_MAX_ATTEMPTS = 3;
+export const AKU_BROWSER_INSTALL_RECOVERY_MAX_TOTAL_ATTEMPTS = 6;
+
+// A navigation can invalidate an injection between tabs.get and executeScript.
+// Retry that short race without reloading the page or requiring an app restart.
+export async function retryInstalledAkuBrowserTabRecovery(recover, {
+  expiresAt,
+  now = Date.now,
+  wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+} = {}) {
+  for (let attempt = 0; attempt < AKU_BROWSER_INSTALL_RECOVERY_MAX_ATTEMPTS; attempt++) {
+    if (!Number.isFinite(expiresAt) || now() >= expiresAt) return false;
+    try {
+      return await recover();
+    } catch (error) {
+      if (attempt === AKU_BROWSER_INSTALL_RECOVERY_MAX_ATTEMPTS - 1) throw error;
+      await wait(250);
+    }
+  }
+  return false;
+}
 
 const RECOVERABLE_MODES = new Set(["development", "production-app"]);
 const RECOVERABLE_REASONS = new Set(["install", "update"]);
@@ -48,6 +69,7 @@ export function createInstalledAkuBrowserTabRecovery({ reason, version, now = Da
     reason: normalizedReason,
     version: normalizedVersion,
     attemptedTabIds: Object.freeze([]),
+    attemptCounts: Object.freeze({}),
     createdAt: now,
     expiresAt: now + AKU_BROWSER_INSTALL_RECOVERY_TTL_MS,
   });
@@ -67,6 +89,15 @@ export function isCurrentInstalledAkuBrowserTabRecovery(state, { now = Date.now(
     state.expiresAt - state.createdAt <= AKU_BROWSER_INSTALL_RECOVERY_TTL_MS &&
     Array.isArray(state.attemptedTabIds) &&
     state.attemptedTabIds.every((tabId) => Number.isInteger(tabId) && tabId >= 0) &&
+    (state.attemptCounts === undefined || (
+      state.attemptCounts !== null &&
+      typeof state.attemptCounts === "object" &&
+      !Array.isArray(state.attemptCounts) &&
+      Object.entries(state.attemptCounts).every(([id, count]) =>
+        /^(0|[1-9]\d*)$/.test(id) && Number.isSafeInteger(Number(id)) &&
+        Number.isInteger(count) && count >= 0 &&
+        count <= AKU_BROWSER_INSTALL_RECOVERY_MAX_TOTAL_ATTEMPTS)
+    )) &&
     state.expiresAt > now;
 }
 
