@@ -22,8 +22,8 @@ test("AkuBridge has a narrow read-only permission contract", () => {
     fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
   assert.equal(manifest.version_name, packageJson.version);
-  assert.equal(manifest.version, "0.9.0.0");
-  assert.equal(manifest.version_name, "0.9.0");
+  assert.equal(manifest.version, "0.9.1.0");
+  assert.equal(manifest.version_name, "0.9.1");
   assert.equal(manifest.name, "AkuBrowser");
   const publicKey = Buffer.from(manifest.key, "base64");
   assert.equal(publicKey.toString("base64"), manifest.key);
@@ -184,7 +184,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v108/);
+  assert.match(contentScript, /source-adapters-v109/);
   assert.match(contentScript, /AKU_BROWSER_RECOVER_SOURCE_READINESS/);
   assert.match(serviceWorker, /recoverSourceReadiness/);
   assert.match(contentScript, /candidateDiagnostics: normalizeCandidateDiagnostics/);
@@ -521,10 +521,10 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /if \(protocolMajor === 2\) return capabilities/);
   assert.match(tabBridge, /updateCapabilities: _updateCapabilities/);
   assert.match(tabBridge, /protocolMajor: sidecarProtocolMajor/);
-  const capabilities = createBridgeCapabilities({ version: "0.9.0.0", version_name: "0.9.0", manifest_version: 3 });
-  assert.equal(capabilities.extensionVersion, "0.9.0");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v108");
-  assert.equal(capabilities.buildId, "aku-bridge-0.9.0-source-adapters-v108");
+  const capabilities = createBridgeCapabilities({ version: "0.9.1.0", version_name: "0.9.1", manifest_version: 3 });
+  assert.equal(capabilities.extensionVersion, "0.9.1");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v109");
+  assert.equal(capabilities.buildId, "aku-bridge-0.9.1-source-adapters-v109");
   assert.equal(capabilities.focusPolicyRevision, "mutable-focus-authority-v1");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.equal(capabilities.protocolMajor, 2);

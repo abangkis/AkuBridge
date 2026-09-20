@@ -149,7 +149,7 @@ func TestSignedSidecarUpdateManifestRejectsIncompatibleHostBridgeAndDatabase(t *
 		{
 			name: "host too old",
 			mutate: func(manifest *SignedSidecarUpdateManifest) {
-				manifest.MinHostVersion = "0.9.1"
+				manifest.MinHostVersion = "0.9.2"
 			},
 			wantSubstr: "host is too old",
 		},

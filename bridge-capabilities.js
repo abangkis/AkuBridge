@@ -4,7 +4,7 @@ import {
   sourceIds,
 } from "./source-catalog.js";
 
-export const BRIDGE_RUNTIME_REVISION = "source-adapters-v108";
+export const BRIDGE_RUNTIME_REVISION = "source-adapters-v109";
 export const FOCUS_POLICY_REVISION = "mutable-focus-authority-v1";
 export const BRIDGE_ID = "aku-bridge-chrome-mv3-v0";
 export const BRIDGE_CONTRACT_VERSION = "aku-browser.bridge.v2";
@@ -13,7 +13,7 @@ export const BRIDGE_PROTOCOL_MINOR = 0;
 // Setup bootstrap authority is deliberately independent from the Chrome Web
 // Store version. Release packaging updates this companion version only after
 // the matching host + Sidecar installer has passed the Bridge contract checks.
-export const SIDECAR_BOOTSTRAP_VERSION = "0.9.0";
+export const SIDECAR_BOOTSTRAP_VERSION = "0.9.1";
 export const BRIDGE_UPDATE_CAPABILITIES = Object.freeze([
   "background_check",
   "staged_apply",
