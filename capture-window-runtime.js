@@ -8,6 +8,8 @@ import { sourceIds } from "./source-catalog.js";
 export const CAPTURE_WINDOW_STORAGE_KEY = "akuBridgeManagedCaptureWindowV1";
 export const CAPTURE_SURFACE_LEDGER_STORAGE_KEY = "akuBridgeManagedCaptureSurfaceLedgerV2";
 const MAX_LEDGER_RECEIPTS = 100;
+const FOCUS_SETTLE_CHECKS = 2;
+const FOCUS_SETTLE_INTERVAL_MS = 50;
 
 export function createManagedCaptureWindowRuntime(chromeApi) {
   const runtime = createUnserializedManagedCaptureWindowRuntime(chromeApi);
@@ -1053,9 +1055,13 @@ async function preserveWorkingFocus(chromeApi, snapshot, managedWindowId) {
   try {
     currentWindow = await chromeApi.windows.getLastFocused();
   } catch {
+    revokeFocusAuthority(snapshot, "unknown", "focus_unavailable");
     return { changed: true, restored: false, preserved: false };
   }
 
+  if (revokeObservedFocusAuthority(snapshot, currentWindow, managedWindowId)) {
+    return preserveWorkingFocus(chromeApi, snapshot, managedWindowId);
+  }
   // Focus outside the managed surface belongs to the user. Do not undo a tab
   // or window change that happened while a bounded capture was running.
   if (currentWindow?.focused !== true || currentWindow.id !== managedWindowId) {
@@ -1068,6 +1074,9 @@ async function preserveWorkingFocus(chromeApi, snapshot, managedWindowId) {
     }
     // Tab activation is asynchronous; respect an app/window switch during it.
     const beforeRestore = await chromeApi.windows.getLastFocused();
+    if (revokeObservedFocusAuthority(snapshot, beforeRestore, managedWindowId)) {
+      return preserveWorkingFocus(chromeApi, snapshot, managedWindowId);
+    }
     if (beforeRestore?.focused !== true || (
       beforeRestore.id !== managedWindowId && beforeRestore.id !== snapshot.windowId
     )) {
@@ -1075,6 +1084,7 @@ async function preserveWorkingFocus(chromeApi, snapshot, managedWindowId) {
     }
     await chromeApi.windows.update(snapshot.windowId, { focused: true });
     const verifiedWindow = await chromeApi.windows.getLastFocused();
+    revokeObservedFocusAuthority(snapshot, verifiedWindow, managedWindowId);
     const verifiedTab = (await chromeApi.tabs.query({
       active: true,
       windowId: snapshot.windowId,
@@ -1088,8 +1098,50 @@ async function preserveWorkingFocus(chromeApi, snapshot, managedWindowId) {
   }
 }
 
+function revokeObservedFocusAuthority(snapshot, window, managedWindowId) {
+  if (snapshot.kind !== "chrome") return false;
+  if (typeof window?.focused !== "boolean" || !Number.isInteger(window?.id)) {
+    revokeFocusAuthority(snapshot, "unknown", "focus_unavailable");
+  } else if (!window.focused) {
+    revokeFocusAuthority(snapshot, "external", "user_app_switch");
+  } else if (window.id !== managedWindowId && window.id !== snapshot.windowId) {
+    revokeFocusAuthority(snapshot, "external", "user_window_switch");
+  } else {
+    return false;
+  }
+  return true;
+}
+
+function revokeFocusAuthority(snapshot, kind, reason) {
+  // This lease may never foreground the original snapshot again, even if a
+  // later managed activation steals focus back from the user's chosen app.
+  const previousFocusContext = snapshot.kind;
+  snapshot.kind = kind;
+  snapshot.events.push(lifecycleEvent("focus_intervention", snapshot.source, {
+    phase: "focus_authority_revoked", previousFocusContext, focusContext: kind,
+    reason, restorationAuthorized: false,
+  }));
+}
+
 async function requirePreservedFocus(chromeApi, snapshot, managedWindowId, details) {
-  const focusOutcome = await preserveWorkingFocus(chromeApi, snapshot, managedWindowId);
+  let focusOutcome = await preserveWorkingFocus(chromeApi, snapshot, managedWindowId);
+  // Chrome can resolve activation before the OS focus transition is visible.
+  // Bound the guard to 100 ms; ordinary snapshot inspection remains immediate.
+  for (let check = 0; check < FOCUS_SETTLE_CHECKS && focusOutcome.preserved === true; check += 1) {
+    await new Promise((resolve) => setTimeout(resolve, FOCUS_SETTLE_INTERVAL_MS));
+    const verified = await preserveWorkingFocus(chromeApi, snapshot, managedWindowId);
+    focusOutcome = {
+      ...verified,
+      changed: focusOutcome.changed || verified.changed,
+      restored: snapshot.kind === "chrome" && (focusOutcome.restored || verified.restored),
+    };
+    if (verified.changed || !verified.preserved) {
+      snapshot.events.push(lifecycleEvent("focus_intervention", snapshot.source, {
+        phase: "delayed_focus_verification", triggerPhase: details?.phase,
+        check: check + 1, ...verified,
+      }));
+    }
+  }
   if (focusOutcome.preserved !== true) {
     throw visibilityError(
       "Chrome focused the managed capture surface and AkuBridge could not restore the user's working surface.",

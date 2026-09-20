@@ -5,6 +5,7 @@ import {
 } from "./source-catalog.js";
 
 export const BRIDGE_RUNTIME_REVISION = "source-adapters-v108";
+export const FOCUS_POLICY_REVISION = "mutable-focus-authority-v1";
 export const BRIDGE_ID = "aku-bridge-chrome-mv3-v0";
 export const BRIDGE_CONTRACT_VERSION = "aku-browser.bridge.v2";
 export const BRIDGE_PROTOCOL_MAJOR = 2;
@@ -27,6 +28,7 @@ export function createBridgeCapabilities(manifest) {
     extensionVersion,
     runtimeRevision: BRIDGE_RUNTIME_REVISION,
     buildId: `aku-bridge-${extensionVersion}-${BRIDGE_RUNTIME_REVISION}`,
+    focusPolicyRevision: FOCUS_POLICY_REVISION,
     protocolMajor: BRIDGE_PROTOCOL_MAJOR,
     protocolMinor: BRIDGE_PROTOCOL_MINOR,
     updateCapabilities: [...BRIDGE_UPDATE_CAPABILITIES],
@@ -70,6 +72,7 @@ export function bridgeCapabilitiesForProtocol(capabilities, protocolMajor) {
     protocolMajor: _protocolMajor,
     protocolMinor: _protocolMinor,
     updateCapabilities: _updateCapabilities,
+    focusPolicyRevision: _focusPolicyRevision,
     ...legacyCapabilities
   } = capabilities;
   return legacyCapabilities;
