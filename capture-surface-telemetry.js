@@ -1,3 +1,17 @@
+import { FOCUS_POLICY_REVISION } from "./bridge-capabilities.js";
+
+// Additive receipt detail: joins existing stage durations, yield, and quality
+// outcomes by run/source without claiming that minimized capture has parity.
+export function focusPolicyEvidence() {
+  return {
+    focusPolicyRevision: FOCUS_POLICY_REVISION,
+    focusPolicyMode: "background_containment_only",
+    focusedWriteAttempted: false,
+    restorationSuppressed: true,
+    containmentApplied: false,
+  };
+}
+
 const WINDOW_STATES = new Set(["normal", "minimized", "maximized", "fullscreen", "locked-fullscreen"]);
 const WINDOW_TYPES = new Set(["normal", "popup", "panel", "app", "devtools"]);
 const TAB_STATUSES = new Set(["unloaded", "loading", "complete"]);

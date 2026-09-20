@@ -25,7 +25,7 @@ import {
 } from "./capture-visibility-policy.js";
 import { createManagedCaptureWindowRuntime } from "./capture-window-runtime.js";
 import { createReaderWindowRuntime } from "./reader-window-runtime.js";
-import { inspectCaptureSurface } from "./capture-surface-telemetry.js";
+import { inspectCaptureSurface, focusPolicyEvidence } from "./capture-surface-telemetry.js";
 import {
   sourceCaptureSurfaceReleasable,
 } from "./capture-surface-lifecycle-policy.js";
@@ -1105,7 +1105,7 @@ function captureSurfaceEvent(event, source, detail = {}) {
     event,
     source: sourceIds().includes(source) ? source : null,
     outcome: String(detail.outcome ?? "").slice(0, 120),
-    detail: { ...detail },
+    detail: { ...focusPolicyEvidence(), ...detail },
     occurredAt: new Date().toISOString(),
   };
 }
@@ -1541,7 +1541,7 @@ async function findOrOpenSourceTab(
         targetCaptureTabId = captureTab.id;
         captureTabOpened = true;
         if (visibilityPlan.foregroundAuthorized) {
-          await managed.showForeground();
+          await managed.showForeground({ userAuthorized: visibilityPlan.foregroundAuthorized });
           captureVisibilityMode = "managed_window_foreground";
         }
         await waitForTabComplete(captureTab.id, 20_000);
@@ -1564,6 +1564,7 @@ async function findOrOpenSourceTab(
       prepared.closeOnExit = Boolean(targetUrl);
       return prepared;
     } catch (error) {
+      if (managed) await managed.verifyFocus().catch(() => undefined);
       const lifecycleEvents = managed?.lifecycleEvents?.length
         ? [...managed.lifecycleEvents]
         : [...managedLifecycleEvents];
@@ -1571,7 +1572,6 @@ async function findOrOpenSourceTab(
         await chrome.tabs.remove(targetCaptureTabId).catch(() => undefined);
         targetCaptureTabId = null;
       }
-      if (managed) await managed.verifyFocus().catch(() => undefined);
       if (!targetUrl) {
         lifecycleEvents.push(captureSurfaceEvent("release_requested", source, {
           outcome: "surface_prepare_failed",
@@ -1643,7 +1643,7 @@ async function findOrOpenSourceTab(
       hydrationTimeoutMs: requestedHydrationTimeoutMs,
       requireVisualHydration,
       restoreFocus: managed.verifyFocus,
-      lifecycleEvents,
+      lifecycleEvents: managed.lifecycleEvents,
     });
     prepared.closeOnExit = false;
     return prepared;
@@ -1876,7 +1876,8 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
     : null;
   const structuredFeedFallback = structuredFeedResult?.observation ?? null;
   if (!captureReady && !structuredFeedFallback) {
-    await restoreTabFocus(previousActiveTabId, tab.id);
+    if (options.restoreFocus) await options.restoreFocus();
+    else await restoreTabFocus(previousActiveTabId, tab.id);
     if (readiness.state === "source_unavailable") {
       throw new AkuBridgeError(
         "source_unavailable",

@@ -4,6 +4,7 @@ import {
   isCanonicalFeedUrl,
 } from "./source-tab-policy.js";
 import { sourceIds } from "./source-catalog.js";
+import { focusPolicyEvidence } from "./capture-surface-telemetry.js";
 
 export const CAPTURE_WINDOW_STORAGE_KEY = "akuBridgeManagedCaptureWindowV1";
 export const CAPTURE_SURFACE_LEDGER_STORAGE_KEY = "akuBridgeManagedCaptureSurfaceLedgerV2";
@@ -118,16 +119,12 @@ function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
           focusRestored: focusOutcome.restored === true,
           focusContext: focusSnapshot.kind,
           focusContained: focusOutcome.contained ?? null,
+          containmentApplied: focusOutcome.containmentApplied === true,
         }),
       ];
       focusSnapshot.events = lifecycleEvents;
-      if (focusOutcome.changed === true && focusSnapshot.kind === "chrome") {
-        lifecycleEvents.push(lifecycleEvent("focus_intervention", source, {
-          phase: "prepare",
-          restored: focusOutcome.restored === true,
-        }));
-      }
 
+      let foregroundGrantUsed = false;
       return {
         tab: await chromeApi.tabs.get(binding.tabId),
         opened,
@@ -142,13 +139,16 @@ function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
           source,
           lifecycleEvents,
         ),
-        showForeground: async () => {
-          const result = await chromeApi.windows.update(binding.windowId, { state: "normal", focused: true });
+        showForeground: async ({ userAuthorized = false } = {}) => {
+          if (!userAuthorized || foregroundGrantUsed) {
+            throw visibilityError("Foreground capture requires a fresh explicit user action.", { source, reason: "foreground_not_authorized" });
+          }
+          foregroundGrantUsed = true;
           lifecycleEvents.push(lifecycleEvent("focus_intervention", source, {
-            phase: "foreground_authorized",
-            restored: false,
-            userAuthorized: true,
+            phase: "foreground_authorized", focusPolicyMode: "explicit_user_foreground",
+            focusedWriteAttempted: true, restorationSuppressed: false, userAuthorized: true,
           }));
+          const result = await chromeApi.windows.update(binding.windowId, { state: "normal", focused: true });
           return result;
         },
         verifyFocus: () => preserveWorkingFocus(
@@ -163,12 +163,6 @@ function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
             binding.windowId,
             { source, reason: "managed_window_took_focus", phase },
           );
-          if (outcome.changed === true && focusSnapshot.kind === "chrome") {
-            lifecycleEvents.push(lifecycleEvent("focus_intervention", source, {
-              phase,
-              restored: outcome.restored === true,
-            }));
-          }
           return outcome;
         },
       };
@@ -472,29 +466,17 @@ async function openManagedTargetTab(
       url,
       active: false,
     });
-    const createdFocus = await requirePreservedFocus(chromeApi, focusSnapshot, managedWindowId, {
+    await requirePreservedFocus(chromeApi, focusSnapshot, managedWindowId, {
       source,
       reason: "managed_target_creation_took_focus",
       phase: "target_created",
     });
-    if (createdFocus.changed === true && focusSnapshot.kind === "chrome") {
-      lifecycleEvents.push(lifecycleEvent("focus_intervention", source, {
-        phase: "target_created",
-        restored: createdFocus.restored === true,
-      }));
-    }
     await chromeApi.tabs.update(targetTab.id, { active: true });
-    const activatedFocus = await requirePreservedFocus(chromeApi, focusSnapshot, managedWindowId, {
+    await requirePreservedFocus(chromeApi, focusSnapshot, managedWindowId, {
       source,
       reason: "managed_target_activation_took_focus",
       phase: "target_activated",
     });
-    if (activatedFocus.changed === true && focusSnapshot.kind === "chrome") {
-      lifecycleEvents.push(lifecycleEvent("focus_intervention", source, {
-        phase: "target_activated",
-        restored: activatedFocus.restored === true,
-      }));
-    }
     return chromeApi.tabs.get(targetTab.id);
   } catch (error) {
     if (Number.isInteger(targetTab?.id)) {
@@ -823,7 +805,7 @@ function lifecycleEvent(event, source, detail = {}) {
     event,
     source: sourceIds().includes(source) ? source : null,
     outcome: String(detail.outcome ?? "").slice(0, 120),
-    detail: { ...detail },
+    detail: { ...focusPolicyEvidence(), ...detail },
     occurredAt: new Date().toISOString(),
   };
 }
@@ -1030,71 +1012,45 @@ async function captureWorkingFocus(chromeApi) {
 }
 
 async function preserveWorkingFocus(chromeApi, snapshot, managedWindowId) {
-  if (snapshot.kind !== "chrome") {
-    let changed = false;
-    let contained = false;
-    let focusKnown = false;
-    try {
-      const window = await chromeApi.windows.get(managedWindowId);
-      changed = window.state !== "minimized" || window.focused === true;
-      if (changed) await chromeApi.windows.update(managedWindowId, { state: "minimized" });
-      const verified = await chromeApi.windows.get(managedWindowId);
-      const focused = await chromeApi.windows.getLastFocused();
-      contained = verified.state === "minimized" && !(focused.focused === true && focused.id === managedWindowId);
-      focusKnown = typeof focused.focused === "boolean";
-    } catch {
-      // No OS application handle is available: containment is not restoration.
-    }
-    const outcome = { changed, restored: false, preserved: contained && focusKnown, contained, focusContext: snapshot.kind };
-    if (changed || outcome.preserved !== true) {
-      snapshot.events.push(lifecycleEvent("focus_intervention", snapshot.source, { phase: "external_focus_containment", ...outcome }));
+  let changed = false;
+  let contained = false;
+  let focusKnown = false;
+  let needsContainment = snapshot.kind !== "chrome";
+  try {
+    const focused = await chromeApi.windows.getLastFocused();
+    revokeObservedFocusAuthority(snapshot, focused, managedWindowId);
+    const window = await chromeApi.windows.get(managedWindowId);
+    needsContainment = snapshot.kind !== "chrome" || window.focused === true ||
+      (focused.focused === true && focused.id === managedWindowId);
+    // Background work never restores a snapshot: an unobserved user switch
+    // can precede capture activation, and a focus read/write cannot be atomic.
+    // Retain the existing unfocused rendering surface until containment is
+    // necessary; minimizing can affect hydration and is recorded in receipts.
+    changed = needsContainment && (window.state !== "minimized" || window.focused === true);
+    if (changed) await chromeApi.windows.update(managedWindowId, { state: "minimized" });
+    const verified = await chromeApi.windows.get(managedWindowId);
+    const verifiedFocus = await chromeApi.windows.getLastFocused();
+    focusKnown = typeof verifiedFocus.focused === "boolean";
+    const managedFocused = verified.focused === true ||
+      (verifiedFocus.focused === true && verifiedFocus.id === managedWindowId);
+    contained = verified.state === "minimized" && !managedFocused;
+    const preserved = focusKnown && !managedFocused && (!needsContainment || contained);
+    const outcome = {
+      changed, restored: false, preserved, contained, focusContext: snapshot.kind,
+      ...focusPolicyEvidence(), containmentApplied: changed,
+    };
+    if (changed || !preserved) {
+      snapshot.events.push(lifecycleEvent("focus_intervention", snapshot.source, { phase: "background_focus_containment", ...outcome }));
     }
     return outcome;
-  }
-  let currentWindow;
-  try {
-    currentWindow = await chromeApi.windows.getLastFocused();
   } catch {
-    revokeFocusAuthority(snapshot, "unknown", "focus_unavailable");
-    return { changed: true, restored: false, preserved: false };
-  }
-
-  if (revokeObservedFocusAuthority(snapshot, currentWindow, managedWindowId)) {
-    return preserveWorkingFocus(chromeApi, snapshot, managedWindowId);
-  }
-  // Focus outside the managed surface belongs to the user. Do not undo a tab
-  // or window change that happened while a bounded capture was running.
-  if (currentWindow?.focused !== true || currentWindow.id !== managedWindowId) {
-    return { changed: false, restored: false, preserved: true };
-  }
-
-  try {
-    if (Number.isInteger(snapshot.tabId)) {
-      await chromeApi.tabs.update(snapshot.tabId, { active: true });
-    }
-    // Tab activation is asynchronous; respect an app/window switch during it.
-    const beforeRestore = await chromeApi.windows.getLastFocused();
-    if (revokeObservedFocusAuthority(snapshot, beforeRestore, managedWindowId)) {
-      return preserveWorkingFocus(chromeApi, snapshot, managedWindowId);
-    }
-    if (beforeRestore?.focused !== true || (
-      beforeRestore.id !== managedWindowId && beforeRestore.id !== snapshot.windowId
-    )) {
-      return { changed: false, restored: false, preserved: true };
-    }
-    await chromeApi.windows.update(snapshot.windowId, { focused: true });
-    const verifiedWindow = await chromeApi.windows.getLastFocused();
-    revokeObservedFocusAuthority(snapshot, verifiedWindow, managedWindowId);
-    const verifiedTab = (await chromeApi.tabs.query({
-      active: true,
-      windowId: snapshot.windowId,
-    }))[0];
-    const restored = verifiedWindow?.focused === true && verifiedWindow.id === snapshot.windowId && (
-      !Number.isInteger(snapshot.tabId) || verifiedTab?.id === snapshot.tabId
-    );
-    return { changed: true, restored, preserved: restored };
-  } catch {
-    return { changed: true, restored: false, preserved: false };
+    if (snapshot.kind === "chrome") revokeFocusAuthority(snapshot, "unknown", "focus_unavailable");
+    const outcome = {
+      changed, restored: false, preserved: false, contained, focusContext: snapshot.kind,
+      ...focusPolicyEvidence(), containmentApplied: changed,
+    };
+    snapshot.events.push(lifecycleEvent("focus_intervention", snapshot.source, { phase: "background_focus_unavailable", ...outcome }));
+    return outcome;
   }
 }
 
@@ -1133,7 +1089,8 @@ async function requirePreservedFocus(chromeApi, snapshot, managedWindowId, detai
     focusOutcome = {
       ...verified,
       changed: focusOutcome.changed || verified.changed,
-      restored: snapshot.kind === "chrome" && (focusOutcome.restored || verified.restored),
+      containmentApplied: focusOutcome.containmentApplied || verified.containmentApplied,
+      restored: false,
     };
     if (verified.changed || !verified.preserved) {
       snapshot.events.push(lifecycleEvent("focus_intervention", snapshot.source, {
@@ -1144,7 +1101,7 @@ async function requirePreservedFocus(chromeApi, snapshot, managedWindowId, detai
   }
   if (focusOutcome.preserved !== true) {
     throw visibilityError(
-      "Chrome focused the managed capture surface and AkuBridge could not restore the user's working surface.",
+      "AkuBridge could not verify background capture containment. Explicit visible recovery may be required.",
       { ...details, focusOutcome },
     );
   }

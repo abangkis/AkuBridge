@@ -6,6 +6,20 @@ import {
   createManagedCaptureWindowRuntime,
   normalizeManagedCaptureState,
 } from "../capture-window-runtime.js";
+import { focusPolicyEvidence } from "../capture-surface-telemetry.js";
+let backgroundFocusViolations = 0;
+test.afterEach(() => {
+  const violations = backgroundFocusViolations;
+  backgroundFocusViolations = 0;
+  assert.equal(violations, 0, "background capture attempted affirmative foregrounding");
+});
+
+// Every fixture rejects foreground writes unless its explicit-action test
+// opens this gate. This applies to all routine capture/release tests below.
+function backgroundOutcome(overrides = {}) {
+  return { changed: false, restored: false, preserved: true, contained: false,
+    focusContext: "chrome", ...focusPolicyEvidence(), ...overrides };
+}
 
 test("managed capture creates a non-focused window and preserves the working tab", async () => {
   const chrome = fakeChrome();
@@ -16,11 +30,7 @@ test("managed capture creates a non-focused window and preserves the working tab
   assert.equal(prepared.opened, true);
   assert.equal(prepared.tab.url, "https://x.com/home");
   assert.equal(chrome.createdWindowOptions.focused, false);
-  assert.deepEqual(await prepared.verifyFocus(), {
-    changed: false,
-    restored: false,
-    preserved: true,
-  });
+  assert.deepEqual(await prepared.verifyFocus(), backgroundOutcome());
   assert.equal(chrome.focusedWindowId, 1);
   assert.equal(chrome.activeByWindow.get(1), 11);
 });
@@ -33,30 +43,24 @@ test("managed capture does not override a user's later tab choice", async () => 
   chrome.addTab(1, "https://example.com/new-work", 12);
   chrome.activeByWindow.set(1, 12);
 
-  assert.deepEqual(await prepared.verifyFocus(), {
-    changed: false,
-    restored: false,
-    preserved: true,
-  });
+  assert.deepEqual(await prepared.verifyFocus(), backgroundOutcome());
   assert.equal(chrome.activeByWindow.get(1), 12);
 });
 
-test("managed capture restores focus only when its own window took focus", async () => {
+test("managed capture contains its activated window without restoring the app UI", async () => {
   const chrome = fakeChrome();
   const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x", {
     leaseId: "session-1",
   });
   chrome.focusedWindowId = 2;
 
-  assert.deepEqual(await prepared.requireFocus("target_loaded"), {
-    changed: true,
-    restored: true,
-    preserved: true,
-  });
-  assert.equal(chrome.focusedWindowId, 1);
+  assert.deepEqual(await prepared.requireFocus("target_loaded"), backgroundOutcome({
+    changed: true, contained: true, containmentApplied: true, focusContext: "external",
+  }));
+  assert.equal(chrome.chromeFocused, false);
   assert.equal(chrome.activeByWindow.get(1), 11);
-  assert.deepEqual(chrome.windowUpdates, [{ id: 1, focused: true }]);
-  assert.deepEqual(prepared.lifecycleEvents.at(-1).detail, { phase: "target_loaded", restored: true });
+  assert.deepEqual(chrome.windowUpdates, [{ id: 2, state: "minimized" }]);
+  assert.equal(prepared.lifecycleEvents.some((event) => event.detail.containmentApplied), true);
 });
 
 test("managed capture never restores a last-focused Chrome window when another app was initially focused", async () => {
@@ -68,7 +72,7 @@ test("managed capture never restores a last-focused Chrome window when another a
   const prepared = await runtime.prepare("x");
 
   assert.equal(prepared.focusSnapshot.kind, "external");
-  assert.deepEqual(await prepared.verifyFocus(), { changed: false, restored: false, preserved: true, contained: true, focusContext: "external" });
+  assert.deepEqual(await prepared.verifyFocus(), backgroundOutcome({ contained: true, focusContext: "external" }));
   assert.deepEqual(chrome.windowUpdates, [{ id: first.tab.windowId, state: "minimized" }]);
   assert.equal(chrome.chromeFocused, false);
   assert.equal(prepared.lifecycleEvents.some((event) => event.event === "focus_intervention" && event.detail.contained === true), true);
@@ -163,7 +167,9 @@ test("external focus still permits explicit foreground recapture then contains o
   const chrome = fakeChrome();
   chrome.chromeFocused = false;
   const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x");
-  await prepared.showForeground();
+  chrome.allowFocusedWrites = true;
+  await prepared.showForeground({ userAuthorized: true });
+  chrome.allowFocusedWrites = false;
   assert.equal(chrome.chromeFocused, true);
   assert.equal((await chrome.windows.get(prepared.tab.windowId)).state, "normal");
   const outcome = await prepared.verifyFocus();
@@ -216,7 +222,7 @@ test("bounded verification contains delayed target activation after an observed 
   assert.equal(prepared.lifecycleEvents.some((event) => event.detail.phase === "delayed_focus_verification" && event.detail.contained === true), true);
 });
 
-test("bounded verification restores delayed managed activation while Chrome authority remains", async () => {
+test("bounded verification contains delayed managed activation without restoration", async () => {
   const chrome = fakeChrome();
   const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x");
   chrome.afterTabUpdate = () => {
@@ -224,19 +230,26 @@ test("bounded verification restores delayed managed activation while Chrome auth
     setTimeout(() => { chrome.focusedWindowId = prepared.tab.windowId; }, 70);
   };
   await prepared.openTargetTab("https://x.com/example/status/123");
-  assert.equal(chrome.focusedWindowId, 1);
-  assert.equal(prepared.lifecycleEvents.some((event) => event.detail.phase === "delayed_focus_verification" && event.detail.restored === true), true);
+  assert.equal(chrome.chromeFocused, false);
+  assert.equal(prepared.lifecycleEvents.some((event) => event.detail.phase === "delayed_focus_verification" && event.detail.contained === true), true);
 });
 
-test("managed capture respects an app switch while restoring the working tab", async () => {
+test("unobserved external-to-managed switch cannot restore the previous app window", async () => {
   const chrome = fakeChrome();
   const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x");
+  chrome.chromeFocused = false; // User switched between observations.
   chrome.focusedWindowId = prepared.tab.windowId;
-  chrome.afterTabUpdate = () => { chrome.chromeFocused = false; };
+  chrome.chromeFocused = true; // Capture then activated before the next read.
+  chrome.afterTabUpdate = () => { assert.fail("Previous working tab must never be reactivated"); };
 
   assert.equal((await prepared.verifyFocus()).contained, true);
   assert.deepEqual(chrome.windowUpdates, [{ id: prepared.tab.windowId, state: "minimized" }]);
-  assert.equal(prepared.focusSnapshot.kind, "external");
+  assert.equal(chrome.windowUpdates.some((update) => update.focused === true), false);
+  const intervention = prepared.lifecycleEvents.find((event) => event.detail.containmentApplied);
+  assert.equal(intervention.detail.focusPolicyRevision, "quiet-containment-only-v2");
+  assert.equal(intervention.detail.focusPolicyMode, "background_containment_only");
+  assert.equal(intervention.detail.restorationSuppressed, true);
+  assert.equal(intervention.detail.focusedWriteAttempted, false);
 });
 
 test("managed capture does not report restored focus when Chrome loses focus before verification", async () => {
@@ -245,11 +258,11 @@ test("managed capture does not report restored focus when Chrome loses focus bef
   chrome.focusedWindowId = prepared.tab.windowId;
   chrome.afterWindowUpdate = () => { chrome.chromeFocused = false; };
 
-  assert.deepEqual(await prepared.verifyFocus(), { changed: true, restored: false, preserved: false });
-  assert.deepEqual(chrome.windowUpdates, [{ id: 1, focused: true }]);
+  assert.deepEqual(await prepared.verifyFocus(), backgroundOutcome({ changed: true, contained: true, containmentApplied: true }));
+  assert.deepEqual(chrome.windowUpdates, [{ id: prepared.tab.windowId, state: "minimized" }]);
 });
 
-test("managed capture accepts a transient focus change that it successfully restores", async () => {
+test("managed capture records containment and retains candidate capture after activation", async () => {
   const chrome = fakeChrome();
   const runtime = createManagedCaptureWindowRuntime(chrome);
   await runtime.prepare("x", { leaseId: "session-1" });
@@ -258,7 +271,7 @@ test("managed capture accepts a transient focus change that it successfully rest
   const prepared = await runtime.prepare("linkedin", { leaseId: "session-1" });
 
   assert.equal(prepared.tab.url, "https://www.linkedin.com/feed/");
-  assert.equal(chrome.focusedWindowId, 1);
+  assert.equal(chrome.chromeFocused, false);
   assert.equal(chrome.activeByWindow.get(1), 11);
   assert.deepEqual(withoutLifecycleEvents(await runtime.release("session-1")), {
     released: true,
@@ -313,38 +326,42 @@ test("managed recapture activates its target inside the background window withou
     url: "https://x.com/aku/status/123",
     active: false,
   });
-  assert.equal(chrome.focusedWindowId, 1);
+  assert.equal(chrome.chromeFocused, false);
   assert.equal(chrome.activeByWindow.get(1), 11);
   assert.equal(chrome.activeByWindow.get(2), target.id);
 });
 
-test("user-authorized foreground recapture is shown briefly and restores the working surface", async () => {
+test("explicit foreground grant permits one focus write then background containment resumes", async () => {
   const chrome = fakeChrome();
   const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x", {
     leaseId: "recapture-foreground-1",
   });
   const target = await prepared.openTargetTab("https://x.com/aku/status/123");
 
-  await prepared.showForeground();
+  await assert.rejects(prepared.showForeground(), /fresh explicit user action/);
+  chrome.allowFocusedWrites = true;
+  await prepared.showForeground({ userAuthorized: true });
+  chrome.allowFocusedWrites = false;
+  await assert.rejects(prepared.showForeground({ userAuthorized: true }), /fresh explicit user action/);
 
   assert.equal(chrome.focusedWindowId, 2);
   assert.equal(chrome.activeByWindow.get(2), target.id);
-  assert.deepEqual(await prepared.verifyFocus(), {
-    changed: true,
-    restored: true,
-    preserved: true,
-  });
-  assert.equal(chrome.focusedWindowId, 1);
+  assert.deepEqual(await prepared.verifyFocus(), backgroundOutcome({ changed: true, contained: true, containmentApplied: true }));
+  assert.equal(chrome.chromeFocused, false);
   assert.equal(chrome.activeByWindow.get(1), 11);
+  assert.deepEqual(chrome.windowUpdates.filter((update) => update.focused), [{ id: 2, state: "normal", focused: true }]);
+  const foreground = prepared.lifecycleEvents.filter((event) => event.detail.focusedWriteAttempted);
+  assert.equal(foreground.length, 1);
+  assert.equal(foreground[0].detail.focusPolicyMode, "explicit_user_foreground");
 });
 
-test("managed recapture fails closed and removes its target when working focus cannot be restored", async () => {
+test("managed recapture fails closed and removes its target when containment fails", async () => {
   const chrome = fakeChrome();
   const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x", {
     leaseId: "recapture-1",
   });
   chrome.focusManagedWindowOnTabActivation = true;
-  chrome.failFocusRestore = true;
+  chrome.failMinimize = true;
 
   await assert.rejects(
     prepared.openTargetTab("https://x.com/aku/status/123"),
@@ -734,6 +751,7 @@ function fakeChrome() {
         return { ...window, ...(populate ? { tabs: [...window.tabs] } : {}), focused: state.chromeFocused && state.focusedWindowId === id };
       },
       async create(options) {
+        if (options.focused !== false) backgroundFocusViolations += 1;
         state.createdWindowOptions = options;
         state.createdWindowOptionsList.push({ ...options });
         const windowId = Math.max(...windows.keys()) + 1;
@@ -750,6 +768,7 @@ function fakeChrome() {
         return { id: windowId, tabs: [tab] };
       },
       async update(id, options) {
+        if (options.focused === true && !state.allowFocusedWrites) backgroundFocusViolations += 1;
         state.windowUpdates.push({ id, ...options });
         if (options.state && !state.failMinimize) windows.get(id).state = options.state;
         if (options.state === "minimized" && !state.failMinimize && state.focusedWindowId === id) state.chromeFocused = false;
