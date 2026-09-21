@@ -1,3 +1,4 @@
+import { createSplitCaptureClient } from "./split-capture-client.js";
 import {
   chooseSourceTab,
   expectedFeedUrl,
@@ -158,10 +159,32 @@ const SOURCE_SCRIPT_FILES = [
 ];
 const NATIVE_RUNTIME_DISTRIBUTION = nativeRuntimeDistribution(BRIDGE_DEPLOYMENT);
 
+const splitCaptureClient = createSplitCaptureClient({ chrome, handlers: {
+  ping: async () => ({ capabilities: await bridgeCapabilitiesWithSourceAccess(), extensionOrigin: chrome.runtime.getURL("").replace(/\/$/, "") }),
+  probe_source_sessions: async () => ({ sessions: await probeSourceSessions() }),
+  open_source: async (a) => openSourceFeed(a.source, true),
+  open_native_post: async (a) => openNativePostInReaderWindow(a.source, a.url),
+  revoke_source_access: async () => ({ grantedSources: (await revokeAllSourceAccess(chrome))?.grantedSources ?? [] }),
+  configure_background: async (_a, c) => {
+    await configureBackgroundDispatch(c.endpoint, c.token, 2, true);
+    await refreshBackgroundHeartbeat({ endpoint: c.endpoint, token: c.token, sidecarProtocolMajor: 2 });
+    return {};
+  },
+  release: async (a) => ({ outcome: await releaseCaptureSurfaceWithTelemetry({ leaseId: a.leaseId, source: a.source ?? null }) }),
+  media_recapture: async (a, c) => ({ recapture: await dispatchMediaRecapture({ ...a, endpoint: c.endpoint, token: c.token }) }),
+  media_evidence: async (a) => ({ evidence: await xMediaEvidenceStore.lookup(a.candidateIds) }),
+  dispatch: async (a, c) => {
+    await dispatchRun({ runId: a.runId, endpoint: c.endpoint, token: c.token });
+    void queueBackgroundSessionPump(c.endpoint, c.token).catch(() => undefined);
+    return {};
+  },
+  reload_self: async (a, c) => { await acceptReloadSelf({ actionId: a.actionId, endpoint: c.endpoint, token: c.token }, c.tabId); return { accepted: true }; },
+} });
+
 void resumePendingSelfReload().catch((error) => {
   console.error("AkuBridge could not resume the pending AkuBrowser tab reload.", error);
 });
-void restoreBackgroundDispatch()
+void splitCaptureClient.restore().catch(() => false).then(() => restoreBackgroundDispatch())
   .then((restored) => {
     if (!restored) return;
     void pollBackgroundDispatch().catch((error) => {
@@ -250,6 +273,12 @@ chrome.permissions.onRemoved.addListener(() => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "AKU_BRIDGE_SPLIT_CAPTURE_CONNECT") {
+    splitCaptureClient.connect(message, sender)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+    return true;
+  }
   if (message?.type === "AKU_BROWSER_RECONCILE_SOURCE_ACCESS") {
     if (!isTrustedExtensionPage(sender)) {
       sendResponse({ ok: false, message: "Source access reconciliation rejected." });
@@ -872,7 +901,7 @@ async function refreshBackgroundHeartbeat(config) {
   return true;
 }
 
-async function configureBackgroundDispatch(endpoint, token, protocolMajor = 0) {
+async function configureBackgroundDispatch(endpoint, token, protocolMajor = 0, deferPoll = false) {
   assertEndpoint(endpoint);
   if (typeof token !== "string" || token.length < 32 || token.length > 256) throw new Error("Background dispatch requires a valid Bridge token.");
   const stored = await chrome.storage.local.get(BACKGROUND_DISPATCH_CONFIG_KEY);
@@ -890,7 +919,8 @@ async function configureBackgroundDispatch(endpoint, token, protocolMajor = 0) {
   }
   await chrome.storage.local.set({ [BACKGROUND_DISPATCH_CONFIG_KEY]: next });
   await chrome.alarms.create(BACKGROUND_DISPATCH_ALARM, { periodInMinutes: 1 });
-  await pollBackgroundDispatch();
+  if (deferPoll) void pollBackgroundDispatch().catch(() => undefined);
+  else await pollBackgroundDispatch();
 }
 
 async function restoreBackgroundDispatch() {
@@ -1383,6 +1413,7 @@ async function postMediaRecaptureResult(endpoint, token, id, kind, payload) {
 
 function bridgeHeaders(token) {
   return {
+    ...splitCaptureClient.headers(),
     "X-Aku-Bridge-Token": token,
     "X-Aku-Bridge-Id": BRIDGE_ID,
     "X-Aku-Bridge-Contract": BRIDGE_CONTRACT_VERSION,
@@ -2133,7 +2164,7 @@ async function probeSourceSessions() {
   return sessions;
 }
 
-async function openSourceFeed(source) {
+async function openSourceFeed(source, separateWindow = false) {
   if (!sourceIds().includes(source)) {
     throw new Error("Source is not in the AkuBrowser allowlist.");
   }
@@ -2143,14 +2174,18 @@ async function openSourceFeed(source) {
     const permissionUrl = chrome.runtime.getURL(
       `source-permission.html?source=${encodeURIComponent(source)}`,
     );
-    const tab = await chrome.tabs.create({ url: permissionUrl, active: true });
+    const tab = separateWindow
+      ? (await chrome.windows.create({ url: permissionUrl, type: "normal", focused: true }))?.tabs?.[0]
+      : await chrome.tabs.create({ url: permissionUrl, active: true });
     return {
       source,
       state: "permission_required",
       url: tab?.url ?? permissionUrl,
     };
   }
-  const tab = await chrome.tabs.create({ url: definition.feedUrl, active: true });
+  const tab = separateWindow
+    ? (await chrome.windows.create({ url: definition.feedUrl, type: "normal", focused: true }))?.tabs?.[0]
+    : await chrome.tabs.create({ url: definition.feedUrl, active: true });
   return { source, state: "source_opened", url: tab?.url ?? definition.feedUrl };
 }
 

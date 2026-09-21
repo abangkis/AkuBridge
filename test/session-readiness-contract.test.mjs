@@ -13,7 +13,7 @@ test("source session probe is passive, allowlisted, and relayed only to AkuBrows
   assert.match(worker, /isAkuBrowserOrigin\(sender\.url\)/);
   assert.match(worker, /chrome\.tabs\.query\(\{ url: matchPatternsFor\(source\) \}\)/);
   assert.match(worker, /SOURCE_SESSION_MAX_TABS/);
-  assert.match(worker, /async function openSourceFeed\(source\)/);
+  assert.match(worker, /async function openSourceFeed\(source, separateWindow = false\)/);
   assert.match(worker, /sourceAccessGranted\(chrome, source\)/);
   assert.match(worker, /source-permission\.html\?source=/);
   assert.match(worker, /state: "permission_required"/);

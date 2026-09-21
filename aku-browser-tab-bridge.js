@@ -9,6 +9,50 @@
   globalThis.__akuBrowserTabBridgeInstalled = true;
   let sidecarProtocolMajor = 0;
 
+  // The separate capture host is not the product UI. Its fragment capability
+  // bootstraps only this process; source content pages cannot invoke it.
+  if (window.location.pathname === "/split-capture-host") {
+    const key = window.location.hash.slice(1);
+    let failures = 0;
+    let inFlight = false;
+    const showStatus = (state, text) => {
+      const render = () => {
+        const status = document.getElementById("split-capture-status");
+        if (status) { status.dataset.state = state; status.textContent = text; }
+      };
+      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", render, { once: true });
+      else render();
+    };
+    const connect = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      let timeout;
+      try {
+        const response = await Promise.race([
+          chrome.runtime.sendMessage({ type: "AKU_BRIDGE_SPLIT_CAPTURE_CONNECT", key }),
+          new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("capture handshake timeout")), 8000); }),
+        ]);
+        if (response?.ok !== true) throw new Error("capture handshake not acknowledged");
+        failures = 0;
+        showStatus("connected", "Capture extension connected. Keep this host window open.");
+      } catch {
+        failures++;
+        if (failures >= 6) {
+          clearInterval(retryTimer);
+          showStatus("failed", "Capture extension could not connect. Update or reload AkuBridge in this capture profile, then restart AkuBrowser. Sign-ins have been preserved.");
+        } else {
+          showStatus("retrying", `Capture extension not ready; retry ${failures}/6. The running extension may need an update or reload.`);
+        }
+      } finally {
+        clearTimeout(timeout);
+        inFlight = false;
+      }
+    };
+    const retryTimer = setInterval(connect, 10_000);
+    void connect();
+    return;
+  }
+
   window.addEventListener("message", async (event) => {
     if (event.source !== window || event.origin !== allowedOrigin) return;
     const message = event.data;
