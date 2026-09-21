@@ -97,3 +97,37 @@ test("failed background handshake is retried rather than cached as connected", a
   assert.equal(configured, 2);
   assert.equal(bootstraps, 2);
 });
+
+test("only explicit reader action receives authenticated prepare and foreground capability", async () => {
+  const calls = [];
+  let finish;
+  const finished = new Promise((resolve) => { finish = resolve; });
+  let next = 0;
+  const client = createSplitCaptureClient({ chrome: chromeFixture(), handlers: {
+    configure_background: async (_a, c) => { assert.equal(c.readerIntent, undefined); },
+    open_native_post: async (_a, c) => {
+      assert.equal(c.readerIntent.url, `${endpoint}/split-reader-intent?id=split_reader`);
+      await c.readerIntent.prepare();
+      await c.readerIntent.foreground();
+      return { state: "native_post_opened" };
+    },
+  }, fetch: async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith("/bootstrap")) return response(200, { token: "t".repeat(64), instanceEpoch: "epoch" });
+    if (url.endsWith("/next")) {
+      if (next++ === 0) return response(200, { instanceEpoch: "epoch", action: { id: "split_reader", type: "open_native_post" } });
+      await finished; return response(410);
+    }
+    if (url.includes("/reader/")) return response(200);
+    if (url.endsWith("/results/split_reader")) { finish(); return response(204); }
+    throw new Error(`unexpected ${url}`);
+  } });
+  await client.connect({ key }, sender);
+  await finished;
+  const native = calls.filter((c) => c.url.includes("/reader/"));
+  assert.equal(native.length, 2);
+  for (const call of native) {
+    assert.equal(call.options.headers["X-Aku-Capture-Instance"], key);
+    assert.equal(call.options.headers["X-Aku-Bridge-Token"], "t".repeat(64));
+  }
+});

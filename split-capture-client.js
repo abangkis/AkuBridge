@@ -17,7 +17,15 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
     try {
       const handler = Object.hasOwn(handlers, action.type) ? handlers[action.type] : null;
       if (!handler) throw new Error("Unsupported split capture action.");
-      response = { ok: true, result: await handler(action, c) ?? {} };
+      const context = action.type === "open_native_post" ? {
+        ...c,
+        readerIntent: {
+          url: `${c.endpoint}/split-reader-intent?id=${encodeURIComponent(action.id)}`,
+          prepare: () => readerRequest("prepare", action, c),
+          foreground: () => readerRequest("foreground", action, c),
+        },
+      } : c;
+      response = { ok: true, result: await handler(action, context) ?? {} };
     } catch (error) {
       response = { ok: false, message: String(error?.message ?? error).slice(0, 600) };
     }
@@ -28,6 +36,16 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
     });
     if (!result.ok) throw new Error("Capture result was rejected or expired.");
     if (action.type === "reload_self" && response.ok) chrome.runtime.reload();
+  }
+  async function readerRequest(phase, action, c) {
+    if (config !== c || action.type !== "open_native_post") throw new Error("Reader foreground intent expired.");
+    const response = await request(`${c.endpoint}/api/bridge/split-capture/reader/${phase}/${encodeURIComponent(action.id)}`, {
+      method: "POST", headers: bridgeHeaders(c), body: "{}", signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      const result = await response.json().catch(() => null);
+      throw new Error(result?.error?.message ?? result?.message ?? "Native reader foreground request was rejected.");
+    }
   }
   async function poll() {
     if (polling || !config) return;

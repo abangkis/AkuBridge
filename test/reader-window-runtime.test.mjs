@@ -65,6 +65,8 @@ function fakeChrome() {
     createdWindows: [],
     createdTabs: [],
     updatedTabs: [],
+    updatedWindows: [],
+    removedTabs: [],
     storage: {
       local: {
         async get(key) {
@@ -95,6 +97,7 @@ function fakeChrome() {
         return { ...window, tabs: [{ ...tab }] };
       },
       async update(id, changes) {
+        chrome.updatedWindows.push([id, changes]);
         const window = windows.get(id);
         if (!window) throw new Error("window not found");
         Object.assign(window, changes);
@@ -102,6 +105,12 @@ function fakeChrome() {
       },
     },
     tabs: {
+      async remove(id) {
+        chrome.removedTabs.push(id);
+        const tab = tabs.get(id);
+        if (tab) windows.get(tab.windowId).tabs = windows.get(tab.windowId).tabs.filter((t) => t.id !== id);
+        tabs.delete(id);
+      },
       async create(options) {
         chrome.createdTabs.push(options);
         const tab = { id: nextTabId++, ...options };
@@ -120,3 +129,102 @@ function fakeChrome() {
   };
   return chrome;
 }
+
+test("split reused minimized reader restores normal before requesting focus", async () => {
+  const chrome = fakeChrome();
+  const reader = createReaderWindowRuntime(chrome);
+  const first = await reader.open("https://x.com/aku/status/101");
+  await chrome.windows.update(first.windowId, { state: "minimized" });
+  await reader.open("https://x.com/aku/status/101", { readerIntent: {
+    url: "http://127.0.0.1:11122/split-reader-intent?id=split_one",
+    prepare: async () => {}, foreground: async () => {},
+  } });
+  assert.deepEqual(chrome.updatedWindows.slice(-2), [[first.windowId, { state: "normal" }], [first.windowId, { focused: true }]]);
+});
+
+test("ordinary reader retains its existing focus-only behavior", async () => {
+  const chrome = fakeChrome();
+  const reader = createReaderWindowRuntime(chrome);
+  await reader.open("https://x.com/aku/status/101");
+  await reader.open("https://x.com/aku/status/102");
+  assert.deepEqual(chrome.updatedWindows, [[2, { focused: true }]]);
+  assert.equal(chrome.removedTabs.length, 0);
+});
+
+for (const reuse of [false, true]) test(`split reader binds exact window before foreground, reuse=${reuse}`, async () => {
+  const chrome = fakeChrome();
+  const reader = createReaderWindowRuntime(chrome);
+  if (reuse) {
+    const first = await reader.open("https://x.com/aku/status/101");
+    await chrome.windows.update(first.windowId, { state: "minimized" });
+  }
+  const before = chrome.updatedWindows.length;
+  const markerURL = "http://127.0.0.1:11122/split-reader-intent?id=split_one";
+  let prepared = false;
+  let foregrounded = false;
+  const result = await reader.open("https://x.com/aku/status/102", { readerIntent: {
+    url: markerURL,
+    prepare: async () => {
+      const window = await chrome.windows.get(2);
+      assert.equal(window.tabs.at(-1).url, markerURL);
+      if (!reuse) {
+        assert.equal(window.tabs.length, 1);
+        assert.equal(chrome.createdTabs.length, 0);
+        assert.equal(chrome.updatedTabs.length, 0);
+      }
+      assert.equal(chrome.updatedWindows.length, before);
+      prepared = true;
+    },
+    foreground: async () => {
+      assert.equal(prepared, true);
+      assert.equal(chrome.removedTabs.length, reuse ? 1 : 0);
+      const window = await chrome.windows.get(2);
+      assert.equal(window.tabs.some((tab) => tab.url === markerURL), false);
+      assert.equal(window.tabs.at(-1).url, "https://x.com/aku/status/102");
+      assert.deepEqual(chrome.updatedWindows.slice(-2), [[2, { state: "normal" }], [2, { focused: true }]]);
+      foregrounded = true;
+    },
+  } });
+  assert.equal(foregrounded, true);
+  assert.equal(result.windowId, 2);
+  if (!reuse) assert.equal(chrome.createdWindows[0].focused, false);
+});
+
+test("failed reused reader binding cleans marker and never invokes foreground", async () => {
+  const chrome = fakeChrome();
+  const reader = createReaderWindowRuntime(chrome);
+  await reader.open("https://x.com/aku/status/101");
+  let foregrounded = false;
+  await assert.rejects(reader.open("https://x.com/aku/status/101", { readerIntent: {
+    url: "http://127.0.0.1:11122/split-reader-intent?id=split_one",
+    prepare: async () => { throw new Error("ownership rejected"); },
+    foreground: async () => { foregrounded = true; },
+  } }), /ownership rejected/);
+  assert.equal(chrome.removedTabs.length, 1);
+  assert.equal(chrome.updatedWindows.length, 0);
+  assert.equal(foregrounded, false);
+});
+
+test("native foreground rejection is surfaced to the explicit caller", async () => {
+  const chrome = fakeChrome();
+  await assert.rejects(createReaderWindowRuntime(chrome).open("https://x.com/aku/status/101", { readerIntent: {
+    url: "http://127.0.0.1:11122/split-reader-intent?id=split_one",
+    prepare: async () => {},
+    foreground: async () => { throw new Error("Windows rejected foreground"); },
+  } }), /Windows rejected foreground/);
+});
+
+test("cold reader binding failure never navigates or focuses an unbound window", async () => {
+  const chrome = fakeChrome();
+  let foregrounded = false;
+  await assert.rejects(createReaderWindowRuntime(chrome).open("https://x.com/aku/status/101", { readerIntent: {
+    url: "http://127.0.0.1:11122/split-reader-intent?id=split_one",
+    prepare: async () => { throw new Error("marker not ready"); },
+    foreground: async () => { foregrounded = true; },
+  } }), /marker not ready/);
+  assert.equal(chrome.createdWindows[0].focused, false);
+  assert.equal(chrome.createdTabs.length, 0);
+  assert.equal(chrome.updatedTabs.length, 0);
+  assert.equal(chrome.updatedWindows.length, 0);
+  assert.equal(foregrounded, false);
+});

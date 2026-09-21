@@ -40,9 +40,10 @@ test("host requires an explicit positive split handshake", async () => {
 
 test("Chrome patch upgrade selects a new registration entrypoint without duplicating worker logic", () => {
   const manifest = JSON.parse(fs.readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
-  assert.equal(manifest.version, "0.9.1.2");
-  assert.equal(manifest.version_name, "0.9.1");
+  assert.equal(manifest.version, "0.9.2.0");
+  assert.equal(manifest.version_name, "0.9.2");
   assert.notEqual(manifest.background.service_worker, "service-worker.js");
+  assert.equal(manifest.background.service_worker, "service-worker-entry-v3.js");
   const entry = fs.readFileSync(new URL(`../${manifest.background.service_worker}`, import.meta.url), "utf8");
   assert.match(entry, /import "\.\/service-worker\.js";/);
   assert.doesNotMatch(entry, /onMessage\.addListener/);

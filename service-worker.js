@@ -163,7 +163,7 @@ const splitCaptureClient = createSplitCaptureClient({ chrome, handlers: {
   ping: async () => ({ capabilities: await bridgeCapabilitiesWithSourceAccess(), extensionOrigin: chrome.runtime.getURL("").replace(/\/$/, "") }),
   probe_source_sessions: async () => ({ sessions: await probeSourceSessions() }),
   open_source: async (a) => openSourceFeed(a.source, true),
-  open_native_post: async (a) => openNativePostInReaderWindow(a.source, a.url),
+  open_native_post: async (a, c) => openNativePostInReaderWindow(a.source, a.url, c.readerIntent),
   revoke_source_access: async () => ({ grantedSources: (await revokeAllSourceAccess(chrome))?.grantedSources ?? [] }),
   configure_background: async (_a, c) => {
     await configureBackgroundDispatch(c.endpoint, c.token, 2, true);
@@ -2189,7 +2189,7 @@ async function openSourceFeed(source, separateWindow = false) {
   return { source, state: "source_opened", url: tab?.url ?? definition.feedUrl };
 }
 
-async function openNativePostInReaderWindow(source, value) {
+async function openNativePostInReaderWindow(source, value, readerIntent = null) {
   if (!sourceIds().includes(source)) {
     throw new Error("Native reader source is not in the AkuBrowser allowlist.");
   }
@@ -2204,6 +2204,7 @@ async function openNativePostInReaderWindow(source, value) {
   }
   const result = await readerWindow.open(url.href, {
     excludedWindowIds: await managedCaptureWindow.windowIds(),
+    readerIntent,
   });
   return { source, state: "native_post_opened", url: result.url };
 }
