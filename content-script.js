@@ -980,6 +980,9 @@
       relationshipType: semantics.relationshipType ?? "original",
       parentPermalink: normalizeHttpUrl(semantics.parentPermalink),
       quotedPost,
+      directContext: adapter.extractDirectContext?.(container, {
+        compactText, structuredText, normalizeHttpUrl, permalink, quotedPost,
+      }) ?? [],
       engagement: semantics.engagement ?? {},
       presentation,
       attachments,
@@ -998,7 +1001,7 @@
   function normalizeQuotedPost(value) {
     if (!value || typeof value !== "object") return null;
     const text = structuredText(value.text).slice(0, 4_000);
-    if (!text) return null;
+    if (!text && !value.media?.length && !value.permalink) return null;
     const links = Array.isArray(value.links)
       ? value.links
           .map((link) => ({

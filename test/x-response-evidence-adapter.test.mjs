@@ -517,3 +517,18 @@ function defineResponseURL(response, url) {
 async function settle(milliseconds = 20) {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
+
+
+test("passive reply evidence forwards only exact bounded parent identity, including replay", async () => {
+  const value = tweet("12345", []);
+  value.legacy.in_reply_to_status_id_str = "67890";
+  value.legacy.in_reply_to_screen_name = "PRIVATE_REPLY_AUTHOR";
+  const harness = installHarness(() => Promise.resolve(jsonResponse({ data: value }, HOME_URL)));
+  try {
+    await globalThis.fetch(HOME_URL); await settle();
+    assert.equal(harness.messages[0].candidates[0].replyToId, "67890");
+    assert.equal(JSON.stringify(harness.messages).includes("PRIVATE_REPLY_AUTHOR"), false);
+    harness.ready();
+    assert.equal(harness.messages.at(-1).candidates[0].replyToId, "67890");
+  } finally { harness.restore(); }
+});

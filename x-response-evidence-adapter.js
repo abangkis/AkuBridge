@@ -100,6 +100,7 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
       cache.set(candidate.candidateId, Object.freeze({
         candidateId: candidate.candidateId,
         media: merged,
+        ...(candidate.replyToId ? { replyToId: candidate.replyToId } : {}),
         ...(avatarUrl ? { avatarUrl } : {}),
       }));
     }
@@ -290,11 +291,14 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
         const media = mediaForTweet(value, tweetId);
         const avatar = avatarForTweet(value);
         const avatarUrl = avatar?.url ?? null;
-        if (media.length > 0 || avatarUrl) {
+        const rawReply = dataProperty(dataProperty(value, "legacy"), "in_reply_to_status_id_str");
+        const replyToId = typeof rawReply === "string" && /^\d{5,30}$/.test(rawReply) && rawReply !== tweetId ? rawReply : null;
+        if (media.length > 0 || avatarUrl || replyToId) {
           candidateIds.add(tweetId);
           candidates.push(Object.freeze({
             candidateId: `x:status:${tweetId}`,
             media,
+            ...(replyToId ? { replyToId } : {}),
             ...(avatarUrl ? { avatarUrl } : {}),
             ...(avatar?.key ? { avatarKey: avatar.key } : {}),
           }));
@@ -402,11 +406,15 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
       const media = sanitizeMedia(dataProperty(value, "media"));
       const avatarUrl = safeXAvatarURL(dataProperty(value, "avatarUrl"));
       const avatarKey = avatarUrl ? normalizeAvatarKey(dataProperty(value, "avatarKey")) : null;
-      if (!candidateId || (media.length === 0 && !avatarUrl) || seen.has(candidateId)) continue;
+      const rawReply = dataProperty(value, "replyToId");
+      const replyToId = typeof rawReply === "string" && /^\d{5,30}$/.test(rawReply)
+        && candidateId !== `x:status:${rawReply}` ? rawReply : null;
+      if (!candidateId || (media.length === 0 && !avatarUrl && !replyToId) || seen.has(candidateId)) continue;
       seen.add(candidateId);
       output.push(Object.freeze({
         candidateId,
         media,
+        ...(replyToId ? { replyToId } : {}),
         ...(avatarUrl ? { avatarUrl } : {}),
         ...(avatarKey ? { avatarKey } : {}),
       }));

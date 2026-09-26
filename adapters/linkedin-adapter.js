@@ -141,12 +141,8 @@
       };
     },
     extractSemantics: (container, { compactText, normalizeHttpUrl }) => {
-      const text = compactText(container.innerText);
-      const relationshipType = /\breposted this\b/i.test(text)
-        ? "repost"
-        : /\breplied to\b/i.test(text)
-          ? "reply"
-          : "original";
+      const banner = interactionBanner(container, compactText);
+      const relationshipType = /\breposted\b/i.test(banner?.text || "") ? "repost" : "original";
       const parentPermalink = relationshipType === "original"
         ? null
         : [...container.querySelectorAll('a[href]')]
@@ -188,6 +184,7 @@
         read(container.querySelector('[data-testid="expandable-text-box"]')),
       ) || read(container);
     },
+    extractDirectContext: extractLinkedInDirectContext,
     extractPresentation: (container, { compactText, normalizeHttpUrl }) => {
       const author = postAuthor(container, compactText);
       const lines = String(container.innerText ?? "")
@@ -284,7 +281,12 @@
     const label = [...container.querySelectorAll('button[aria-label]')]
       .map((button) => compactText(button.getAttribute("aria-label")))
       .find((value) => /^Open control menu for post by\s+/i.test(value));
-    return label?.replace(/^Open control menu for post by\s+/i, "").trim() ?? "";
+    if (label) return label.replace(/^Open control menu for post by\s+/i, "").trim();
+    for (const selector of [".update-components-actor__name", ".feed-shared-actor__name", '[data-view-name="feed-actor-name"]']) {
+      const name = compactText(container.querySelector(selector)?.innerText);
+      if (name) return name;
+    }
+    return "";
   }
 
   function linkedinPlatformIdFromCandidates(values) {
@@ -810,5 +812,62 @@
     return String(value ?? "")
       .replace(/(?:\s+|^)(?:…\s*)?(?:show |see )?(?:more|less)$/i, "")
       .trim();
+  }
+
+  function profileIdentity(href) {
+    try { const url = new URL(href); return url.protocol === "https:" && url.hostname === "www.linkedin.com"
+      && /^\/in\/[^/]+\/?$/.test(url.pathname) ? `${url.origin}${url.pathname.replace(/\/$/, "")}` : ""; } catch { return ""; }
+  }
+
+  function interactionBanner(container, compactText) {
+    const author = postAuthor(container, compactText);
+    const lines = String(container.innerText || "").split(/\n+/).map(compactText).filter(Boolean);
+    const index = lines.indexOf(author);
+    const text = (index >= 0 ? lines.slice(0, index) : []).find((line) =>
+      /\b(?:commented(?: on this)?|replied to .+|reposted(?: this)?|mengomentari(?: ini)?|membalas .+)$/i.test(line));
+    if (!text) return null;
+    const headers = [...container.querySelectorAll('.update-components-header__text-view, .feed-shared-header__text-view, [data-view-name="feed-social-context"]')];
+    const header = headers.find((node) => compactText(node.innerText) === text);
+    const actors = header ? [...header.querySelectorAll('a[href*="/in/"]')]
+      .map((node) => ({ url: profileIdentity(node.href), name: compactText(node.innerText).slice(0, 300) }))
+      .filter((actor) => actor.url && actor.name) : [];
+    // A reply banner can mention both people. Only the leading linked name is
+    // the actor; unlinked names never establish identity.
+    const actor = actors.find((candidate) => text.startsWith(candidate.name));
+    return { text: text.slice(0, 500), actor };
+  }
+
+  function extractLinkedInDirectContext(container, { compactText, structuredText }) {
+    const banner = interactionBanner(container, compactText);
+    if (!banner || /\breposted\b/i.test(banner.text)) return [];
+    const kind = /\b(?:replied|membalas)\b/i.test(banner.text) ? "feed_reply" : "feed_comment";
+    const selector = '.comments-comment-item, .comments-comment-entity, [data-id^="urn:li:comment:"]';
+    const nodes = [...container.querySelectorAll(selector)].filter((node) =>
+      !node.getClientRects || node.getClientRects().length > 0);
+    const own = (node, query) => [...node.querySelectorAll(query)].filter((child) => child.closest(selector) === node);
+    const authorOf = (node) => own(node, '.comments-post-meta__name-text, .comments-comment-meta__description-title, a[data-view-name="comment-actor"]')[0];
+    const matches = banner.actor ? nodes.filter((node) => {
+      const author = authorOf(node);
+      return profileIdentity(author?.href || author?.closest('a[href]')?.href) === banner.actor.url;
+    }) : [];
+    const readComment = (node) => {
+      const author = authorOf(node);
+      const body = own(node, '.comments-comment-item__main-content, .comments-comment-item-content-body, .comments-comment-entity__content')[0];
+      const text = body ? (structuredText?.(body) || compactText(body.innerText)).slice(0, 4000) : "";
+      const rawID = node.getAttribute('data-id') || node.getAttribute('data-comment-id') || '';
+      const id = /^(?:urn:li:comment:[A-Za-z0-9:(),_-]+|\d+)$/.test(rawID) ? rawID.slice(0, 200) : "";
+      return { kind: "comment", id, author: compactText(author?.innerText).slice(0, 300), text,
+        availability: text ? "captured" : "reference_only" };
+    };
+    // Multiple comments by one actor cannot be tied to the feed banner without
+    // an explicit comment identity. Keep that ambiguity visible.
+    const comment = matches.length === 1 ? matches[0] : null;
+    const parentNode = comment?.parentElement?.closest(selector);
+    const attributable = comment && (kind === "feed_reply" ? Boolean(parentNode) : !parentNode);
+    return [{ kind, actor: banner.actor?.name || "", actorUrl: banner.actor?.url || "",
+      observedText: banner.text, provenance: "observed_dom", capturedAt: new Date().toISOString(),
+      target: attributable ? readComment(comment) : { kind: "comment", availability: "reference_only" },
+      ...(kind === "feed_reply" && parentNode && nodes.includes(parentNode) ? { parent: readComment(parentNode) } : {}),
+    }];
   }
 })();

@@ -196,6 +196,7 @@
       ? options.publishAvatar
       : publishAvatarEvidence;
     const dirtyContainers = new Set();
+    const replyTargets = new Map();
     const lastPublished = new Map();
     let observer = null;
     let flushPending = false;
@@ -243,6 +244,7 @@
       observer?.disconnect?.();
       observer = null;
       dirtyContainers.clear();
+      replyTargets.clear();
       flushPending = false;
     }
 
@@ -283,6 +285,12 @@
 
     function lookupContainer(container) {
       return cache.get(candidateIdFromContainer(container));
+    }
+
+    function lookupReplyTo(candidateId) {
+      const entry = replyTargets.get(normalizeCandidateId(candidateId));
+      if (!entry || entry.expiresAt < Date.now()) return null;
+      return entry.id;
     }
 
     function lookup(candidateId) {
@@ -331,6 +339,11 @@
       const accepted = ingestCandidates(payload, "x_response_graphql");
       let acceptedAvatars = 0;
       for (const candidate of payload.candidates) {
+        if (candidate.replyToId) {
+          replyTargets.delete(candidate.candidateId);
+          replyTargets.set(candidate.candidateId, { id: candidate.replyToId, expiresAt: Date.now() + defaults.ttlMs });
+          while (replyTargets.size > defaults.maxCandidates) replyTargets.delete(replyTargets.keys().next().value);
+        }
         if (candidate.avatarUrl && avatarCache.put(candidate.candidateId, candidate.avatarUrl)) {
           acceptedAvatars += 1;
           if (candidate.avatarKey) avatarCache.put(candidate.avatarKey, candidate.avatarUrl);
@@ -400,6 +413,7 @@
       stop,
       captureContainer,
       lookupContainer,
+      lookupReplyTo,
       lookup,
       lookupAvatarContainer,
       lookupAvatar,
@@ -449,8 +463,10 @@
     if (!Array.isArray(candidates) || candidates.length > 24) return false;
     for (const candidate of candidates) {
       if (!candidate || typeof candidate !== "object") return false;
-      if (!hasOnlyKeys(candidate, ["candidateId", "media", "avatarUrl", "avatarKey"])) return false;
+      if (!hasOnlyKeys(candidate, ["candidateId", "media", "avatarUrl", "avatarKey", "replyToId"])) return false;
       if (!normalizeCandidateId(candidate.candidateId)) return false;
+      if (candidate.replyToId !== undefined && (typeof candidate.replyToId !== "string"
+        || !/^\d{5,30}$/.test(candidate.replyToId) || candidate.candidateId === `x:status:${candidate.replyToId}`)) return false;
       if (candidate.avatarUrl !== undefined && !safeXAvatarUrl(candidate.avatarUrl)) return false;
       if (candidate.avatarKey !== undefined && (
         !candidate.avatarUrl || !normalizeAvatarKey(candidate.avatarKey)

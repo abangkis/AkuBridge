@@ -423,3 +423,15 @@ function anchor(href, quote) {
     closest: (selector) => selector.includes("quoteTweet") ? quote : null,
   };
 }
+
+
+test("reply target cache admits bounded explicit parent IDs and rejects self and arbitrary data", () => {
+  const runtime=loadEvidence().createRuntime({document:{querySelectorAll:()=>[]}});
+  const payload=(replyToId)=>({type:"AKU_X_RESPONSE_MEDIA_EVIDENCE",runtimeRevision:"x-response-evidence-v2",candidates:[{candidateId:"x:status:12345",media:[],replyToId}],diagnostics:{}});
+  runtime.ingestResponseEvidence(payload("67890"));
+  assert.equal(runtime.lookupReplyTo("x:status:12345"),"67890");
+  runtime.ingestResponseEvidence(payload("12345"));
+  runtime.ingestResponseEvidence(payload("https://evil.example/"));
+  assert.equal(runtime.lookupReplyTo("x:status:12345"),"67890");
+  assert.equal(runtime.responseDiagnostics().messagesRejected,2);
+});

@@ -174,12 +174,9 @@
         container.querySelector('[data-testid="socialContext"]')?.innerText,
       );
       const quoted = findQuotedPostContainer(container);
-      const reply = compactText(container.innerText).match(/^Replying to\b/i);
+      const reply = replyEvidence(container, compactText);
       const relationshipType = quoted ? "quote" : socialContext ? "repost" : reply ? "reply" : "original";
-      const relationshipContainer = quoted || container;
-      const parentLink = [...relationshipContainer.querySelectorAll('a[href*="/status/"]')]
-        .map((anchor) => canonicalizeXPermalink(anchor.href))
-        .find(Boolean) ?? null;
+      const parentLink = quoted ? ownPostURL(quoted) : reply?.permalink || null;
       const ownVideo = [...container.querySelectorAll(
         'video, [data-testid="previewInterstitial"], [data-testid="videoPlayer"], '
           + '[data-testid="videoComponent"], [aria-label*="Video" i]',
@@ -201,6 +198,7 @@
         }],
       }),
     }),
+    extractDirectContext: extractXDirectContext,
     extractQuotedPost: (container, {
       compactText,
       normalizeHttpUrl,
@@ -213,7 +211,6 @@
       const text = typeof structuredText === "function"
         ? structuredText(textRoot)
         : compactText(textRoot?.innerText);
-      if (!text) return null;
       const time = quoted.querySelector("time");
       const permalink = canonicalizeXPermalink(
         time?.closest?.("a[href]")?.href ||
@@ -226,7 +223,7 @@
         text,
         permalink,
         publishedAt: time?.getAttribute?.("datetime") || null,
-        links: [...textRoot.querySelectorAll("a[href]")]
+        links: [...(textRoot?.querySelectorAll("a[href]") ?? [])]
           .map((anchor) => ({
             text: compactText(anchor.innerText).slice(0, 300),
             href: normalizeHttpUrl(anchor.href),
@@ -328,6 +325,65 @@ function imageUrls(image) {
     ...srcsetUrls,
   ].filter(Boolean))];
 }
+
+
+  function ownPostURL(container) {
+    const quote = findQuotedPostContainer(container);
+    const times = [...(container.querySelectorAll?.("time") ?? [])];
+    const urls = times.filter((time) => !quote?.contains?.(time))
+      .map((time) => canonicalizeXPermalink(time.closest?.("a[href]")?.href)).filter(Boolean);
+    return [...new Set(urls)].length === 1 ? urls[0] : null;
+  }
+
+  function statusID(url) { return String(url || "").match(/\/status\/(\d+)/)?.[1] || ""; }
+
+  // Reply target identity must be explicit. Account mentions and card adjacency
+  // cannot identify the replied-to post.
+  function replyEvidence(container, compactText) {
+    const ownID = statusID(ownPostURL(container));
+    const observedID = globalThis.AkuXMediaEvidenceRuntime?.lookupReplyTo?.(`x:status:${ownID}`);
+    if (observedID && observedID !== ownID) return {
+      permalink: `https://x.com/i/status/${observedID}`, provenance: "observed_response", text: "",
+    };
+    const quote = findQuotedPostContainer(container);
+    const markers = [...(container.querySelectorAll?.('[data-testid="replyingTo"], [data-testid="replying-to"], div[dir="ltr"]') ?? [])]
+      .filter((node) => !quote?.contains?.(node)
+        && !node.closest?.('[data-testid="tweetText"], [data-testid="User-Name"]')
+        && !node.querySelector?.('[data-testid="tweetText"]')
+        && /^(?:Replying to|Membalas)\b/i.test(compactText(node.innerText))
+        && compactText(node.innerText).length <= 300);
+    if (!markers.length) return null;
+    const urls = [...new Set(markers.flatMap((node) => [...node.querySelectorAll('a[href*="/status/"]')])
+      .map((node) => canonicalizeXPermalink(node.href)).filter((url) => url && statusID(url) !== ownID))];
+    return { permalink: urls.length === 1 ? urls[0] : "", provenance: "observed_dom", text: compactText(markers[0].innerText) };
+  }
+
+  function extractXDirectContext(container, { compactText, structuredText, permalink, quotedPost }) {
+    const capturedAt = new Date().toISOString();
+    const relations = [];
+    const ownID = statusID(permalink);
+    if (quotedPost && (!quotedPost.permalink || statusID(quotedPost.permalink) !== ownID)) {
+      relations.push({ kind: "quotes", provenance: "observed_dom", capturedAt,
+        target: { kind: "post", id: statusID(quotedPost.permalink), permalink: quotedPost.permalink || "",
+          author: quotedPost.author || "", text: quotedPost.text || "", hasMedia: Boolean(quotedPost.media?.length),
+          availability: quotedPost.text || quotedPost.media?.length ? "captured" : "reference_only" } });
+    }
+    const reply = replyEvidence(container, compactText);
+    if (reply) {
+      const id = statusID(reply.permalink);
+      if (id && id === ownID) return relations;
+      const candidates = id ? [...(document.querySelectorAll?.('article[data-testid="tweet"]') ?? [])]
+        .filter((node) => node !== container && (!node.getClientRects || node.getClientRects().length > 0) && statusID(ownPostURL(node)) === id) : [];
+      const parent = candidates.length === 1 ? candidates[0] : null;
+      const textNode = parent?.querySelector('[data-testid="tweetText"]');
+      const text = textNode ? (structuredText?.(textNode) || compactText(textNode.innerText)).slice(0, 4000) : "";
+      relations.push({ kind: "replies_to", provenance: reply.provenance, capturedAt, observedText: reply.text,
+        target: { kind: "post", id, permalink: reply.permalink, text,
+          author: compactText(parent?.querySelector('[data-testid="User-Name"]')?.innerText).slice(0, 300),
+          availability: text ? "captured" : "reference_only" } });
+    }
+    return relations;
+  }
 
   function findQuotedPostContainer(container) {
     const explicit = container.querySelector('[data-testid="quoteTweet"]');
