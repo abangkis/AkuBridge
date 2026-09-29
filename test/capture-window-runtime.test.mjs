@@ -50,6 +50,44 @@ test("managed capture does not override a user's later tab choice", async () => 
   assert.equal(chrome.activeByWindow.get(1), 12);
 });
 
+test("creation diagnostics preserve returned and immediate readback state before containment", async () => {
+  const chrome = fakeChrome();
+  chrome.chromeFocused = false;
+  chrome.focusOnCreate = true;
+  const create = chrome.windows.create;
+  chrome.windows.create = async (options) => ({ ...await create(options), state: "normal", focused: true });
+  const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x");
+  const detail = prepared.lifecycleEvents.find((event) => event.event === "created").detail;
+  assert.equal(detail.captureWindowRuntimeRevision, "minimized-create-diagnostics-v1");
+  assert.equal(detail.requestedWindowState, "minimized");
+  assert.equal(detail.returnedWindowState, "normal");
+  assert.equal(detail.returnedWindowFocused, true);
+  assert.equal(detail.readbackWindowState, "normal");
+  assert.equal(detail.readbackWindowFocused, true);
+  assert.equal(detail.windowReadbackAvailable, true);
+  assert.equal(detail.focusContained, true);
+  assert.equal((await chrome.windows.get(prepared.tab.windowId)).state, "minimized");
+  assert.equal(JSON.stringify(detail).includes("https://"), false);
+});
+
+test("diagnostic read failure stays unknown without failing capture", async () => {
+  const chrome = fakeChrome();
+  const get = chrome.windows.get;
+  let first = true;
+  chrome.windows.get = async (...args) => {
+    if (args[0] === 2 && first) { first = false; throw new Error("private diagnostic error"); }
+    return get(...args);
+  };
+  const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x");
+  const detail = prepared.lifecycleEvents.find((event) => event.event === "created").detail;
+  assert.equal(detail.windowReadbackAvailable, false);
+  assert.equal(detail.readbackWindowState, "unknown");
+  assert.equal(detail.readbackWindowFocused, null);
+  assert.equal(detail.returnedWindowState, "unknown");
+  assert.equal(detail.returnedWindowFocused, null);
+  assert.equal(JSON.stringify(detail).includes("private diagnostic error"), false);
+});
+
 test("managed capture contains its activated window without restoring the app UI", async () => {
   const chrome = fakeChrome();
   const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x", {

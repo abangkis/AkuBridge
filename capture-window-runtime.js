@@ -11,6 +11,7 @@ export const CAPTURE_SURFACE_LEDGER_STORAGE_KEY = "akuBridgeManagedCaptureSurfac
 const MAX_LEDGER_RECEIPTS = 100;
 const FOCUS_SETTLE_CHECKS = 2;
 const FOCUS_SETTLE_INTERVAL_MS = 50;
+const CAPTURE_WINDOW_RUNTIME_REVISION = "minimized-create-diagnostics-v1";
 
 export function createManagedCaptureWindowRuntime(chromeApi) {
   const runtime = createUnserializedManagedCaptureWindowRuntime(chromeApi);
@@ -113,6 +114,7 @@ function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
         ...focusSnapshot.events,
         ...reconciliationEvents,
         lifecycleEvent(opened ? "created" : "reused", source, {
+          ...(binding.creationEvidence ?? {}),
           isolation,
           reset,
           focusIntervention: focusOutcome.changed === true,
@@ -805,7 +807,7 @@ function lifecycleEvent(event, source, detail = {}) {
     event,
     source: sourceIds().includes(source) ? source : null,
     outcome: String(detail.outcome ?? "").slice(0, 120),
-    detail: { ...focusPolicyEvidence(), ...detail },
+    detail: { ...focusPolicyEvidence(), ...detail, captureWindowRuntimeRevision: CAPTURE_WINDOW_RUNTIME_REVISION },
     occurredAt: new Date().toISOString(),
   };
 }
@@ -885,7 +887,9 @@ async function validateBinding(chromeApi, state, source, isolation, focusSnapsho
 async function createBinding(chromeApi, state, source, isolation, focusSnapshot) {
   let windowId = isolation === "per_source" ? null : state.windowId;
   let tab;
+  let creationEvidence;
   if (!windowId) {
+    const started = Date.now();
     const created = await chromeApi.windows.create({
       url: expectedFeedUrl(source),
       focused: false,
@@ -897,6 +901,24 @@ async function createBinding(chromeApi, state, source, isolation, focusSnapshot)
     });
     windowId = created.id;
     tab = created.tabs?.[0] ?? null;
+    creationEvidence = {
+      requestedWindowState: "minimized",
+      requestedWindowFocused: false,
+      returnedWindowState: diagnosticWindowState(created.state),
+      returnedWindowFocused: typeof created.focused === "boolean" ? created.focused : null,
+      windowCreateElapsedMs: Math.max(0, Date.now() - started),
+      windowReadbackAvailable: false,
+      readbackWindowState: "unknown",
+      readbackWindowFocused: null,
+    };
+    // Observe before tab activation or containment can change the result.
+    // Diagnostic read failure must not change capture behavior.
+    try {
+      const observed = await chromeApi.windows.get(windowId);
+      creationEvidence.windowReadbackAvailable = true;
+      creationEvidence.readbackWindowState = diagnosticWindowState(observed.state);
+      creationEvidence.readbackWindowFocused = typeof observed.focused === "boolean" ? observed.focused : null;
+    } catch {}
   } else {
     if (focusSnapshot.kind !== "chrome") await requirePreservedFocus(chromeApi, focusSnapshot, windowId, { source, phase: "create_tab" });
     tab = await chromeApi.tabs.create({
@@ -919,7 +941,11 @@ async function createBinding(chromeApi, state, source, isolation, focusSnapshot)
     next.tabs[source] = tab.id;
   }
   await saveState(chromeApi, next);
-  return { windowId, tabId: tab.id, state: next };
+  return { windowId, tabId: tab.id, state: next, creationEvidence };
+}
+
+function diagnosticWindowState(state) {
+  return ["normal", "minimized", "maximized", "fullscreen", "locked-fullscreen"].includes(state) ? state : "unknown";
 }
 
 function ownedTabsInWindow(tabs, bindings) {
