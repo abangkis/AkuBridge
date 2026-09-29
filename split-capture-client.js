@@ -2,10 +2,43 @@
 // capture-host page supplies its instance capability or that session is restored.
 import { BRIDGE_CONTRACT_VERSION, BRIDGE_ID } from "./bridge-capabilities.js";
 const SESSION_KEY = "akuWindowsSplitCaptureSession";
-export function createSplitCaptureClient({ chrome, fetch: request = globalThis.fetch, handlers, delay = (ms) => new Promise((r) => setTimeout(r, ms)), diagnostic = (event) => console.info("aku_split_capture_poll", event) }) {
+export function createSplitCaptureClient({ chrome, fetch: request = globalThis.fetch, handlers, delay = (ms) => new Promise((r) => setTimeout(r, ms)), setInterval: every = globalThis.setInterval, clearInterval: cancelEvery = globalThis.clearInterval, diagnostic = (event) => console.info("aku_split_capture_poll", event) }) {
   let config = null;
   let polling = false;
   let connecting = null;
+  let heartbeat = null;
+  let activePoll = null;
+  function clearHeartbeat() {
+    if (heartbeat !== null) cancelEvery(heartbeat);
+    heartbeat = null;
+  }
+  async function stop(c) {
+    if (config !== c) return;
+    config = null;
+    clearHeartbeat();
+    activePoll?.abort();
+    await chrome.storage.session.remove(SESSION_KEY).catch(() => undefined);
+  }
+  function startHeartbeat(c) {
+    clearHeartbeat();
+    let checking = false;
+    // Chrome 110+ extension API calls reset the worker idle timer. Bound this
+    // to the authenticated host session, independent of page freeze/timers.
+    heartbeat = every(() => {
+      if (config !== c || checking) return;
+      checking = true;
+      void (async () => {
+        try {
+          const tab = await chrome.tabs.get(c.tabId);
+          if (config !== c) return;
+          if (tab?.url !== `${c.endpoint}/split-capture-host#${c.key}`) {
+            await stop(c);
+          }
+        } catch { await stop(c); }
+        finally { checking = false; }
+      })().catch(() => undefined);
+    }, 20_000);
+  }
   const report = (event) => { try { diagnostic(event); } catch { /* Diagnostics cannot interrupt capture. */ } };
   const headers = () => config ? { "X-Aku-Capture-Instance": config.key } : {};
   const bridgeHeaders = (c) => ({
@@ -57,31 +90,48 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
         const startedAt = performance.now();
         report({ phase: "request_start" });
         try {
-          const response = await request(`${c.endpoint}/api/bridge/split-capture/next`, {
-            headers: bridgeHeaders(c), cache: "no-store", signal: AbortSignal.timeout(25_000),
-          });
+          const pollController = new AbortController();
+          activePoll = pollController;
+          const timeout = setTimeout(() => pollController.abort(new DOMException("Capture poll timed out", "TimeoutError")), 25_000);
+          let response;
+          try {
+            response = await request(`${c.endpoint}/api/bridge/split-capture/next`, {
+              headers: bridgeHeaders(c), cache: "no-store", signal: pollController.signal,
+            });
+          } finally {
+            clearTimeout(timeout);
+          }
+          if (config !== c) continue;
           report({ phase: "response", status: response.status, elapsedMs: Math.round(performance.now() - startedAt) });
           if ([401, 403, 409, 410].includes(response.status)) {
             report({ phase: "poll_stopped", reason: "terminal_status", status: response.status });
-            config = null; await chrome.storage.session.remove(SESSION_KEY); break;
+            await stop(c); break;
           }
           if (response.status === 204) continue;
           if (!response.ok) throw new Error("Capture action poll failed.");
           const payload = await response.json();
+          if (config !== c) continue;
           if (payload.instanceEpoch !== c.instanceEpoch || typeof payload.action?.id !== "string") {
             report({ phase: "poll_stopped", reason: "epoch_or_payload_mismatch" });
-            config = null; await chrome.storage.session.remove(SESSION_KEY); break;
+            await stop(c); break;
           }
           report({ phase: "action_claimed", actionId: payload.action.id, actionType: payload.action.type });
           // Captures can be long. Keep claiming release/control requests while
           // a bounded capture executes; existing command/lease guards own them.
           void execute(payload.action, c).catch(() => undefined);
         } catch (error) {
+          if (config !== c) continue;
           report({ phase: "request_error", kind: error?.name === "TimeoutError" ? "timeout" : "other", elapsedMs: Math.round(performance.now() - startedAt) });
           await delay(2000);
         }
       }
-    } finally { polling = false; }
+    } finally {
+      activePoll = null;
+      polling = false;
+      // A replacement session can connect while an old terminal response is
+      // cleaning up; it must get its own poll rather than wait for a page timer.
+      if (config) void poll();
+    }
   }
   async function connect(message, sender) {
     let url;
@@ -108,15 +158,17 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
       if (!response.ok) throw new Error("Capture host bootstrap rejected.");
       const value = await response.json();
       if (typeof value.token !== "string" || value.token.length < 32 || typeof value.instanceEpoch !== "string") throw new Error("Invalid capture bootstrap response.");
+      clearHeartbeat();
+      activePoll?.abort();
       config = { endpoint: url.origin, key: message.key, token: value.token, instanceEpoch: value.instanceEpoch, tabId: sender.tab.id };
       try {
         await chrome.storage.session.set({ [SESSION_KEY]: config });
         await handlers.configure_background({}, config);
       } catch (error) {
-        config = null;
-        await chrome.storage.session.remove(SESSION_KEY).catch(() => undefined);
+        await stop(config);
         throw error;
       }
+      if (config) startHeartbeat(config);
       void poll();
       return { ok: true };
     })();

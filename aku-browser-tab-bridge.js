@@ -15,6 +15,41 @@
     const key = window.location.hash.slice(1);
     let failures = 0;
     let inFlight = false;
+    let wakeStream = null;
+    let stopped = false;
+    // This channel contains only wake hints. Claims still go through the
+    // worker's authenticated /next request, including its epoch/replay guards.
+    const watchWake = async () => {
+      if (wakeStream || stopped || !/^[a-f0-9]{64}$/.test(key)) return;
+      const controller = new AbortController();
+      wakeStream = controller;
+      try {
+        while (!stopped) {
+          const response = await fetch(`${allowedOrigin}/api/bridge/split-capture/wake`, {
+            headers: { "X-Aku-Capture-Instance": key }, cache: "no-store",
+            signal: controller.signal,
+          });
+          if ([401, 403, 409, 410].includes(response.status)) { stopped = true; break; }
+          if (!response.ok || !response.body) break;
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let pending = "";
+          try {
+            while (!stopped) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              pending += decoder.decode(value, { stream: true });
+              const lines = pending.split("\n");
+              pending = lines.pop();
+              if (pending.length > 32) throw new Error("Invalid capture wake frame");
+              if (lines.includes("wake")) void connect();
+            }
+          } finally { await reader.cancel().catch(() => undefined); }
+          // Normal rotation reconnects from the network callback, not a timer.
+        }
+      } catch { /* The existing bounded handshake timer recovers network errors. */ }
+      finally { if (wakeStream === controller) wakeStream = null; }
+    };
     const showStatus = (state, text) => {
       const render = () => {
         const status = document.getElementById("split-capture-status");
@@ -35,10 +70,13 @@
         if (response?.ok !== true) throw new Error("capture handshake not acknowledged");
         failures = 0;
         showStatus("connected", "Capture extension connected. Keep this host window open.");
+        void watchWake();
       } catch {
         failures++;
         if (failures >= 6) {
           clearInterval(retryTimer);
+          stopped = true;
+          wakeStream?.abort();
           showStatus("failed", "Capture extension could not connect. Update or reload AkuBridge in this capture profile, then restart AkuBrowser. Sign-ins have been preserved.");
         } else {
           showStatus("retrying", `Capture extension not ready; retry ${failures}/6. The running extension may need an update or reload.`);
@@ -49,6 +87,11 @@
       }
     };
     const retryTimer = setInterval(connect, 10_000);
+    window.addEventListener("pagehide", () => {
+      stopped = true;
+      clearInterval(retryTimer);
+      wakeStream?.abort();
+    }, { once: true });
     void connect();
     return;
   }

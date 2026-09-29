@@ -17,6 +17,89 @@ function chromeFixture() {
   };
 }
 
+function heartbeatFixture() {
+  const chrome = chromeFixture();
+  const timers = new Map();
+  let timerID = 0, tabCalls = 0, bootstraps = 0;
+  let tab = { id: 42, url: sender.url };
+  const polls = [];
+  chrome.tabs.get = async () => { tabCalls++; if (!tab) throw new Error("Tab closed"); return tab; };
+  const client = createSplitCaptureClient({
+    chrome, diagnostic: () => {}, handlers: { configure_background: async () => {} },
+    setInterval: (fn, ms) => { assert.equal(ms, 20_000); timers.set(++timerID, fn); return timerID; },
+    clearInterval: id => timers.delete(id),
+    fetch: async (url, options) => {
+      if (url.endsWith("/bootstrap")) { bootstraps++; return response(200, { token: "t".repeat(64), instanceEpoch: "epoch" }); }
+      return new Promise((resolve, reject) => {
+        polls.push(resolve);
+        options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+    },
+  });
+  return { client, timers, polls, setTab: value => { tab = value; }, tabCalls: () => tabCalls, bootstraps: () => bootstraps,
+    tick: async () => { for (const fn of timers.values()) fn(); await new Promise(setImmediate); },
+  };
+}
+
+test("validated split session keeps worker active beyond 30s with one timer across CONNECT and restore", async () => {
+  const f = heartbeatFixture();
+  await f.client.connect({ key }, sender);
+  await f.client.connect({ key }, sender);
+  await f.client.restore();
+  assert.equal(f.timers.size, 1);
+  assert.equal(f.bootstraps(), 1);
+  const before = f.tabCalls();
+  await f.tick(); // 20s
+  await f.tick(); // 40s, without any content-script messages
+  await f.tick(); // 60s
+  assert.equal(f.tabCalls() - before, 3);
+  f.setTab(null);
+  await f.tick();
+  assert.equal(f.timers.size, 0);
+  assert.deepEqual(f.client.headers(), {});
+});
+
+test("navigated host clears heartbeat and rejects late poll actions", async () => {
+  const f = heartbeatFixture();
+  await f.client.connect({ key }, sender);
+  f.setTab({ id: 42, url: "https://x.com/home" });
+  await f.tick();
+  assert.equal(f.timers.size, 0);
+  f.polls[0](response(200, { instanceEpoch: "epoch", action: { id: "late", type: "dispatch" } }));
+  await new Promise(setImmediate);
+  assert.deepEqual(f.client.headers(), {});
+  assert.equal(f.polls.length, 1);
+});
+
+test("terminal status and epoch mismatch clear the session heartbeat", async () => {
+  for (const value of [response(410), response(200, { instanceEpoch: "stale", action: { id: "old" } })]) {
+    const f = heartbeatFixture();
+    await f.client.connect({ key }, sender);
+    f.polls[0](value);
+    await new Promise(setImmediate);
+    assert.equal(f.timers.size, 0);
+    assert.deepEqual(f.client.headers(), {});
+  }
+});
+
+test("replacement capture capability replaces heartbeat and aborts the old poll", async () => {
+  const f = heartbeatFixture();
+  await f.client.connect({ key }, sender);
+  const oldTimer = [...f.timers.keys()][0];
+  const newKey = "b".repeat(64);
+  const newSender = { url: `${endpoint}/split-capture-host#${newKey}`, tab: { id: 42 } };
+  f.setTab({ id: 42, url: newSender.url });
+  await f.client.connect({ key: newKey }, newSender);
+  await new Promise(setImmediate);
+  assert.equal(f.timers.size, 1);
+  assert.equal(f.timers.has(oldTimer), false);
+  assert.equal(f.polls.length, 2);
+  assert.equal(f.client.headers()["X-Aku-Capture-Instance"], newKey);
+  f.setTab(null);
+  await f.tick();
+  assert.equal(f.timers.size, 0);
+});
+
 test("split capture rejects source pages, wrong fragments and missing tab ownership before network", async () => {
   let calls = 0;
   const client = createSplitCaptureClient({ chrome: chromeFixture(), fetch: async () => { calls++; }, handlers: {} });
