@@ -32,11 +32,12 @@ test("split capture rejects source pages, wrong fragments and missing tab owners
 
 test("typed action roundtrip uses bootstrapped token and instance fencing, never UI-supplied credentials", async () => {
   const calls = [];
+  const diagnostics = [];
   let finish;
   const finished = new Promise((r) => { finish = r; });
   let nextCount = 0;
   let seenConfig;
-  const client = createSplitCaptureClient({ chrome: chromeFixture(), handlers: {
+  const client = createSplitCaptureClient({ chrome: chromeFixture(), diagnostic: event => diagnostics.push(event), handlers: {
     configure_background: async () => ({}),
     probe_source_sessions: async (_a, c) => { seenConfig = c; return { sessions: { x: { state: "ready" } } }; },
   }, fetch: async (url, options) => {
@@ -56,6 +57,30 @@ test("typed action roundtrip uses bootstrapped token and instance fencing, never
   assert.equal(result.options.headers["X-Aku-Capture-Instance"], key);
   assert.equal(result.options.headers["X-Aku-Bridge-Token"], "t".repeat(64));
   assert.deepEqual(JSON.parse(result.options.body), { ok: true, result: { sessions: { x: { state: "ready" } } } });
+  assert.ok(diagnostics.some(event => event.phase === "action_claimed" && event.actionId === "one"));
+  assert.ok(!JSON.stringify(diagnostics).includes(key));
+  assert.ok(!JSON.stringify(diagnostics).includes("t".repeat(64)));
+});
+
+test("poll diagnostics record a timeout before retrying without exposing credentials", async () => {
+  const diagnostics = [];
+  const chrome = chromeFixture();
+  let stopped;
+  const finished = new Promise(resolve => { stopped = resolve; });
+  chrome.storage.session.remove = async () => stopped();
+  let polls = 0;
+  const client = createSplitCaptureClient({ chrome, diagnostic: event => diagnostics.push(event), delay: async () => {}, handlers: {
+    configure_background: async () => ({}),
+  }, fetch: async url => {
+    if (url.endsWith("/bootstrap")) return response(200, { token: "t".repeat(64), instanceEpoch: "epoch" });
+    if (polls++ === 0) throw Object.assign(new Error("private endpoint"), { name: "TimeoutError" });
+    return response(410);
+  } });
+  await client.connect({ key }, sender);
+  await finished;
+  assert.ok(diagnostics.some(event => event.phase === "request_error" && event.kind === "timeout"));
+  assert.ok(diagnostics.some(event => event.phase === "poll_stopped" && event.status === 410));
+  assert.ok(!JSON.stringify(diagnostics).includes("private endpoint"));
 });
 
 test("epoch mismatch stops polling without executing or replaying an action", async () => {

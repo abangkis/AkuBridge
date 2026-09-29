@@ -2,10 +2,11 @@
 // capture-host page supplies its instance capability or that session is restored.
 import { BRIDGE_CONTRACT_VERSION, BRIDGE_ID } from "./bridge-capabilities.js";
 const SESSION_KEY = "akuWindowsSplitCaptureSession";
-export function createSplitCaptureClient({ chrome, fetch: request = globalThis.fetch, handlers, delay = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+export function createSplitCaptureClient({ chrome, fetch: request = globalThis.fetch, handlers, delay = (ms) => new Promise((r) => setTimeout(r, ms)), diagnostic = (event) => console.info("aku_split_capture_poll", event) }) {
   let config = null;
   let polling = false;
   let connecting = null;
+  const report = (event) => { try { diagnostic(event); } catch { /* Diagnostics cannot interrupt capture. */ } };
   const headers = () => config ? { "X-Aku-Capture-Instance": config.key } : {};
   const bridgeHeaders = (c) => ({
     "Content-Type": "application/json", "X-Aku-Capture-Instance": c.key,
@@ -53,23 +54,30 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
     try {
       while (config) {
         const c = config;
+        const startedAt = performance.now();
+        report({ phase: "request_start" });
         try {
           const response = await request(`${c.endpoint}/api/bridge/split-capture/next`, {
             headers: bridgeHeaders(c), cache: "no-store", signal: AbortSignal.timeout(25_000),
           });
+          report({ phase: "response", status: response.status, elapsedMs: Math.round(performance.now() - startedAt) });
           if ([401, 403, 409, 410].includes(response.status)) {
+            report({ phase: "poll_stopped", reason: "terminal_status", status: response.status });
             config = null; await chrome.storage.session.remove(SESSION_KEY); break;
           }
           if (response.status === 204) continue;
           if (!response.ok) throw new Error("Capture action poll failed.");
           const payload = await response.json();
           if (payload.instanceEpoch !== c.instanceEpoch || typeof payload.action?.id !== "string") {
+            report({ phase: "poll_stopped", reason: "epoch_or_payload_mismatch" });
             config = null; await chrome.storage.session.remove(SESSION_KEY); break;
           }
+          report({ phase: "action_claimed", actionId: payload.action.id, actionType: payload.action.type });
           // Captures can be long. Keep claiming release/control requests while
           // a bounded capture executes; existing command/lease guards own them.
           void execute(payload.action, c).catch(() => undefined);
-        } catch {
+        } catch (error) {
+          report({ phase: "request_error", kind: error?.name === "TimeoutError" ? "timeout" : "other", elapsedMs: Math.round(performance.now() - startedAt) });
           await delay(2000);
         }
       }
@@ -83,8 +91,16 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
       || !/^[a-f0-9]{64}$/.test(message.key ?? "") || url.hash !== `#${message.key}`) {
       throw new Error("Invalid capture host capability.");
     }
-    if (connecting) return connecting;
-    if (config?.key === message.key && config.tabId === sender.tab.id) { void poll(); return { ok: true }; }
+    if (connecting) {
+      report({ phase: "connect_pending" });
+      return connecting;
+    }
+    if (config?.key === message.key && config.tabId === sender.tab.id) {
+      report({ phase: "connect_reused", polling });
+      void poll(); return { ok: true };
+    }
+    const startedAt = performance.now();
+    report({ phase: "connect_start" });
     connecting = (async () => {
       const response = await request(`${url.origin}/api/bridge/split-capture/bootstrap`, {
         method: "POST", headers: { "X-Aku-Capture-Instance": message.key }, signal: AbortSignal.timeout(10_000),
@@ -104,7 +120,14 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
       void poll();
       return { ok: true };
     })();
-    try { return await connecting; } finally { connecting = null; }
+    try {
+      const result = await connecting;
+      report({ phase: "connect_ready", elapsedMs: Math.round(performance.now() - startedAt) });
+      return result;
+    } catch (error) {
+      report({ phase: "connect_error", kind: error?.name === "TimeoutError" ? "timeout" : "other", elapsedMs: Math.round(performance.now() - startedAt) });
+      throw error;
+    } finally { connecting = null; }
   }
   async function restore() {
     const value = (await chrome.storage.session.get(SESSION_KEY))?.[SESSION_KEY];
