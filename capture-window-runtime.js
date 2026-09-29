@@ -890,7 +890,10 @@ async function createBinding(chromeApi, state, source, isolation, focusSnapshot)
       url: expectedFeedUrl(source),
       focused: false,
       type: "normal",
-      ...(focusSnapshot.kind === "chrome" ? { width: 960, height: 900 } : { state: "minimized" }),
+      // Inactive normal windows can still paint above the user's work before
+      // native containment reacts. Explicit media recapture restores via its
+      // one-use showForeground grant after the target tab is prepared.
+      state: "minimized",
     });
     windowId = created.id;
     tab = created.tabs?.[0] ?? null;
