@@ -339,7 +339,7 @@ test("LinkedIn capture composes readiness with generic freshness recovery", () =
   assert.match(worker, /restoreTabFocus/);
   assert.match(
     worker,
-    /managedCaptureWindow\.releaseSource\(\s*source,\s*captureLeaseId,\s*\)/,
+    /managedCaptureWindow\.releaseSource\(\s*source,\s*captureLeaseId,\s*\{ retainWindow: false \},\s*\)/,
   );
   assert.match(worker, /BACKGROUND_RELEASE_PUMP_MS = 55_000/);
   assert.match(worker, /\/api\/bridge\/capture-surfaces\/events/);
