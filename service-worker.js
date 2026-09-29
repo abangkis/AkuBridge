@@ -1535,6 +1535,7 @@ async function findOrOpenSourceTab(
           const releaseOutcome = await managedCaptureWindow.releaseSource(
             source,
             captureLeaseId,
+            { retainWindow: false },
           );
           managedLifecycleEvents.push(...(releaseOutcome?.events ?? []));
           if (!managedSurfaceReleaseAllowsRecreate(releaseOutcome)) {
@@ -1611,6 +1612,7 @@ async function findOrOpenSourceTab(
         const releaseOutcome = await managedCaptureWindow.releaseSource(
           source,
           captureLeaseId,
+          { retainWindow: false },
         ).catch(() => null);
         lifecycleEvents.push(...(releaseOutcome?.events ?? []));
       }

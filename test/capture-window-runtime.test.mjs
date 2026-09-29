@@ -58,7 +58,7 @@ test("creation diagnostics preserve returned and immediate readback state before
   chrome.windows.create = async (options) => ({ ...await create(options), state: "normal", focused: true });
   const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x");
   const detail = prepared.lifecycleEvents.find((event) => event.event === "created").detail;
-  assert.equal(detail.captureWindowRuntimeRevision, "minimized-create-diagnostics-v1");
+  assert.equal(detail.captureWindowRuntimeRevision, "managed-window-lease-reuse-v2");
   assert.equal(detail.requestedWindowState, "minimized");
   assert.equal(detail.returnedWindowState, "normal");
   assert.equal(detail.returnedWindowFocused, true);
@@ -119,13 +119,17 @@ test("managed capture never restores a last-focused Chrome window when another a
   assert.equal(prepared.lifecycleEvents.some((event) => event.event === "focus_intervention"), false);
 });
 
-test("external focus contains create-time activation and sequential source recreation", async () => {
+test("external focus contains create-time activation and sequential source window reuse", async () => {
   const chrome = fakeChrome();
   const runtime = createManagedCaptureWindowRuntime(chrome);
   chrome.focusOnCreate = true;
+  chrome.focusManagedWindowOnTabActivation = true;
+  let sharedWindowId = null;
   for (const source of ["x", "linkedin"]) {
     chrome.chromeFocused = false;
     const prepared = await runtime.prepare(source, { leaseId: "external-session" });
+    if (sharedWindowId === null) sharedWindowId = prepared.tab.windowId;
+    assert.equal(prepared.tab.windowId, sharedWindowId);
     assert.equal(chrome.createdWindowOptions.state, "minimized");
     assert.equal(chrome.createdWindowOptions.width, undefined);
     assert.equal(chrome.chromeFocused, false);
@@ -134,7 +138,7 @@ test("external focus contains create-time activation and sequential source recre
     assert.equal(prepared.lifecycleEvents.filter((event) => event.event === "focus_intervention").length, 1);
     await runtime.releaseSource(source, "external-session");
   }
-  assert.equal(chrome.createdWindowOptionsList.length, 2);
+  assert.equal(chrome.createdWindowOptionsList.length, 1);
   assert.equal(chrome.windowUpdates.some((update) => update.focused === true), false);
 });
 
@@ -431,6 +435,7 @@ test("managed capture state accepts only known numeric bindings", () => {
     leaseId: "session-1",
   }), {
     windowId: 8,
+    placeholderTabId: null,
     tabs: { x: 9 },
     transientTabs: { linkedin: 12 },
     sourceWindows: {},
@@ -523,33 +528,36 @@ test("source failure closes only its Bridge-owned managed tab", async () => {
   });
 });
 
-test("source release and next-source prepare are serialized across a shared window handoff", async () => {
+test("source release and next-source prepare are serialized across a retained shared window", async () => {
   const chrome = fakeChrome();
   const runtime = createManagedCaptureWindowRuntime(chrome);
-  await runtime.prepare("instagram", { leaseId: "session-1" });
-  let releaseWindowRemoval;
-  let signalWindowRemovalStarted;
-  const windowRemovalStarted = new Promise((resolve) => {
-    signalWindowRemovalStarted = resolve;
+  const instagram = await runtime.prepare("instagram", { leaseId: "session-1" });
+  let releaseTabRemoval;
+  let signalTabRemovalStarted;
+  const tabRemovalStarted = new Promise((resolve) => {
+    signalTabRemovalStarted = resolve;
   });
-  const windowRemovalGate = new Promise((resolve) => {
-    releaseWindowRemoval = resolve;
+  const tabRemovalGate = new Promise((resolve) => {
+    releaseTabRemoval = resolve;
   });
-  chrome.beforeWindowRemove = async () => {
-    signalWindowRemovalStarted();
-    await windowRemovalGate;
+  chrome.beforeTabRemove = async (ids) => {
+    if (ids.includes(instagram.tab.id)) {
+      signalTabRemovalStarted();
+      await tabRemovalGate;
+    }
   };
 
   const release = runtime.releaseSource("instagram", "session-1");
-  await windowRemovalStarted;
+  await tabRemovalStarted;
   const prepare = runtime.prepare("linkedin", { leaseId: "session-1" });
   await Promise.resolve();
 
   assert.equal(chrome.createdWindowOptionsList.length, 1);
-  releaseWindowRemoval();
-  assert.equal((await release).mode, "owned_source_surface_closed");
+  releaseTabRemoval();
+  assert.equal((await release).windowRetained, true);
   const linkedin = await prepare;
-  assert.equal(chrome.createdWindowOptionsList.length, 2);
+  assert.equal(chrome.createdWindowOptionsList.length, 1);
+  assert.equal(linkedin.tab.windowId, instagram.tab.windowId);
   assert.equal(chrome.windowsById.has(linkedin.tab.windowId), true);
   assert.equal(linkedin.tab.url, "https://www.linkedin.com/feed/");
 });
@@ -615,7 +623,7 @@ test("a native reader tab added beside a managed feed forces a separate update w
   assert.equal(chrome.removedWindowIds.includes(first.tab.windowId), false);
 });
 
-test("source cleanup closes a Bridge-owned Facebook tab after an internal redirect", async () => {
+test("source cleanup retains its shared window with an inert placeholder after an internal redirect", async () => {
   const chrome = fakeChrome();
   const runtime = createManagedCaptureWindowRuntime(chrome);
   const prepared = await runtime.prepare("facebook", { leaseId: "session-1" });
@@ -623,14 +631,198 @@ test("source cleanup closes a Bridge-owned Facebook tab after an internal redire
     url: "https://www.facebook.com/home.php",
   });
 
-  assert.deepEqual(withoutLifecycleEvents(await runtime.releaseSource("facebook", "session-1")), {
+  const outcome = await runtime.releaseSource("facebook", "session-1");
+  assert.deepEqual(withoutLifecycleEvents(outcome), {
     released: true,
     mode: "owned_source_surface_closed",
     closedTabs: 1,
     remainingManagedTabs: 0,
     preservedUserTabs: 0,
+    windowRetained: true,
   });
-  assert.deepEqual(chrome.removedWindowIds, [2]);
+  const window = await chrome.windows.get(prepared.tab.windowId, { populate: true });
+  assert.deepEqual(window.tabs.map((tab) => tab.url), ["chrome-extension://test-bridge/capture-placeholder.html"]);
+  assert.deepEqual(chrome.removedTabIds, [prepared.tab.id]);
+  assert.deepEqual(chrome.removedWindowIds, []);
+});
+
+test("shared window survives sequential source release, then full release closes its placeholder", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const first = await runtime.prepare("x", { leaseId: "session-1" });
+  const release = await runtime.releaseSource("x", "session-1");
+  const placeholderId = (await chrome.windows.get(first.tab.windowId, { populate: true })).tabs[0].id;
+  const stored = await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY);
+  const ledger = await chrome.storage.local.get(CAPTURE_SURFACE_LEDGER_STORAGE_KEY);
+
+  assert.equal(release.windowRetained, true);
+  assert.equal(stored[CAPTURE_WINDOW_STORAGE_KEY].placeholderTabId, placeholderId);
+  assert.deepEqual(ledger[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].surfaces[0].bindings, {});
+  assert.equal(ledger[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].surfaces[0].placeholderTabId, placeholderId);
+
+  const next = await runtime.prepare("linkedin", { leaseId: "session-1" });
+  assert.equal(next.tab.windowId, first.tab.windowId);
+  assert.equal(next.lifecycleEvents.find((event) => event.event === "created").detail.windowReused, true);
+  assert.equal(chrome.createdWindowOptionsList.length, 1);
+  assert.equal(chrome.windowsById.get(first.tab.windowId).tabs.some((tab) => tab.id === placeholderId), false);
+
+  await runtime.releaseSource("linkedin", "session-1");
+  const fullRelease = await runtime.release("session-1");
+  assert.equal(fullRelease.released, true);
+  assert.deepEqual(chrome.removedWindowIds, [first.tab.windowId]);
+  assert.equal(chrome.windowsById.has(first.tab.windowId), false);
+  assert.equal(fullRelease.events.some((event) =>
+    event.event === "released" && event.outcome === "managed_placeholder_closed" &&
+    event.detail.placeholderTabClosed === true
+  ), true);
+  const ledgerAfterRelease = await chrome.storage.local.get(CAPTURE_SURFACE_LEDGER_STORAGE_KEY);
+  assert.equal(ledgerAfterRelease[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].receipts.at(-1).outcome,
+    "managed_placeholder_closed");
+});
+
+test("worker recreation reuses the persisted placeholder and ledger surface", async () => {
+  const chrome = fakeChrome();
+  const firstRuntime = createManagedCaptureWindowRuntime(chrome);
+  const first = await firstRuntime.prepare("x", { leaseId: "session-1" });
+  await firstRuntime.releaseSource("x", "session-1");
+  const restartedRuntime = createManagedCaptureWindowRuntime(chrome);
+  const next = await restartedRuntime.prepare("linkedin", { leaseId: "session-1" });
+
+  assert.equal(next.tab.windowId, first.tab.windowId);
+  assert.equal(next.lifecycleEvents.find((event) => event.event === "created").detail.windowReused, true);
+  assert.equal(chrome.createdWindowOptionsList.length, 1);
+  assert.equal(chrome.removedWindowIds.includes(first.tab.windowId), false);
+});
+
+test("failed next-source containment closes the unusable reused window and placeholder", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const first = await runtime.prepare("x", { leaseId: "session-1" });
+  await runtime.releaseSource("x", "session-1");
+  const placeholderId = (await chrome.windows.get(first.tab.windowId, { populate: true })).tabs[0].id;
+  chrome.chromeFocused = false;
+  chrome.focusManagedWindowOnTabActivation = true;
+  chrome.failMinimize = true;
+
+  await assert.rejects(runtime.prepare("linkedin", { leaseId: "session-1" }));
+
+  assert.deepEqual(chrome.removedWindowIds, [first.tab.windowId]);
+  await assert.rejects(chrome.tabs.get(placeholderId));
+  assert.equal((await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY))[CAPTURE_WINDOW_STORAGE_KEY], undefined);
+});
+
+test("orphan placeholder is reconciled after capture state is lost", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const first = await runtime.prepare("x", { leaseId: "session-1" });
+  await runtime.releaseSource("x", "session-1");
+  await chrome.storage.local.remove(CAPTURE_WINDOW_STORAGE_KEY);
+
+  const result = await createManagedCaptureWindowRuntime(chrome).reconcile();
+  const ledger = await chrome.storage.local.get(CAPTURE_SURFACE_LEDGER_STORAGE_KEY);
+
+  assert.deepEqual(chrome.removedWindowIds, [first.tab.windowId]);
+  assert.equal(result.events.some((event) =>
+    event.event === "reconciled" && event.source === null &&
+    event.outcome === "orphan_placeholder_reconciled" &&
+    event.detail.placeholderTabClosed === true
+  ), true);
+  assert.equal(ledger[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].surfaces.length, 0);
+  assert.equal(ledger[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].receipts.at(-1).outcome,
+    "orphan_placeholder_reconciled");
+});
+
+test("full release preserves a placeholder tab with pending user navigation", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const first = await runtime.prepare("x", { leaseId: "session-1" });
+  await runtime.releaseSource("x", "session-1");
+  const removedTabsBeforeFullRelease = [...chrome.removedTabIds];
+  const placeholder = (await chrome.windows.get(first.tab.windowId, { populate: true })).tabs[0];
+  chrome.setPendingUrl(placeholder.id, "https://example.com/adopted");
+
+  const release = await runtime.release("session-1");
+
+  assert.equal(chrome.windowsById.has(first.tab.windowId), true);
+  assert.equal((await chrome.tabs.get(placeholder.id)).url, "chrome-extension://test-bridge/capture-placeholder.html");
+  assert.equal((await chrome.tabs.get(placeholder.id)).pendingUrl, "https://example.com/adopted");
+  assert.deepEqual(chrome.removedTabIds, removedTabsBeforeFullRelease);
+  assert.deepEqual(chrome.removedWindowIds, []);
+  assert.equal(release.preservedUserTabs, 1);
+});
+
+test("new lease cleanup removes the prior placeholder window before creating its surface", async () => {
+  const chrome = fakeChrome();
+  const firstRuntime = createManagedCaptureWindowRuntime(chrome);
+  const first = await firstRuntime.prepare("x", { leaseId: "session-1" });
+  await firstRuntime.releaseSource("x", "session-1");
+  const priorPlaceholderId = (await chrome.windows.get(first.tab.windowId, { populate: true })).tabs[0].id;
+
+  const next = await createManagedCaptureWindowRuntime(chrome).prepare("linkedin", {
+    leaseId: "session-2",
+  });
+
+  assert.deepEqual(chrome.removedWindowIds, [first.tab.windowId]);
+  await assert.rejects(chrome.tabs.get(priorPlaceholderId));
+  assert.equal(next.tab.url, "https://www.linkedin.com/feed/");
+  assert.equal(chrome.createdWindowOptionsList.length, 2);
+});
+
+test("adopted tabs and manually closed placeholder windows are preserved or recreated safely", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const first = await runtime.prepare("x", { leaseId: "session-1" });
+  await runtime.releaseSource("x", "session-1");
+  const adopted = chrome.addTab(first.tab.windowId, "https://example.com/work", 99);
+
+  const next = await runtime.prepare("linkedin", { leaseId: "session-1" });
+  assert.notEqual(next.tab.windowId, first.tab.windowId);
+  assert.equal((await chrome.tabs.get(adopted.id)).url, "https://example.com/work");
+  await runtime.reconcile();
+  assert.equal(chrome.windowsById.has(first.tab.windowId), true);
+  assert.deepEqual(chrome.windowsById.get(first.tab.windowId).tabs.map((tab) => tab.id), [adopted.id]);
+
+  const navigatedChrome = fakeChrome();
+  const navigatedRuntime = createManagedCaptureWindowRuntime(navigatedChrome);
+  const navigatedSource = await navigatedRuntime.prepare("x", { leaseId: "session-1" });
+  await navigatedRuntime.releaseSource("x", "session-1");
+  const navigatedPlaceholder = (await navigatedChrome.windows.get(
+    navigatedSource.tab.windowId,
+    { populate: true },
+  )).tabs[0];
+  await navigatedChrome.tabs.update(navigatedPlaceholder.id, {
+    url: "https://example.com/adopted-placeholder",
+  });
+  const afterAdoption = await navigatedRuntime.prepare("linkedin", { leaseId: "session-1" });
+  assert.notEqual(afterAdoption.tab.windowId, navigatedSource.tab.windowId);
+  assert.equal((await navigatedChrome.tabs.get(navigatedPlaceholder.id)).url,
+    "https://example.com/adopted-placeholder");
+  assert.equal(navigatedChrome.windowsById.has(navigatedSource.tab.windowId), true);
+
+  const closedRuntime = createManagedCaptureWindowRuntime(chrome);
+  const closedSource = await closedRuntime.prepare("facebook", { leaseId: "session-2" });
+  await closedRuntime.releaseSource("facebook", "session-2");
+  const closedPlaceholderId = (await chrome.windows.get(closedSource.tab.windowId, { populate: true })).tabs[0].id;
+  await chrome.windows.remove(closedSource.tab.windowId);
+  const afterManualClose = await createManagedCaptureWindowRuntime(chrome).prepare("instagram", {
+    leaseId: "session-2",
+  });
+  await assert.rejects(chrome.tabs.get(closedPlaceholderId));
+  assert.equal(chrome.windowsById.has(afterManualClose.tab.windowId), true);
+});
+
+test("per-source isolation still closes each source window without a placeholder", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const first = await runtime.prepare("x", { leaseId: "session-1", windowIsolation: "per_source" });
+  const released = await runtime.releaseSource("x", "session-1");
+  const second = await runtime.prepare("linkedin", { leaseId: "session-1", windowIsolation: "per_source" });
+
+  assert.equal(released.windowRetained, undefined);
+  assert.deepEqual(chrome.removedWindowIds, [first.tab.windowId]);
+  assert.equal(chrome.createdTabOptions.some((options) => options.url === "chrome-extension://test-bridge/capture-placeholder.html"), false);
+  assert.equal(second.lifecycleEvents.find((event) => event.event === "created").detail.windowReused, false);
+  assert.equal(chrome.createdWindowOptionsList.length, 2);
 });
 
 test("source cleanup cannot close a newer leased managed tab", async () => {
@@ -751,6 +943,51 @@ function withoutLifecycleEvents(value) {
   return result;
 }
 
+test("permission-limited tab reads support extension placeholder reuse and full cleanup", async () => {
+  const chrome = fakeChrome();
+  const readTab = (tab) => {
+    const copy = { ...tab };
+    const readable = /^(chrome-extension:\/\/test-bridge\/|https:\/\/(x\.com|www\.linkedin\.com)\/|http:\/\/127\.0\.0\.1:11122\/)/.test(copy.url ?? "");
+    if (!readable) { delete copy.url; delete copy.pendingUrl; }
+    return copy;
+  };
+  const getWindow = chrome.windows.get;
+  chrome.windows.get = async (...args) => {
+    const window = await getWindow(...args);
+    return { ...window, ...(window.tabs ? { tabs: window.tabs.map(readTab) } : {}) };
+  };
+  const getTab = chrome.tabs.get;
+  chrome.tabs.get = async (...args) => readTab(await getTab(...args));
+  const blank = chrome.addTab(1, "about:blank", 90);
+  assert.equal((await chrome.tabs.get(blank.id)).url, undefined);
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const first = await runtime.prepare("x", { leaseId: "permission-test" });
+  await runtime.releaseSource("x", "permission-test");
+  const placeholder = (await chrome.windows.get(first.tab.windowId, { populate: true })).tabs[0];
+  assert.equal(placeholder.url, chrome.runtime.getURL("capture-placeholder.html"));
+  const next = await createManagedCaptureWindowRuntime(chrome).prepare("linkedin", { leaseId: "permission-test" });
+  assert.equal(next.tab.windowId, first.tab.windowId);
+  assert.equal(chrome.createdWindowOptionsList.length, 1);
+  await runtime.releaseSource("linkedin", "permission-test");
+  const release = await runtime.release("permission-test");
+  assert.equal(release.events.some((event) => event.outcome === "managed_placeholder_closed"), true);
+  assert.equal(chrome.windowsById.has(first.tab.windowId), false);
+  assert.equal((await chrome.tabs.get(blank.id)).id, blank.id);
+});
+
+test("unreadable adopted placeholder is preserved during terminal cleanup", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const source = await runtime.prepare("x", { leaseId: "adoption" });
+  await runtime.releaseSource("x", "adoption");
+  const window = chrome.windowsById.get(source.tab.windowId);
+  // Chrome omits URL when a tab leaves the extension's permitted origins.
+  delete window.tabs[0].url;
+  const outcome = await runtime.release("adoption");
+  assert.equal(outcome.preservedUserTabs, 1);
+  assert.equal(chrome.windowsById.has(window.id), true);
+});
+
 function fakeChrome() {
   const storage = {};
   const windows = new Map([[1, {
@@ -775,12 +1012,18 @@ function fakeChrome() {
     focusManagedWindowOnTabActivation: false,
     failFocusRestore: false,
     beforeWindowRemove: null,
+    beforeTabRemove: null,
     addTab(windowId, url, id) {
       const tab = { id, windowId, active: false, url };
       tabs.set(id, tab);
       windows.get(windowId).tabs.push(tab);
       return tab;
     },
+    setPendingUrl(tabId, pendingUrl) {
+      const tab = tabs.get(tabId);
+      if (tab) tab.pendingUrl = pendingUrl;
+    },
+    runtime: { getURL: (path) => `chrome-extension://test-bridge/${path}` },
     storage: { local: {
       async get(key) { return { [key]: storage[key] }; },
       async set(value) { Object.assign(storage, value); },
@@ -867,7 +1110,9 @@ function fakeChrome() {
         return { ...tab, active: options.active === true };
       },
       async remove(ids) {
-        for (const id of Array.isArray(ids) ? ids : [ids]) {
+        const removeIds = Array.isArray(ids) ? ids : [ids];
+        if (state.beforeTabRemove) await state.beforeTabRemove(removeIds);
+        for (const id of removeIds) {
           const tab = tabs.get(id);
           if (!tab) continue;
           state.removedTabIds.push(id);

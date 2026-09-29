@@ -284,8 +284,20 @@ dispatch requests this cleanup directly. Background Auto Update pumps the
 session briefly after each observation so it can issue the same per-source
 cleanup without waiting for the one-minute alarm; terminal source/session
 cleanup and that alarm remain idempotent fallbacks.
+Within one lease, shared Quiet collection retains its window between sources
+using a recorded inert extension-owned placeholder tab. Its URL is readable with
+the existing extension permissions; no broad `tabs` permission is added.
+Completed source tabs are still closed;
+the placeholder only prevents Chrome from closing the window with its last tab.
+The next source uses that same window, and full session release closes the
+remaining owned surface. Per-source isolation and forced recovery cleanup do
+not retain a shared window. This reduces repeated window creation during a
+batch; it does not guarantee that the first window creation cannot blink.
+Media hydration and explicit foreground recapture retain their existing rules;
+media quality and visible behavior still require live batch validation.
 Release survives UI or service-worker restart through the ledger. AkuBridge closes the whole
-window only when every remaining tab is one of its recorded source surfaces.
+window only when every remaining tab is one of its recorded source surfaces or
+its verified placeholder.
 An internal same-source redirect, including Facebook feed routing, remains
 Bridge-owned and is reset to the canonical feed on reuse. If the user adds
 another tab, navigates a managed tab outside its registered source, or otherwise
