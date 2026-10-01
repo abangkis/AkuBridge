@@ -172,6 +172,9 @@ const splitCaptureClient = createSplitCaptureClient({ chrome, handlers: {
     return {};
   },
   release: async (a) => ({ outcome: await releaseCaptureSurfaceWithTelemetry({ leaseId: a.leaseId, source: a.source ?? null }) }),
+  close_capture_host: async (_a, c) => ({
+    retired: await managedCaptureWindow.closeBackgroundTabsForHandoff(c.tabId),
+  }),
   media_recapture: async (a, c) => ({ recapture: await dispatchMediaRecapture({ ...a, endpoint: c.endpoint, token: c.token }) }),
   media_evidence: async (a) => ({ evidence: await xMediaEvidenceStore.lookup(a.candidateIds) }),
   dispatch: async (a, c) => {

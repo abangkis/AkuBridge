@@ -28,6 +28,7 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
     trackOpenedTab: (...args) => serialize(() => runtime.trackOpenedTab(...args)),
     isTrackedTab: (...args) => serialize(() => runtime.isTrackedTab(...args)),
     windowIds: (...args) => serialize(() => runtime.windowIds(...args)),
+    closeBackgroundTabsForHandoff: (...args) => serialize(() => runtime.closeBackgroundTabsForHandoff(...args)),
     releaseSource: (...args) => serialize(() => runtime.releaseSource(...args)),
     release: (...args) => serialize(() => runtime.release(...args)),
   });
@@ -249,6 +250,99 @@ function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
         }
       }
       return [...ids];
+    },
+    async closeBackgroundTabsForHandoff(hostTabId) {
+      const stored = await chromeApi.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY);
+      if (stored[CAPTURE_WINDOW_STORAGE_KEY]?.ownedByBridge !== true) {
+        return { closedTabs: 0, preservedTabs: 0, skippedSurfaces: 0 };
+      }
+      const state = await loadState(chromeApi);
+      if (!state.ownedByBridge) {
+        return { closedTabs: 0, preservedTabs: 0, skippedSurfaces: 0 };
+      }
+
+      let closedTabs = 0;
+      let preservedTabs = 0;
+      let skippedSurfaces = 0;
+      for (const surface of managedSurfaces(state)) {
+        const initialWindow = await getHandoffWindow(chromeApi, surface.windowId);
+        if (!isHandoffWindowQuiescent(initialWindow)) {
+          skippedSurfaces += 1;
+          preservedTabs += Object.keys(surface.bindings).length +
+            (Number.isInteger(surface.placeholderTabId) ? 1 : 0);
+          continue;
+        }
+
+        const candidates = sourceIds().flatMap((source) => {
+          const tabId = surface.bindings[source];
+          if (!Number.isInteger(tabId) || tabId === hostTabId) return [];
+          const tab = initialWindow.tabs?.find((candidate) => candidate.id === tabId);
+          return tab && isHandoffFeedTab(tab, source) ? [{ source, tabId }] : [];
+        });
+        const candidateIds = new Set(candidates.map(({ tabId }) => tabId));
+        const placeholder = Number.isInteger(surface.placeholderTabId) &&
+          surface.placeholderTabId !== hostTabId
+          ? managedPlaceholderInWindow(chromeApi, initialWindow, surface.placeholderTabId)
+          : null;
+        preservedTabs += Object.keys(surface.bindings).filter((source) => {
+          const tabId = surface.bindings[source];
+          return Number.isInteger(tabId) && tabId !== hostTabId && !candidateIds.has(tabId);
+        }).length;
+        if (Number.isInteger(surface.placeholderTabId) &&
+            surface.placeholderTabId !== hostTabId && !placeholder) preservedTabs += 1;
+
+        let windowBecameUnsafe = false;
+        for (const candidate of candidates) {
+          const currentWindow = await getHandoffWindow(chromeApi, surface.windowId);
+          if (!isHandoffWindowQuiescent(currentWindow)) {
+            skippedSurfaces += 1;
+            preservedTabs += candidates.filter(({ source, tabId }) =>
+              state.tabs[source] === tabId || state.sourceWindows[source]?.tabId === tabId,
+            ).length + (placeholder && state.placeholderTabId === placeholder.id ? 1 : 0);
+            windowBecameUnsafe = true;
+            break;
+          }
+          const currentTab = await getHandoffTab(chromeApi, candidate.tabId);
+          if (!currentTab || currentTab.windowId !== surface.windowId ||
+              !isHandoffFeedTab(currentTab, candidate.source) ||
+              (currentWindow.tabs ?? []).every((tab) => tab.id !== candidate.tabId ||
+                !isHandoffFeedTab(tab, candidate.source))) {
+            preservedTabs += 1;
+            continue;
+          }
+          // Chrome has no conditional close operation. Re-read both the exact
+          // tab and its minimized, unfocused window immediately before removal.
+          await chromeApi.tabs.remove(candidate.tabId);
+          closedTabs += 1;
+          if (state.tabs[candidate.source] === candidate.tabId) delete state.tabs[candidate.source];
+          if (state.sourceWindows[candidate.source]?.tabId === candidate.tabId) {
+            delete state.sourceWindows[candidate.source];
+          }
+          await recordLedgerRelease(
+            chromeApi, surface.windowId, candidate.source,
+            "capture_host_handoff_tab_closed", candidate.tabId,
+          );
+          await persistRemainingState(chromeApi, state);
+        }
+
+        if (!placeholder || windowBecameUnsafe) continue;
+        const currentWindow = await getHandoffWindow(chromeApi, surface.windowId);
+        const currentPlaceholder = isHandoffWindowQuiescent(currentWindow)
+          ? managedPlaceholderInWindow(chromeApi, currentWindow, placeholder.id)
+          : null;
+        if (!currentPlaceholder) {
+          skippedSurfaces += 1;
+          continue;
+        }
+        await chromeApi.tabs.remove(currentPlaceholder.id);
+        closedTabs += 1;
+        if (state.placeholderTabId === currentPlaceholder.id) state.placeholderTabId = null;
+        await clearLedgerPlaceholder(
+          chromeApi, surface.windowId, currentPlaceholder.id,
+        );
+        await persistRemainingState(chromeApi, state);
+      }
+      return { closedTabs, preservedTabs, skippedSurfaces };
     },
     async releaseSource(source, leaseId, { retainWindow = true } = {}) {
       if (!sourceIds().includes(source)) {
@@ -1183,6 +1277,48 @@ function managedPlaceholderInWindow(chromeApi, window, tabId) {
   return (window?.tabs ?? []).find((tab) =>
     isManagedPlaceholderTab(chromeApi, tab, window.id, tabId)
   ) ?? null;
+}
+
+async function getHandoffWindow(chromeApi, windowId) {
+  try {
+    return await chromeApi.windows.get(windowId, { populate: true });
+  } catch {
+    return null;
+  }
+}
+
+async function getHandoffTab(chromeApi, tabId) {
+  try {
+    return await chromeApi.tabs.get(tabId);
+  } catch {
+    return null;
+  }
+}
+
+function isHandoffWindowQuiescent(window) {
+  return window?.state === "minimized" && window.focused === false &&
+    Array.isArray(window.tabs);
+}
+
+function isHandoffFeedTab(tab, source) {
+  return isBridgeOwnedFeedUrl(tab?.url, source) &&
+    (!tab.pendingUrl || isBridgeOwnedFeedUrl(tab.pendingUrl, source));
+}
+
+async function clearLedgerPlaceholder(chromeApi, windowId, tabId) {
+  const ledger = await loadLedger(chromeApi);
+  const surface = ledger.surfaces.find((candidate) =>
+    candidate.windowId === windowId && candidate.placeholderTabId === tabId,
+  );
+  if (surface) {
+    delete surface.placeholderTabId;
+    surface.updatedAt = new Date().toISOString();
+    if (Object.keys(surface.bindings).length === 0) {
+      ledger.surfaces = ledger.surfaces.filter((candidate) => candidate !== surface);
+    }
+  }
+  appendLedgerReceipt(ledger, "released", null, "capture_host_handoff_placeholder_closed");
+  await saveLedger(chromeApi, ledger);
 }
 
 function isManagedPlaceholderTab(chromeApi, tab, windowId, tabId) {

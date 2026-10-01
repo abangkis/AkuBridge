@@ -51,6 +51,18 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
     try {
       const handler = Object.hasOwn(handlers, action.type) ? handlers[action.type] : null;
       if (!handler) throw new Error("Unsupported split capture action.");
+      if (action.type === "close_capture_host") {
+        if (capabilities.captureHostClose !== true || c.captureHostClose !== true) {
+          throw new Error("Capture host close is not negotiated.");
+        }
+        if (config !== c) {
+          throw new Error("Capture host identity changed.");
+        }
+        const exactHost = await isExactCaptureHost(c);
+        if (config !== c || !exactHost) {
+          throw new Error("Capture host identity changed.");
+        }
+      }
       const context = action.type === "open_native_post" ? {
         ...c,
         readerIntent: {
@@ -81,6 +93,23 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
       method: "POST", headers: bridgeHeaders(c), body: JSON.stringify(response), signal: AbortSignal.timeout(10_000),
     });
     if (!result.ok) throw new Error("Capture result was rejected or expired.");
+    if (action.type === "close_capture_host" && response.ok) {
+      if (config !== c) return;
+      const host = await getExactCaptureHost(c);
+      if (config !== c) return;
+      if (host) {
+        try {
+          if (config !== c) return;
+          await chrome.tabs.remove(c.tabId);
+          report({ phase: "capture_host_closed" });
+          await stop(c);
+        } catch {
+          report({ phase: "capture_host_close_failed" });
+        }
+      } else {
+        report({ phase: "capture_host_missing_or_changed" });
+      }
+    }
     if (action.type === "reload_self" && response.ok) chrome.runtime.reload();
   }
   async function readerRequest(phase, action, c) {
@@ -92,6 +121,16 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
       const result = await response.json().catch(() => null);
       throw new Error(result?.error?.message ?? result?.message ?? "Native reader foreground request was rejected.");
     }
+  }
+  async function getExactCaptureHost(c) {
+    const hostUrl = `${c.endpoint}/split-capture-host#${c.key}`;
+    let host;
+    try { host = await chrome.tabs.get(c.tabId); } catch { return null; }
+    return host?.id === c.tabId && host.url === hostUrl &&
+      (!host.pendingUrl || host.pendingUrl === hostUrl) ? host : null;
+  }
+  async function isExactCaptureHost(c) {
+    return (await getExactCaptureHost(c)) !== null;
   }
   async function poll() {
     if (polling || !config) return;
@@ -130,7 +169,14 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
           report({ phase: "action_claimed", actionId: payload.action.id, actionType: payload.action.type });
           // Captures can be long. Keep claiming release/control requests while
           // a bounded capture executes; existing command/lease guards own them.
-          void execute(payload.action, c, payload).catch(() => undefined);
+          if (payload.action.type === "close_capture_host") {
+            try { await execute(payload.action, c, payload); }
+            catch {
+              report({ phase: "action_result_error", actionId: payload.action.id, actionType: payload.action.type });
+            }
+          } else {
+            void execute(payload.action, c, payload).catch(() => undefined);
+          }
         } catch (error) {
           if (config !== c) continue;
           report({ phase: "request_error", kind: error?.name === "TimeoutError" ? "timeout" : "other", elapsedMs: Math.round(performance.now() - startedAt) });
@@ -166,14 +212,18 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
     connecting = (async () => {
       const response = await request(`${url.origin}/api/bridge/split-capture/bootstrap`, {
         method: "POST", headers: { "Content-Type": "application/json", "X-Aku-Capture-Instance": message.key },
-        body: JSON.stringify({ sourceWindowLifetime: 1 }), signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ sourceWindowLifetime: 1, captureHostClose: 1 }), signal: AbortSignal.timeout(10_000),
       });
       if (!response.ok) throw new Error("Capture host bootstrap rejected.");
       const value = await response.json();
       if (typeof value.token !== "string" || value.token.length < 32 || typeof value.instanceEpoch !== "string") throw new Error("Invalid capture bootstrap response.");
       clearHeartbeat();
       activePoll?.abort();
-      config = { endpoint: url.origin, key: message.key, token: value.token, instanceEpoch: value.instanceEpoch, tabId: sender.tab.id };
+      config = {
+        endpoint: url.origin, key: message.key, token: value.token,
+        instanceEpoch: value.instanceEpoch, tabId: sender.tab.id,
+        captureHostClose: value.captureHostClose === true,
+      };
       try {
         await chrome.storage.session.set({ [SESSION_KEY]: config });
         await handlers.configure_background({}, config);

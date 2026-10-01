@@ -444,6 +444,81 @@ test("managed capture state accepts only known numeric bindings", () => {
   });
 });
 
+test("handoff closes only unchanged minimized managed feeds and keeps transient, host, reader, and source tabs", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const x = await runtime.prepare("x", { leaseId: "handoff" });
+  const facebook = await runtime.prepare("facebook", {
+    leaseId: "handoff", windowIsolation: "per_source",
+  });
+  const host = chrome.addTab(1, "http://127.0.0.1:11122/split-capture-host#" + "a".repeat(64), 90);
+  const source = chrome.addTab(1, "https://www.linkedin.com/feed/", 91);
+  const reader = chrome.addTab(1, "http://127.0.0.1:11122/split-reader", 92);
+  await runtime.trackOpenedTab("linkedin", source.id, "handoff");
+  await chrome.tabs.update(facebook.tab.id, { url: "https://www.facebook.com/permalink.php?id=123" });
+
+  const outcome = await runtime.closeBackgroundTabsForHandoff(host.id);
+  assert.deepEqual(outcome, { closedTabs: 1, preservedTabs: 1, skippedSurfaces: 0 });
+  assert.deepEqual(chrome.removedTabIds, [x.tab.id]);
+  assert.deepEqual(chrome.removedWindowIds, []);
+  for (const id of [host.id, source.id, reader.id, facebook.tab.id]) {
+    await assert.doesNotReject(chrome.tabs.get(id));
+  }
+  const saved = (await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY))[CAPTURE_WINDOW_STORAGE_KEY];
+  assert.equal(saved.tabs.x, undefined);
+  assert.equal(saved.sourceWindows.facebook.tabId, facebook.tab.id);
+  assert.equal(saved.transientTabs.linkedin, source.id);
+  assert.ok(x && facebook);
+});
+
+test("handoff preserves a captured tab whose pending navigation leaves its feed", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const prepared = await runtime.prepare("x", { leaseId: "handoff" });
+  chrome.setPendingUrl(prepared.tab.id, "https://x.com/i/web/status/123");
+
+  const outcome = await runtime.closeBackgroundTabsForHandoff(900);
+  assert.deepEqual(outcome, { closedTabs: 0, preservedTabs: 1, skippedSurfaces: 0 });
+  assert.deepEqual(chrome.removedTabIds, []);
+  await assert.doesNotReject(chrome.tabs.get(prepared.tab.id));
+});
+
+test("handoff rechecks focus containment immediately before closing each managed tab", async () => {
+  const chrome = fakeChrome();
+  const prepared = await createManagedCaptureWindowRuntime(chrome).prepare("x", {
+    leaseId: "handoff",
+  });
+  const get = chrome.windows.get;
+  let reads = 0;
+  chrome.windows.get = async (id, options) => {
+    reads += 1;
+    if (reads === 2) chrome.windowsById.get(id).state = "normal";
+    return get(id, options);
+  };
+
+  const outcome = await createManagedCaptureWindowRuntime(chrome)
+    .closeBackgroundTabsForHandoff(900);
+  assert.equal(outcome.closedTabs, 0);
+  assert.ok(outcome.skippedSurfaces >= 1);
+  assert.deepEqual(chrome.removedTabIds, []);
+  await assert.doesNotReject(chrome.tabs.get(prepared.tab.id));
+});
+
+test("handoff removes only the exact tracked placeholder from a contained surface", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const prepared = await runtime.prepare("x", { leaseId: "handoff" });
+  await runtime.releaseSource("x", "handoff");
+  const stored = (await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY))[CAPTURE_WINDOW_STORAGE_KEY];
+  assert.equal(Number.isInteger(stored.placeholderTabId), true);
+
+  const outcome = await runtime.closeBackgroundTabsForHandoff(900);
+  assert.deepEqual(outcome, { closedTabs: 1, preservedTabs: 0, skippedSurfaces: 0 });
+  assert.deepEqual(chrome.removedWindowIds, []);
+  assert.deepEqual(chrome.removedTabIds, [prepared.tab.id, stored.placeholderTabId]);
+  assert.equal((await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY))[CAPTURE_WINDOW_STORAGE_KEY], undefined);
+});
+
 test("session release closes a canonical tab created by Adaptive capture", async () => {
   const chrome = fakeChrome();
   const runtime = createManagedCaptureWindowRuntime(chrome);

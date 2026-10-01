@@ -21,7 +21,7 @@ for (const advertised of [true, false]) {
       },
     }, fetch: async (url, options) => {
       if (url.endsWith("/bootstrap")) {
-        assert.deepEqual(JSON.parse(options.body), { sourceWindowLifetime: 1 });
+        assert.deepEqual(JSON.parse(options.body), { sourceWindowLifetime: 1, captureHostClose: 1 });
         assert.equal(options.headers["Content-Type"], "application/json");
         return response(200, { token: "t".repeat(64), instanceEpoch: "epoch" });
       }
@@ -278,4 +278,275 @@ test("only explicit reader action receives authenticated prepare and foreground 
     assert.equal(call.options.headers["X-Aku-Capture-Instance"], key);
     assert.equal(call.options.headers["X-Aku-Bridge-Token"], "t".repeat(64));
   }
+});
+
+test("capture-host close ACKs before removing only the exact authenticated host tab", async () => {
+  const calls = [];
+  const chrome = chromeFixture();
+  let removed = [];
+  chrome.tabs.remove = async (id) => { removed.push(id); };
+  let finish;
+  const finished = new Promise((resolve) => { finish = resolve; });
+  let next = 0;
+  const client = createSplitCaptureClient({ chrome, diagnostic: () => {}, handlers: {
+    configure_background: async () => {},
+    close_capture_host: async (_action, context) => {
+      assert.equal(context.tabId, sender.tab.id);
+      return { retired: { closedTabs: 2, preservedTabs: 1 } };
+    },
+  }, fetch: async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith("/bootstrap")) return response(200, {
+      token: "t".repeat(64), instanceEpoch: "epoch", captureHostClose: true,
+    });
+    if (url.endsWith("/next")) {
+      if (next++ === 0) return response(200, {
+        instanceEpoch: "epoch", captureHostClose: true,
+        action: { id: "close", type: "close_capture_host" },
+      });
+      await finished;
+      return response(410);
+    }
+    if (url.endsWith("/results/close")) {
+      assert.deepEqual(removed, [], "host remains open until the ACK succeeds");
+      assert.deepEqual(JSON.parse(options.body), {
+        ok: true, result: { retired: { closedTabs: 2, preservedTabs: 1 } },
+      });
+      assert.equal(options.headers["X-Aku-Capture-Instance"], key);
+      finish();
+      return response(204);
+    }
+    throw new Error(`unexpected URL: ${url}`);
+  } });
+
+  await client.connect({ key }, sender);
+  await finished;
+  for (let i = 0; i < 10 && removed.length === 0; i++) await new Promise(setImmediate);
+  assert.deepEqual(removed, [sender.tab.id]);
+  assert.equal(calls[0].options.body, JSON.stringify({ sourceWindowLifetime: 1, captureHostClose: 1 }));
+});
+
+test("close capability must be negotiated by bootstrap and the claimed action envelope", async () => {
+  for (const [bootstrapCapability, actionCapability] of [[false, true], [true, false]]) {
+    const chrome = chromeFixture();
+    let removed = false, reported;
+    chrome.tabs.remove = async () => { removed = true; };
+    let finish;
+    const finished = new Promise((resolve) => { finish = resolve; });
+    let next = 0;
+    const client = createSplitCaptureClient({ chrome, diagnostic: () => {}, handlers: {
+      configure_background: async () => {},
+      close_capture_host: async () => { throw new Error("must not run without negotiation"); },
+    }, fetch: async (url, options) => {
+      if (url.endsWith("/bootstrap")) return response(200, {
+        token: "t".repeat(64), instanceEpoch: "epoch", captureHostClose: bootstrapCapability,
+      });
+      if (url.endsWith("/next")) {
+        if (next++ === 0) return response(200, {
+          instanceEpoch: "epoch", captureHostClose: actionCapability,
+          action: { id: "close", type: "close_capture_host" },
+        });
+        await finished;
+        return response(410);
+      }
+      if (url.endsWith("/results/close")) {
+        reported = JSON.parse(options.body);
+        finish();
+        return response(204);
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    } });
+    await client.connect({ key }, sender);
+    await finished;
+    assert.equal(removed, false);
+    assert.deepEqual(reported, { ok: false, message: "Capture host close is not negotiated." });
+  }
+});
+
+test("failed result ACK leaves the authenticated capture host open", async () => {
+  const chrome = chromeFixture();
+  let removed = false, finish;
+  chrome.tabs.remove = async () => { removed = true; };
+  const finished = new Promise((resolve) => { finish = resolve; });
+  let next = 0;
+  const client = createSplitCaptureClient({ chrome, diagnostic: () => {}, handlers: {
+    configure_background: async () => {}, close_capture_host: async () => ({ retired: {} }),
+  }, fetch: async (url) => {
+    if (url.endsWith("/bootstrap")) return response(200, {
+      token: "t".repeat(64), instanceEpoch: "epoch", captureHostClose: true,
+    });
+    if (url.endsWith("/next")) {
+      if (next++ === 0) return response(200, {
+        instanceEpoch: "epoch", captureHostClose: true,
+        action: { id: "close", type: "close_capture_host" },
+      });
+      await finished;
+      return response(410);
+    }
+    if (url.endsWith("/results/close")) { finish(); return response(500); }
+    throw new Error(`unexpected URL: ${url}`);
+  } });
+  await client.connect({ key }, sender);
+  await finished;
+  await new Promise(setImmediate);
+  assert.equal(removed, false);
+});
+
+test("close preserves a host tab whose URL changed before post-ACK revalidation", async () => {
+  const chrome = chromeFixture();
+  let removed = false, finish;
+  let host = { id: sender.tab.id, url: sender.url };
+  chrome.tabs.get = async () => host;
+  chrome.tabs.remove = async () => { removed = true; };
+  const finished = new Promise((resolve) => { finish = resolve; });
+  let next = 0;
+  const client = createSplitCaptureClient({ chrome, diagnostic: () => {}, handlers: {
+    configure_background: async () => {}, close_capture_host: async () => ({ retired: {} }),
+  }, fetch: async (url) => {
+    if (url.endsWith("/bootstrap")) return response(200, {
+      token: "t".repeat(64), instanceEpoch: "epoch", captureHostClose: true,
+    });
+    if (url.endsWith("/next")) {
+      if (next++ === 0) return response(200, {
+        instanceEpoch: "epoch", captureHostClose: true,
+        action: { id: "close", type: "close_capture_host" },
+      });
+      await finished;
+      return response(410);
+    }
+    if (url.endsWith("/results/close")) {
+      host = { id: sender.tab.id, url: "https://x.com/home" };
+      finish();
+      return response(204);
+    }
+    throw new Error(`unexpected URL: ${url}`);
+  } });
+  await client.connect({ key }, sender);
+  await finished;
+  for (let i = 0; i < 10; i++) await new Promise(setImmediate);
+  assert.equal(removed, false);
+});
+
+test("host navigation before close action prevents background retirement", async () => {
+  const chrome = chromeFixture();
+  let removed = false, handlerCalls = 0, reported, finish;
+  chrome.tabs.get = async () => ({
+    id: sender.tab.id, url: sender.url, pendingUrl: "https://x.com/home",
+  });
+  chrome.tabs.remove = async () => { removed = true; };
+  const finished = new Promise((resolve) => { finish = resolve; });
+  let next = 0;
+  const client = createSplitCaptureClient({ chrome, diagnostic: () => {}, handlers: {
+    configure_background: async () => {},
+    close_capture_host: async () => { handlerCalls++; return {}; },
+  }, fetch: async (url, options) => {
+    if (url.endsWith("/bootstrap")) return response(200, {
+      token: "t".repeat(64), instanceEpoch: "epoch", captureHostClose: true,
+    });
+    if (url.endsWith("/next")) {
+      if (next++ === 0) return response(200, {
+        instanceEpoch: "epoch", captureHostClose: true,
+        action: { id: "close", type: "close_capture_host" },
+      });
+      await finished;
+      return response(410);
+    }
+    if (url.endsWith("/results/close")) {
+      reported = JSON.parse(options.body);
+      finish();
+      return response(204);
+    }
+    throw new Error(`unexpected URL: ${url}`);
+  } });
+  await client.connect({ key }, sender);
+  await finished;
+  await new Promise(setImmediate);
+  assert.equal(handlerCalls, 0);
+  assert.deepEqual(reported, { ok: false, message: "Capture host identity changed." });
+  assert.equal(removed, false);
+});
+
+test("capture-host tab read cannot remove a tab after session rotation", async () => {
+  const chrome = chromeFixture();
+  let host = { id: sender.tab.id, url: sender.url };
+  let removeCalls = 0, releaseHostRead, hostReadStarted, finishAck;
+  const reading = new Promise((resolve) => { hostReadStarted = resolve; });
+  const acked = new Promise((resolve) => { finishAck = resolve; });
+  let holdRead = false, next = 0, heartbeat;
+  chrome.tabs.get = async () => {
+    if (holdRead) {
+      hostReadStarted();
+      return new Promise((resolve) => { releaseHostRead = () => resolve(host); });
+    }
+    return host;
+  };
+  chrome.tabs.remove = async () => { removeCalls++; };
+  const client = createSplitCaptureClient({ chrome, diagnostic: () => {}, handlers: {
+    configure_background: async () => {}, close_capture_host: async () => ({}),
+  }, setInterval: (fn) => { heartbeat = fn; return 1; }, clearInterval: () => {}, fetch: async (url) => {
+    if (url.endsWith("/bootstrap")) return response(200, {
+      token: "t".repeat(64), instanceEpoch: "epoch", captureHostClose: true,
+    });
+    if (url.endsWith("/next")) {
+      if (next++ === 0) return response(200, {
+        instanceEpoch: "epoch", captureHostClose: true,
+        action: { id: "close", type: "close_capture_host" },
+      });
+      if (next === 2) return new Promise(() => {});
+      return response(410);
+    }
+    if (url.endsWith("/results/close")) {
+      holdRead = true;
+      finishAck();
+      return response(204);
+    }
+    throw new Error(`unexpected URL: ${url}`);
+  } });
+  await client.connect({ key }, sender);
+  await acked;
+  await reading;
+
+  const nextKey = "b".repeat(64);
+  host = { id: sender.tab.id, url: `${endpoint}/split-capture-host#${nextKey}` };
+  await client.connect({ key: nextKey }, { url: host.url, tab: sender.tab });
+  releaseHostRead();
+  await new Promise(setImmediate);
+  assert.equal(removeCalls, 0);
+  host = { id: sender.tab.id, url: "https://x.com/home" };
+  holdRead = false;
+  heartbeat();
+  await new Promise(setImmediate);
+});
+
+test("host-tab removal failure leaves the authenticated session pending", async () => {
+  const chrome = chromeFixture();
+  let finishAck, next = 0, heartbeat;
+  const acked = new Promise((resolve) => { finishAck = resolve; });
+  chrome.tabs.remove = async () => { throw new Error("Chrome did not close the tab"); };
+  const client = createSplitCaptureClient({ chrome, diagnostic: () => {}, handlers: {
+    configure_background: async () => {}, close_capture_host: async () => ({}),
+  }, setInterval: (fn) => { heartbeat = fn; return 1; }, clearInterval: () => {}, fetch: async (url) => {
+    if (url.endsWith("/bootstrap")) return response(200, {
+      token: "t".repeat(64), instanceEpoch: "epoch", captureHostClose: true,
+    });
+    if (url.endsWith("/next")) {
+      if (next++ === 0) return response(200, {
+        instanceEpoch: "epoch", captureHostClose: true,
+        action: { id: "close", type: "close_capture_host" },
+      });
+      return new Promise(() => {});
+    }
+    if (url.endsWith("/results/close")) { finishAck(); return response(204); }
+    throw new Error(`unexpected URL: ${url}`);
+  } });
+  await client.connect({ key }, sender);
+  await acked;
+  for (let i = 0; i < 10; i++) await new Promise(setImmediate);
+  assert.equal(client.headers()["X-Aku-Capture-Instance"], key);
+  assert.equal(typeof heartbeat, "function");
+  // End the fake session after proving a failed close did not clear ownership.
+  chrome.tabs.get = async () => ({ id: sender.tab.id, url: "https://x.com/home" });
+  heartbeat();
+  await new Promise(setImmediate);
+  assert.deepEqual(client.headers(), {});
 });
