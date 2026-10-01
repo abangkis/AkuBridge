@@ -46,7 +46,7 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
     "X-Aku-Bridge-Token": c.token, "X-Aku-Bridge-Contract": BRIDGE_CONTRACT_VERSION,
     "X-Aku-Bridge-Id": BRIDGE_ID,
   });
-  async function execute(action, c) {
+  async function execute(action, c, capabilities = {}) {
     let response;
     try {
       const handler = Object.hasOwn(handlers, action.type) ? handlers[action.type] : null;
@@ -57,6 +57,18 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
           url: `${c.endpoint}/split-reader-intent?id=${encodeURIComponent(action.id)}`,
           prepare: () => readerRequest("prepare", action, c),
           foreground: () => readerRequest("foreground", action, c),
+        },
+      } : action.type === "open_source" && capabilities.sourceWindowLifetime === true ? {
+        ...c,
+        sourceIntent: {
+          url: `${c.endpoint}/split-source-intent?id=${encodeURIComponent(action.id)}`,
+          prepare: async () => {
+            if (config !== c) throw new Error("Source intent expired.");
+            const response = await request(`${c.endpoint}/api/bridge/split-capture/source/prepare/${encodeURIComponent(action.id)}`, {
+              method: "POST", headers: bridgeHeaders(c), body: "{}", signal: AbortSignal.timeout(5000),
+            });
+            if (!response.ok || config !== c) throw new Error("Source window tracking was rejected or expired.");
+          },
         },
       } : c;
       response = { ok: true, result: await handler(action, context) ?? {} };
@@ -118,7 +130,7 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
           report({ phase: "action_claimed", actionId: payload.action.id, actionType: payload.action.type });
           // Captures can be long. Keep claiming release/control requests while
           // a bounded capture executes; existing command/lease guards own them.
-          void execute(payload.action, c).catch(() => undefined);
+          void execute(payload.action, c, payload).catch(() => undefined);
         } catch (error) {
           if (config !== c) continue;
           report({ phase: "request_error", kind: error?.name === "TimeoutError" ? "timeout" : "other", elapsedMs: Math.round(performance.now() - startedAt) });

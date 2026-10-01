@@ -1,4 +1,5 @@
 import { createSplitCaptureClient } from "./split-capture-client.js";
+import { openSourceWindow } from "./source-window-runtime.js";
 import {
   chooseSourceTab,
   expectedFeedUrl,
@@ -162,7 +163,7 @@ const NATIVE_RUNTIME_DISTRIBUTION = nativeRuntimeDistribution(BRIDGE_DEPLOYMENT)
 const splitCaptureClient = createSplitCaptureClient({ chrome, handlers: {
   ping: async () => ({ capabilities: await bridgeCapabilitiesWithSourceAccess(), extensionOrigin: chrome.runtime.getURL("").replace(/\/$/, "") }),
   probe_source_sessions: async () => ({ sessions: await probeSourceSessions() }),
-  open_source: async (a) => openSourceFeed(a.source, true),
+  open_source: async (a, c) => openSourceFeed(a.source, true, c.sourceIntent),
   open_native_post: async (a, c) => openNativePostInReaderWindow(a.source, a.url, c.readerIntent),
   revoke_source_access: async () => ({ grantedSources: (await revokeAllSourceAccess(chrome))?.grantedSources ?? [] }),
   configure_background: async (_a, c) => {
@@ -2166,7 +2167,7 @@ async function probeSourceSessions() {
   return sessions;
 }
 
-async function openSourceFeed(source, separateWindow = false) {
+async function openSourceFeed(source, separateWindow = false, sourceIntent) {
   if (!sourceIds().includes(source)) {
     throw new Error("Source is not in the AkuBrowser allowlist.");
   }
@@ -2177,7 +2178,7 @@ async function openSourceFeed(source, separateWindow = false) {
       `source-permission.html?source=${encodeURIComponent(source)}`,
     );
     const tab = separateWindow
-      ? (await chrome.windows.create({ url: permissionUrl, type: "normal", focused: true }))?.tabs?.[0]
+      ? await openSourceWindow(chrome, permissionUrl, sourceIntent)
       : await chrome.tabs.create({ url: permissionUrl, active: true });
     return {
       source,
@@ -2186,7 +2187,7 @@ async function openSourceFeed(source, separateWindow = false) {
     };
   }
   const tab = separateWindow
-    ? (await chrome.windows.create({ url: definition.feedUrl, type: "normal", focused: true }))?.tabs?.[0]
+    ? await openSourceWindow(chrome, definition.feedUrl, sourceIntent)
     : await chrome.tabs.create({ url: definition.feedUrl, active: true });
   return { source, state: "source_opened", url: tab?.url ?? definition.feedUrl };
 }

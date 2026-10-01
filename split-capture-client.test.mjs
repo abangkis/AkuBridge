@@ -6,6 +6,42 @@ const key = "a".repeat(64);
 const endpoint = "http://127.0.0.1:11122";
 const sender = { url: `${endpoint}/split-capture-host#${key}`, tab: { id: 42 } };
 const response = (status, value = {}) => ({ status, ok: status >= 200 && status < 300, json: async () => value });
+
+for (const advertised of [true, false]) {
+  test(`source lifetime handshake is negotiated: ${advertised}`, async () => {
+    let next = 0, prepareCalls = 0, finish;
+    const finished = new Promise(resolve => { finish = resolve; });
+    const client = createSplitCaptureClient({ chrome: chromeFixture(), diagnostic: () => {}, handlers: {
+      configure_background: async () => {},
+      open_source: async (_action, context) => {
+        if (advertised) {
+          assert.equal(context.sourceIntent.url, `${endpoint}/split-source-intent?id=split_source`);
+          await context.sourceIntent.prepare();
+        } else assert.equal(context.sourceIntent, undefined);
+      },
+    }, fetch: async (url, options) => {
+      if (url.endsWith("/bootstrap")) return response(200, { token: "t".repeat(64), instanceEpoch: "epoch" });
+      if (url.endsWith("/next")) {
+        if (next++ === 0) return response(200, { instanceEpoch: "epoch", sourceWindowLifetime: advertised, action: { id: "split_source", type: "open_source" } });
+        await finished; return response(410);
+      }
+      if (url.includes("/source/prepare/")) {
+        prepareCalls++;
+        assert.equal(options.headers["X-Aku-Capture-Instance"], key);
+        assert.equal(options.headers["X-Aku-Bridge-Token"], "t".repeat(64));
+        return response(200);
+      }
+      if (url.endsWith("/results/split_source")) {
+        assert.equal(JSON.parse(options.body).ok, true);
+        finish(); return response(204);
+      }
+      throw Error("unexpected request");
+    } });
+    await client.connect({ key }, sender);
+    await finished;
+    assert.equal(prepareCalls, advertised ? 1 : 0);
+  });
+}
 function chromeFixture() {
   const values = {};
   return {
