@@ -7,6 +7,49 @@ const endpoint = "http://127.0.0.1:11122";
 const sender = { url: `${endpoint}/split-capture-host#${key}`, tab: { id: 42 } };
 const response = (status, value = {}) => ({ status, ok: status >= 200 && status < 300, json: async () => value });
 
+for (const [factory, bootstrap, envelope] of [[true, true, true], [false, true, true], [true, false, true], [true, true, false]]) {
+  test(`host-only retirement preserves every ordinary target with negotiation ${factory}/${bootstrap}/${envelope}`, async () => {
+    const chrome = chromeFixture();
+    const ordinary = new Map([[51, { url: "https://x.com/home", active: true }], [52, { url: "https://www.facebook.com/", active: false }]]);
+    const removed = [];
+    let handlerCalls = 0, reported, next = 0, finish;
+    const finished = new Promise(resolve => { finish = resolve; });
+    chrome.tabs.remove = async id => { removed.push(id); ordinary.delete(id); };
+    const client = createSplitCaptureClient({
+      chrome, captureHostOnlyRetirement: factory, diagnostic: () => {}, setInterval: () => 1, clearInterval: () => {},
+      handlers: {
+        configure_background: async () => {},
+        close_capture_host: async () => { handlerCalls++; throw Error("legacy background cleanup must not run"); },
+      },
+      fetch: async (url, options) => {
+        if (url.endsWith("/bootstrap")) {
+          assert.equal(JSON.parse(options.body).captureHostOnlyRetirement, factory ? 1 : undefined);
+          return response(200, { token: "t".repeat(64), instanceEpoch: "epoch", captureHostClose: true, captureHostOnlyRetirement: bootstrap });
+        }
+        if (url.endsWith("/next")) return next++ === 0
+          ? response(200, { instanceEpoch: "epoch", captureHostClose: true, captureHostOnlyRetirement: envelope, action: { id: "hostonly", type: "close_capture_host", hostOnly: true } })
+          : response(410);
+        if (url.endsWith("/results/hostonly")) {
+          reported = JSON.parse(options.body);
+          assert.deepEqual(removed, [], "host removal must follow a successful ACK");
+          finish();
+          return response(204);
+        }
+        throw Error("unexpected request");
+      },
+    });
+    await client.connect({ key }, sender);
+    await finished;
+    await new Promise(setImmediate);
+    const accepted = factory && bootstrap && envelope;
+    assert.equal(reported.ok, accepted);
+    if (!accepted) assert.match(reported.message, /Host-only.*not negotiated/);
+    assert.equal(handlerCalls, 0);
+    assert.deepEqual(removed, accepted ? [42] : []);
+    assert.deepEqual([...ordinary.keys()], [51, 52], "promoted ordinary tab and independent popup remain alive");
+  });
+}
+
 for (const advertised of [true, false]) {
   test(`source lifetime handshake is negotiated: ${advertised}`, async () => {
     let next = 0, prepareCalls = 0, finish;

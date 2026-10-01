@@ -2,7 +2,7 @@
 // capture-host page supplies its instance capability or that session is restored.
 import { BRIDGE_CONTRACT_VERSION, BRIDGE_ID } from "./bridge-capabilities.js";
 const SESSION_KEY = "akuWindowsSplitCaptureSession";
-export function createSplitCaptureClient({ chrome, fetch: request = globalThis.fetch, handlers, delay = (ms) => new Promise((r) => setTimeout(r, ms)), setInterval: every = globalThis.setInterval, clearInterval: cancelEvery = globalThis.clearInterval, diagnostic = (event) => console.info("aku_split_capture_poll", event) }) {
+export function createSplitCaptureClient({ chrome, fetch: request = globalThis.fetch, handlers, captureHostOnlyRetirement = false, delay = (ms) => new Promise((r) => setTimeout(r, ms)), setInterval: every = globalThis.setInterval, clearInterval: cancelEvery = globalThis.clearInterval, diagnostic = (event) => console.info("aku_split_capture_poll", event) }) {
   let config = null;
   let polling = false;
   let connecting = null;
@@ -55,6 +55,13 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
         if (capabilities.captureHostClose !== true || c.captureHostClose !== true) {
           throw new Error("Capture host close is not negotiated.");
         }
+        if (action.hostOnly !== undefined && typeof action.hostOnly !== "boolean") {
+          throw new Error("Invalid capture host retirement policy.");
+        }
+        if (action.hostOnly === true && (captureHostOnlyRetirement !== true ||
+            capabilities.captureHostOnlyRetirement !== true || c.captureHostOnlyRetirement !== true)) {
+          throw new Error("Host-only capture retirement is not negotiated.");
+        }
         if (config !== c) {
           throw new Error("Capture host identity changed.");
         }
@@ -83,7 +90,12 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
           },
         },
       } : c;
-      response = { ok: true, result: await handler(action, context) ?? {} };
+      // Host-only retirement deliberately bypasses legacy cleanup handlers:
+      // ordinary tabs can have become interactive since they were classified.
+      const result = action.type === "close_capture_host" && action.hostOnly === true
+        ? { retired: { hostOnly: true } }
+        : await handler(action, context) ?? {};
+      response = { ok: true, result };
     } catch (error) {
       response = { ok: false, message: String(error?.message ?? error).slice(0, 600) };
     }
@@ -212,7 +224,8 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
     connecting = (async () => {
       const response = await request(`${url.origin}/api/bridge/split-capture/bootstrap`, {
         method: "POST", headers: { "Content-Type": "application/json", "X-Aku-Capture-Instance": message.key },
-        body: JSON.stringify({ sourceWindowLifetime: 1, captureHostClose: 1 }), signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ sourceWindowLifetime: 1, captureHostClose: 1,
+          ...(captureHostOnlyRetirement === true ? { captureHostOnlyRetirement: 1 } : {}) }), signal: AbortSignal.timeout(10_000),
       });
       if (!response.ok) throw new Error("Capture host bootstrap rejected.");
       const value = await response.json();
@@ -223,6 +236,7 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
         endpoint: url.origin, key: message.key, token: value.token,
         instanceEpoch: value.instanceEpoch, tabId: sender.tab.id,
         captureHostClose: value.captureHostClose === true,
+        captureHostOnlyRetirement: captureHostOnlyRetirement === true && value.captureHostOnlyRetirement === true,
       };
       try {
         await chrome.storage.session.set({ [SESSION_KEY]: config });

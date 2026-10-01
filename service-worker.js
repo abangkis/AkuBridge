@@ -160,7 +160,7 @@ const SOURCE_SCRIPT_FILES = [
 ];
 const NATIVE_RUNTIME_DISTRIBUTION = nativeRuntimeDistribution(BRIDGE_DEPLOYMENT);
 
-const splitCaptureClient = createSplitCaptureClient({ chrome, handlers: {
+const splitCaptureClient = createSplitCaptureClient({ chrome, captureHostOnlyRetirement: true, handlers: {
   ping: async () => ({ capabilities: await bridgeCapabilitiesWithSourceAccess(), extensionOrigin: chrome.runtime.getURL("").replace(/\/$/, "") }),
   probe_source_sessions: async () => ({ sessions: await probeSourceSessions() }),
   open_source: async (a, c) => openSourceFeed(a.source, true, c.sourceIntent),
@@ -172,9 +172,10 @@ const splitCaptureClient = createSplitCaptureClient({ chrome, handlers: {
     return {};
   },
   release: async (a) => ({ outcome: await releaseCaptureSurfaceWithTelemetry({ leaseId: a.leaseId, source: a.source ?? null }) }),
-  close_capture_host: async (_a, c) => ({
-    retired: await managedCaptureWindow.closeBackgroundTabsForHandoff(c.tabId),
-  }),
+  close_capture_host: async (a, c) => {
+    if (a.hostOnly === true) return { retired: { hostOnly: true } };
+    return { retired: await managedCaptureWindow.closeBackgroundTabsForHandoff(c.tabId) };
+  },
   media_recapture: async (a, c) => ({ recapture: await dispatchMediaRecapture({ ...a, endpoint: c.endpoint, token: c.token }) }),
   media_evidence: async (a) => ({ evidence: await xMediaEvidenceStore.lookup(a.candidateIds) }),
   dispatch: async (a, c) => {
