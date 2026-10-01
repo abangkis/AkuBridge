@@ -20,7 +20,11 @@ for (const advertised of [true, false]) {
         } else assert.equal(context.sourceIntent, undefined);
       },
     }, fetch: async (url, options) => {
-      if (url.endsWith("/bootstrap")) return response(200, { token: "t".repeat(64), instanceEpoch: "epoch" });
+      if (url.endsWith("/bootstrap")) {
+        assert.deepEqual(JSON.parse(options.body), { sourceWindowLifetime: 1 });
+        assert.equal(options.headers["Content-Type"], "application/json");
+        return response(200, { token: "t".repeat(64), instanceEpoch: "epoch" });
+      }
       if (url.endsWith("/next")) {
         if (next++ === 0) return response(200, { instanceEpoch: "epoch", sourceWindowLifetime: advertised, action: { id: "split_source", type: "open_source" } });
         await finished; return response(410);

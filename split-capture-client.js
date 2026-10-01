@@ -165,7 +165,8 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
     report({ phase: "connect_start" });
     connecting = (async () => {
       const response = await request(`${url.origin}/api/bridge/split-capture/bootstrap`, {
-        method: "POST", headers: { "X-Aku-Capture-Instance": message.key }, signal: AbortSignal.timeout(10_000),
+        method: "POST", headers: { "Content-Type": "application/json", "X-Aku-Capture-Instance": message.key },
+        body: JSON.stringify({ sourceWindowLifetime: 1 }), signal: AbortSignal.timeout(10_000),
       });
       if (!response.ok) throw new Error("Capture host bootstrap rejected.");
       const value = await response.json();
