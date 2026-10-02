@@ -172,6 +172,22 @@ test("explicit deeper traversal resolves own media while preserving Bridge defau
   assert.equal(withDocument([tooDeep],()=>resolveXStructuredMediaInMainWorld({maxDepth:999})).candidates.length,0);
 });
 
+test("MP4 preference pairs matching assets, prefers available resolution, and leaves legacy HLS behavior unchanged", () => {
+  const poster="https://pbs.twimg.com/ext_tw_video_thumb/23456/pu/img/poster.jpg";
+  const hls="https://video.twimg.com/ext_tw_video/23456/pu/pl/master.m3u8";
+  const low="https://video.twimg.com/ext_tw_video/23456/pu/vid/320x180/low.mp4";
+  const high="https://video.twimg.com/ext_tw_video/23456/pu/vid/1280x720/high.mp4";
+  const other="https://video.twimg.com/ext_tw_video/99999/pu/vid/1920x1080/foreign.mp4";
+  const article=syntheticArticle("23456",{rest_id:"23456",media_url_https:poster,
+    variants:[{url:hls},{url:other},{url:low},{url:high}]});
+  const run=request=>withDocument([article],()=>resolveXStructuredMediaInMainWorld(request));
+  assert.equal(run({maxMediaPerCandidate:8}).candidates[0].media.find(m=>m.posterUrl===poster).playbackUrl,hls);
+  assert.equal(run({maxMediaPerCandidate:8,playbackFormat:"mp4"}).candidates[0].media.find(m=>m.posterUrl===poster).playbackUrl,high);
+  const unmatched=syntheticArticle("23456",{rest_id:"23456",media_url_https:poster,variants:[{url:hls},{url:other}]});
+  const unresolved=withDocument([unmatched],()=>resolveXStructuredMediaInMainWorld({playbackFormat:"mp4"}));
+  assert.equal(unresolved.candidates[0].media.find(m=>m.posterUrl===poster).playbackUrl,null);
+});
+
 function syntheticArticle(candidateId, structuredState) {
   const anchor = {
     href: `https://x.com/author/status/${candidateId}`,

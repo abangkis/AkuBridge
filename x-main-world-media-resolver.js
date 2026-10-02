@@ -235,6 +235,23 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
   }
 
   function pairVideoEvidence(media) {
+    if (request.playbackFormat === "mp4") {
+      // Headless's inline-media contract requires MP4. Pair only matching
+      // native asset identities; never attach an arbitrary candidate variant.
+      for (const poster of media.filter(item => item.posterUrl?.startsWith("https://pbs.twimg.com/"))) {
+        const identity = videoAssetIdentity(poster.posterUrl);
+        if (!identity) continue;
+        const variants = media.filter(item => item.playbackUrl &&
+          /\.mp4$/i.test(new URL(item.playbackUrl).pathname) &&
+          videoAssetIdentity(item.playbackUrl) === identity);
+        variants.sort((a, b) => playbackArea(b.playbackUrl) - playbackArea(a.playbackUrl));
+        if (!variants.length) continue;
+        poster.kind = "video";
+        poster.playbackUrl = variants[0].playbackUrl;
+        poster.playbackMode = "inline";
+      }
+      return;
+    }
     const playback = media.find((value) => value.playbackUrl);
     const poster = media.find((value) => value.url?.startsWith("https://pbs.twimg.com/") &&
       /video_thumb|tweet_video_thumb/.test(new URL(value.url).pathname));
@@ -245,6 +262,19 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
     poster.playbackMode = "inline";
     const playbackIndex = media.indexOf(playback);
     if (playbackIndex >= 0 && playback !== poster) media.splice(playbackIndex, 1);
+  }
+
+  function videoAssetIdentity(value) {
+    try {
+      const path = new URL(value).pathname;
+      const match = path.match(/^\/(ext_tw_video|amplify_video|tweet_video)(?:_thumb)?\/([^/]+)/);
+      return match ? `${match[1]}:${match[2].replace(/\.(?:jpg|jpeg|png|webp|avif|gif|mp4)$/i, "")}` : null;
+    } catch { return null; }
+  }
+
+  function playbackArea(value) {
+    const size = new URL(value).pathname.match(/\/(\d{1,4})x(\d{1,4})\//);
+    return size && Number(size[1]) <= 8192 && Number(size[2]) <= 8192 ? Number(size[1]) * Number(size[2]) : 0;
   }
 
   function dataValues(value, limit) {
