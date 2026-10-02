@@ -6,7 +6,9 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
   const maxCandidates = clamp(request.maxCandidates, 1, 16, 12);
   const maxMediaPerCandidate = clamp(request.maxMediaPerCandidate, 1, 8, 4);
   const maxTraversalNodes = clamp(request.maxTraversalNodes, 100, 4_000, 1_500);
-  const maxDepth = clamp(request.maxDepth, 2, 12, 9);
+  // Headless React roots can place the owning Tweet at depth 13. Preserve the
+  // existing Bridge default; deeper traversal requires an explicit bounded request.
+  const maxDepth = clamp(request.maxDepth, 2, 16, 9);
   const requestedIds = new Set(
     (Array.isArray(request.candidateIds) ? request.candidateIds : [])
       .map(normalizeCandidateId)

@@ -152,6 +152,26 @@ test("MAIN-world resolver is cycle-safe, getter-safe, and traversal-bounded", ()
   assert.equal(result.candidates.length, 0);
 });
 
+test("explicit deeper traversal resolves own media while preserving Bridge defaults and the depth cap", () => {
+  const nest = (value, depth) => { for (let i=0;i<depth;i++) value={next:value}; return value; };
+  const own={__typename:"Tweet",rest_id:"23456",legacy:{full_text:"Own",extended_entities:{media:[{
+    media_url_https:"https://pbs.twimg.com/ext_tw_video_thumb/23456/pu/img/poster.jpg",
+    video_info:{variants:[{url:"https://video.twimg.com/ext_tw_video/23456/pu/vid/clip.mp4"}]},
+  }]}},quoted_status_result:{result:{__typename:"Tweet",rest_id:"99999",legacy:{full_text:"Quote",
+    extended_entities:{media:[{media_url_https:"https://pbs.twimg.com/media/foreign.jpg"}]}}}}};
+  const article=syntheticArticle("23456",nest(own,13));
+  const run=request=>withDocument([article],()=>resolveXStructuredMediaInMainWorld(request));
+  assert.equal(run({}).candidates.length,0);
+  assert.equal(run({maxDepth:12}).candidates.length,0);
+  const result=run({maxDepth:16,maxTraversalNodes:1500});
+  assert.equal(result.candidates.length,1);
+  assert.equal(result.candidates[0].media[0].kind,"video");
+  assert.equal(JSON.stringify(result).includes("foreign.jpg"),false);
+  assert.ok(result.diagnostics.traversedNodeCount<=1500);
+  const tooDeep=syntheticArticle("23456",nest(own,17));
+  assert.equal(withDocument([tooDeep],()=>resolveXStructuredMediaInMainWorld({maxDepth:999})).candidates.length,0);
+});
+
 function syntheticArticle(candidateId, structuredState) {
   const anchor = {
     href: `https://x.com/author/status/${candidateId}`,
