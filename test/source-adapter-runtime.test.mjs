@@ -60,6 +60,8 @@ test("X canonicalizes native post action routes to the base post", () => {
   assert.equal(canonicalize("https://x.com/author/status/123/analytics?ref=feed#detail"), "https://x.com/author/status/123");
   assert.equal(canonicalize("https://x.com/author/status/123/photo/1"), "https://x.com/author/status/123");
   assert.equal(canonicalize("https://example.com/author/status/123/analytics"), null);
+  assert.equal(canonicalize("https://x.com:443/author/status/123"), null);
+  assert.equal(canonicalize("http://x.com/author/status/123"), null);
   assert.equal(canonicalize("https://x.com/home"), null);
 });
 
@@ -334,5 +336,8 @@ function createBrowserContext() {
 }
 
 function runScript(context, file) {
+  if (file === path.join("adapters", "x-adapter.js") && !context.AkuCapturePrimitives) {
+    vm.runInContext(fs.readFileSync(path.join(projectRoot, "capture-primitives.js"), "utf8"), context);
+  }
   vm.runInContext(fs.readFileSync(path.join(projectRoot, file), "utf8"), context);
 }

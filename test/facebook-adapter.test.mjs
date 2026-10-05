@@ -30,6 +30,7 @@ test("source catalog exposes Facebook without changing the X media capability", 
 });
 
 test("optional MV3 source authority stays synchronized with the generic source catalog", () => {
+  assert.equal(sourceRuntimeScripts()[0], "capture-primitives.js");
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
   const optionalHosts = new Set(manifest.optional_host_permissions);
   for (const pattern of sourceMatchPatterns()) {

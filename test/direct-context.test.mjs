@@ -6,7 +6,7 @@ const compactText = (v) => String(v || "").replace(/\s+/g," ").trim();
 const helpers={compactText,structuredText:(v)=>v?.innerText||"",normalizeHttpUrl:(v)=>v||null};
 function adapter(source,document,extra={}){
  const ctx=vm.createContext({URL,document,window:{document,location:{hostname:source==="x"?"x.com":"www.linkedin.com",pathname:"/feed/"}},...extra});ctx.globalThis=ctx;
- for(const file of ["source-adapter-runtime.js",`adapters/${source}-adapter.js`])vm.runInContext(fs.readFileSync(new URL(`../${file}`,import.meta.url),"utf8"),ctx);
+ for(const file of ["capture-primitives.js","source-adapter-runtime.js",`adapters/${source}-adapter.js`])vm.runInContext(fs.readFileSync(new URL(`../${file}`,import.meta.url),"utf8"),ctx);
  return ctx.AkuSourceAdapters.get(source);
 }
 function post(id,text="Post text",markers=[]){

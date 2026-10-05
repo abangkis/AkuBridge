@@ -26,6 +26,7 @@ const SOURCE_ACCESS = Object.freeze({
         id: "aku-source-x-feed",
         matches: ["https://x.com/home*", "https://x.com/*/status/*"],
         js: [
+          "capture-primitives.js",
           "bounded-capture-policy.js",
           "capture-quality-policy.js",
           "source-adapter-runtime.js",
@@ -51,6 +52,7 @@ const SOURCE_ACCESS = Object.freeze({
           "https://www.linkedin.com/posts/*",
         ],
         js: [
+          "capture-primitives.js",
           "bounded-capture-policy.js",
           "capture-quality-policy.js",
           "linkedin-permalink-policy.js",
@@ -78,6 +80,7 @@ const SOURCE_ACCESS = Object.freeze({
         id: "aku-source-facebook-feed",
         matches: ["https://www.facebook.com/", "https://facebook.com/"],
         js: [
+          "capture-primitives.js",
           "bounded-capture-policy.js",
           "capture-quality-policy.js",
           "source-adapter-runtime.js",
@@ -104,6 +107,7 @@ const SOURCE_ACCESS = Object.freeze({
         id: "aku-source-instagram-feed",
         matches: ["https://www.instagram.com/*", "https://instagram.com/*"],
         js: [
+          "capture-primitives.js",
           "bounded-capture-policy.js",
           "capture-quality-policy.js",
           "source-adapter-runtime.js",

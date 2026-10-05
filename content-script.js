@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v111";
+  const runtimeRevision = "source-adapters-v112";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -8,12 +8,14 @@
   globalThis.__akuBrowserSourceBridgeRevision = runtimeRevision;
 
   const capturePolicy = globalThis.AkuBoundedCapturePolicy;
+  const capturePrimitives = globalThis.AkuCapturePrimitives;
   const qualityPolicy = globalThis.AkuCaptureQualityPolicy;
   const sourceAdapters = globalThis.AkuSourceAdapters;
   const freshnessRuntime = globalThis.AkuSourceFreshnessRuntime;
   const mediaAcquisitionEngine = globalThis.AkuMediaAcquisitionEngine;
   const mediaPostProcessor = globalThis.AkuMediaPostProcessor;
   if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
+  if (!capturePrimitives) throw new Error("AkuBridge capture primitives were not loaded.");
   if (!qualityPolicy) throw new Error("AkuBridge capture-quality policy was not loaded.");
   if (!sourceAdapters) throw new Error("AkuBridge source-adapter runtime was not loaded.");
   if (!freshnessRuntime) throw new Error("AkuBridge source-freshness runtime was not loaded.");
@@ -646,7 +648,7 @@
     for (const [containerIndex, container] of boundedContainers.entries()) {
       if (Date.now() >= operationDeadlineAtMs) break;
       updateCaptureProgress("extracting_block", { source, containerIndex });
-      const expansion = await expandSourceContent(container, source);
+      const expansion = await expandSourceContent(container, source, operationDeadlineAtMs);
       let block;
       let captureQuality;
       let mediaRecovery;
@@ -762,7 +764,7 @@
         block.captureQuality = captureQuality;
       } finally {
         await restoreSourceContent(expansion);
-        if (block?.presentation) block.presentation.contentExpansion = expansion?.state ?? "not_applicable";
+        if (block?.presentation) block.presentation.contentExpansion = legacyExpansionState(expansion?.state);
       }
       qualityReports.push(captureQuality);
       if (captureQuality.verdict === "invalid") continue;
@@ -849,7 +851,7 @@
         block.presentation?.timestampAvailability === "not_exposed_promoted",
       stableTextIdentity: compactText(block.text).length >= 40,
     };
-    return qualityPolicy.evaluateCandidate({
+    const quality = qualityPolicy.evaluateCandidate({
       candidate: block,
       facts,
       profileId: adapter.qualityProfile,
@@ -857,6 +859,11 @@
       candidateKey,
       attempt,
       retriesRemaining,
+    });
+    return Object.freeze({
+      ...quality,
+      textCompleteness: block.presentation?.textCompleteness ?? "unknown",
+      identityComparison: block.presentation?.identityComparison ?? null,
     });
   }
 
@@ -920,9 +927,10 @@
     capturedAt = new Date().toISOString(),
   ) {
     const adapter = sourceAdapters.get(source);
-    const text = structuredText(
+    const rawText = structuredText(
       adapter.extractText?.(container, { compactText, structuredText }) ?? container,
-    ).slice(0, maxCharacters);
+    );
+    const text = rawText.slice(0, maxCharacters);
     const time = container.querySelector("time");
     const directPermalink = findPermalinkDetails(container, source, time);
     const permalink = directPermalink?.url ?? recoveredPermalink?.url ?? null;
@@ -964,7 +972,43 @@
     presentation.permalinkReason = permalink
       ? ""
       : recoveredPermalink?.reason ?? "No stable native post permalink was exposed by this source.";
-    presentation.contentExpansion = contentExpansion?.state ?? "not_applicable";
+    presentation.contentExpansion = legacyExpansionState(contentExpansion?.state);
+    presentation.textCompleteness = capturePrimitives.textCompleteness({
+      textStatus: rawText.length > maxCharacters ? "truncated" : "unknown",
+      expansionState: contentExpansion?.state ?? "unknown",
+    });
+    if (source === "x") {
+      const quotedRootForIdentity = adapter.findQuotedRoot?.(container) ?? null;
+      const primaryPermalinks = [...container.querySelectorAll("time")]
+        .filter((candidate) => !quotedRootForIdentity?.contains?.(candidate))
+        .map((candidate) => candidate.closest?.("a[href]")?.href)
+        .filter(Boolean);
+      if (directPermalink?.url) primaryPermalinks.push(directPermalink.url);
+      presentation.primaryIdentity = capturePrimitives.resolvePrimaryIdentity({
+        permalinks: primaryPermalinks,
+        expectedPermalink: recoveredPermalink?.url ?? directPermalink?.url ?? null,
+      });
+      const sharedPermalink = presentation.primaryIdentity.permalink;
+      presentation.identityComparison = {
+        legacyDecision: permalink ? "identified" : "missing",
+        legacyPermalink: permalink ?? null,
+        sharedDecision: presentation.primaryIdentity.status,
+        sharedPermalink,
+        agrees: Boolean(
+          permalink && presentation.primaryIdentity.status === "identified" &&
+          sharedPermalink === capturePrimitives.canonicalizeXPermalink(permalink) ||
+          !permalink && presentation.primaryIdentity.status === "missing",
+        ),
+      };
+      if (quotedPost) {
+        presentation.quoteIdentity = capturePrimitives.resolveQuoteIdentity({
+          primaryId: permalink?.match(/\/status\/(\d+)/)?.[1] ?? null,
+          domPermalink: quotedPost.permalink,
+          explicitQuoteIds: [],
+          bounded: false,
+        });
+      }
+    }
     const contentRoot = findContentRoot(container, source);
     const media = findMedia(container, source, { excludeRoot: quotedRoot });
     return {
@@ -1022,69 +1066,44 @@
     };
   }
 
-  async function expandSourceContent(container, source) {
-    const policy = sourceAdapters.get(source).contentExpansion;
-    if (!policy) return { state: "not_applicable" };
-    const contentRoot = findContentRoot(container, source);
-    const button = [...container.querySelectorAll(policy.buttonSelector)]
-      .find((candidate) => isExpansionControlLabel(
-        compactText(candidate?.innerText || candidate?.textContent),
-        "more",
-      ));
-    const label = compactText(button?.innerText || button?.textContent);
-    if (!button || !isExpansionControlLabel(label, "more")) {
-      return { state: "already_complete" };
-    }
-    const before = cleanExpandedText(contentRoot.innerText);
-    button.click();
-    const expanded = await waitForValue(() => {
-      const current = cleanExpandedText(contentRoot.innerText);
-      const currentLabel = compactText(button.innerText || button.textContent);
-      return current.length > before.length || policy.restorable && isExpansionControlLabel(currentLabel, "less")
-        ? current
-        : null;
-    }, policy.attempts, policy.intervalMs);
-    return {
-      state: expanded ? policy.restorable ? "expanded" : "expanded_no_restore_control" : "expand_failed",
-      button: policy.restorable ? button : null,
-      contentRoot,
-      before,
-      expanded: Boolean(expanded),
-    };
+  async function expandSourceContent(container, source, deadlineAt) {
+    const adapter = sourceAdapters.get(source);
+    if (!adapter.contentExpansion) return { state: "not_applicable", expanded: false };
+    return capturePrimitives.expandContent({
+      container,
+      adapter,
+      readText: (root) => cleanExpandedText(structuredText(root)),
+      route: () => window.location.href,
+      canExpand: () => Date.now() < deadlineAt,
+      deadlineAt,
+      wait: delay,
+    });
   }
 
   async function restoreSourceContent(expansion) {
-    if (!expansion?.expanded || !expansion.button) return;
-    const label = compactText(expansion.button.innerText || expansion.button.textContent);
-    if (isExpansionControlLabel(label, "less")) {
-      expansion.button.click();
-      const restored = await waitForValue(
-        () => cleanExpandedText(expansion.contentRoot.innerText).length <= expansion.before.length
-          ? true
-          : null,
-        8,
-        30,
-      );
-      expansion.state = restored ? "expanded_restored" : "expanded_restore_failed";
-    } else {
-      expansion.state = "expanded_no_restore_control";
-    }
+    return capturePrimitives.restoreContent(expansion, {
+      route: () => window.location.href,
+      wait: delay,
+      deadlineAt: Date.now() + 300,
+    });
   }
 
-  function isExpansionControlLabel(value, direction) {
-    const text = compactText(value).replace(/^…\s*/, "");
-    return direction === "more"
-      ? /^(?:more|show more|see more)$/i.test(text)
-      : /^(?:less|show less|see less)$/i.test(text);
+  function legacyExpansionState(state) {
+    return state === "no_collapse_observed" ? "already_complete" : state ?? "not_applicable";
   }
 
   function cleanExpandedText(value) {
-    return compactText(value).replace(/(?:\s+|^)(?:…\s*)?(?:show |see )?(?:more|less)$/i, "").trim();
+    return structuredText(value).replace(/(?:\s+|^)(?:…\s*)?(?:show |see )?(?:more|less)$/i, "").trim();
   }
 
   function findContentRoot(container, source) {
-    const selector = sourceAdapters.get(source).contentRootSelector;
-    return selector ? container.querySelector(selector) ?? container : container;
+    const adapter = sourceAdapters.get(source);
+    const quotedRoot = adapter.findQuotedRoot?.(container) ?? null;
+    const selector = adapter.contentRootSelector;
+    const root = selector
+      ? [...container.querySelectorAll(selector)].find((candidate) => !quotedRoot?.contains?.(candidate))
+      : null;
+    return root ?? container;
   }
 
 
@@ -1507,33 +1526,7 @@
   }
 
   function structuredText(value) {
-    if (typeof value === "string") return normalizeStructuredWhitespace(value);
-    if (!value || typeof value !== "object") return "";
-    if (!value.childNodes || value.childNodes.length === 0) {
-      return normalizeStructuredWhitespace(value.innerText || value.textContent || "");
-    }
-    return normalizeStructuredWhitespace(readStructuredNode(value));
-  }
-
-  function readStructuredNode(node) {
-    if (!node) return "";
-    if (node.nodeType === 3) return node.nodeValue || "";
-    if (node.nodeType !== 1) return "";
-    const tag = String(node.tagName || "").toLowerCase();
-    if (tag === "img") return node.getAttribute?.("alt") || "";
-    if (tag === "br") return "\n";
-    const body = [...(node.childNodes || [])].map(readStructuredNode).join("");
-    return ["div", "p", "li", "section", "article"].includes(tag) ? `${body}\n` : body;
-  }
-
-  function normalizeStructuredWhitespace(value) {
-    return String(value || "")
-      .replace(/\r\n?/g, "\n")
-      .split("\n")
-      .map((line) => line.replace(/[\t\f\v\u00a0 ]+/g, " ").trim())
-      .join("\n")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
+    return capturePrimitives.structuredText(value);
   }
 
   function readImageUrl(image) {

@@ -329,5 +329,8 @@ function media(url, kind = "image") {
 }
 
 function runScript(context, file) {
+  if (file === path.join("adapters", "x-adapter.js") && !context.AkuCapturePrimitives) {
+    vm.runInContext(fs.readFileSync(path.join(projectRoot, "capture-primitives.js"), "utf8"), context);
+  }
   vm.runInContext(fs.readFileSync(path.join(projectRoot, file), "utf8"), context);
 }

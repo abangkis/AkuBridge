@@ -1,6 +1,8 @@
 (() => {
   const registry = globalThis.AkuSourceAdapters;
   if (!registry) throw new Error("AkuBridge source-adapter runtime was not loaded.");
+  const capturePrimitives = globalThis.AkuCapturePrimitives;
+  if (!capturePrimitives) throw new Error("AkuBridge capture primitives were not loaded.");
 
   // X Articles use a separate read-view/media-link DOM contract from ordinary
   // Tweet photos and link cards. Keep the selectors narrow so article covers
@@ -18,17 +20,7 @@
   ].join(", ");
 
   function canonicalizeXPermalink(value) {
-    try {
-      const url = new URL(String(value ?? ""), "https://x.com/");
-      if (url.protocol !== "https:" || url.hostname !== "x.com" || url.username || url.password || url.port) {
-        return null;
-      }
-      const match = url.pathname.match(/^\/([^/]+)\/status\/(\d+)(?:\/.*)?$/);
-      if (!match) return null;
-      return `https://x.com/${match[1]}/status/${match[2]}`;
-    } catch {
-      return null;
-    }
+    return capturePrimitives.canonicalizeXPermalink(value);
   }
 
   registry.register({

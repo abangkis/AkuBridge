@@ -359,4 +359,9 @@ function normalizeHttpUrl(value) {
 function normalizeHttpsUrl(value) {
   return /^https:\/\//i.test(value ?? "") ? value : null;
 }
-function run(context, file) { vm.runInContext(fs.readFileSync(path.join(root, file), "utf8"), context); }
+function run(context, file) {
+  if (file === "adapters/x-adapter.js" && !context.AkuCapturePrimitives) {
+    vm.runInContext(fs.readFileSync(path.join(root, "capture-primitives.js"), "utf8"), context);
+  }
+  vm.runInContext(fs.readFileSync(path.join(root, file), "utf8"), context);
+}

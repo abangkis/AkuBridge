@@ -66,6 +66,7 @@ test("registered scripts contain packaged logic only for approved sources", () =
   assert.equal(scripts.every((script) => script.persistAcrossSessions === true), true);
   assert.equal(scripts.every((script) =>
     script.js.every((file) => !/^(?:https?:|data:)/.test(file))), true);
+  assert.equal(scripts.find((script) => script.id === "aku-source-x-feed")?.js[0], "capture-primitives.js");
   assert.equal(scripts.some((script) => script.world === "MAIN"), true);
   assert.equal(scripts.some((script) =>
     script.js.includes("adapters/linkedin-adapter.js")

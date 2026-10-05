@@ -71,6 +71,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   assert.match(popupScript, /openTab\(`\$\{AKU_BROWSER_LOOPBACK_ORIGIN\}\/`\)/);
 
   const source = [
+    "capture-primitives.js",
     "service-worker.js",
     "content-script.js",
     "linkedin-permalink-policy.js",
@@ -170,6 +171,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
     path.join(projectRoot, "adapters", "x-adapter.js"),
     "utf8",
   );
+  const capturePrimitives = fs.readFileSync(path.join(projectRoot, "capture-primitives.js"), "utf8");
   const serviceWorker = fs.readFileSync(
     path.join(projectRoot, "service-worker.js"),
     "utf8",
@@ -184,7 +186,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v111/);
+  assert.match(contentScript, /source-adapters-v112/);
   assert.match(contentScript, /AKU_BROWSER_RECOVER_SOURCE_READINESS/);
   assert.match(serviceWorker, /recoverSourceReadiness/);
   assert.match(contentScript, /candidateDiagnostics: normalizeCandidateDiagnostics/);
@@ -218,7 +220,8 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(xAdapter, /UserAvatar-Container-/);
   assert.match(contentScript, /renderedBackgroundUrl\(avatarRoot\)/);
   assert.match(xAdapter, /tweet-text-show-more-link/);
-  assert.match(contentScript, /expanded_no_restore_control/);
+  assert.match(capturePrimitives, /expanded_no_restore_control/);
+  assert.match(contentScript, /capturePrimitives\.expandContent/);
   assert.match(linkedInAdapter, /expandable-text-button/);
   assert.match(contentScript, /contentExpansion/);
   assert.match(linkedInAdapter, /contentRootSelector/);
@@ -523,8 +526,8 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /protocolMajor: sidecarProtocolMajor/);
   const capabilities = createBridgeCapabilities({ version: "0.9.2.0", version_name: "0.9.2", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.9.2");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v111");
-  assert.equal(capabilities.buildId, "aku-bridge-0.9.2-source-adapters-v111");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v112");
+  assert.equal(capabilities.buildId, "aku-bridge-0.9.2-source-adapters-v112");
   assert.equal(capabilities.focusPolicyRevision, "quiet-containment-only-v2");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.equal(capabilities.protocolMajor, 2);
@@ -535,6 +538,12 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
     "idle_deferral",
     "rollback_status",
   ]);
+  const contentScript = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
+  assert.match(contentScript, /globalThis\.AkuCapturePrimitives/);
+  assert.match(contentScript, /presentation\.textCompleteness/);
+  assert.match(contentScript, /presentation\.identityComparison/);
+  assert.match(contentScript, /textCompleteness: block\.presentation\?\.textCompleteness/);
+  assert.match(contentScript, /identityComparison: block\.presentation\?\.identityComparison/);
   assert.equal(bridgeCapabilitiesForProtocol(capabilities, 2), capabilities);
   const legacyCapabilities = bridgeCapabilitiesForProtocol(capabilities, 0);
   assert.equal("protocolMajor" in legacyCapabilities, false);

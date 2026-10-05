@@ -149,11 +149,12 @@ const structuredMediaCollectors = new Map([
   ["instagram_structured", collectInstagramStructuredMediaEvidence],
 ]);
 const SOURCE_SCRIPT_FILES = [
+  "capture-primitives.js",
   "bounded-capture-policy.js",
   "capture-quality-policy.js",
   "source-adapter-runtime.js",
   "media-post-processor.js",
-  ...sourceRuntimeScripts(),
+  ...sourceRuntimeScripts().filter((file) => file !== "capture-primitives.js"),
   "source-freshness-runtime.js",
   "media-acquisition-engine.js",
   "content-script.js",

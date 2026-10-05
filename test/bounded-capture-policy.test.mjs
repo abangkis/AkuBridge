@@ -12,6 +12,7 @@ function loadPolicy() {
   const context = { URL, window: { location: { hostname: "x.com", pathname: "/home" } }, document: {} };
   context.globalThis = context;
   for (const file of [
+    "capture-primitives.js",
     "bounded-capture-policy.js",
     "source-adapter-runtime.js",
     "adapters/x-adapter.js",
@@ -353,6 +354,7 @@ test("the policy is loaded before the source content script", () => {
     entry.js.includes("content-script.js"),
   );
   assert.deepEqual(sourceEntry.js, [
+    "capture-primitives.js",
     "bounded-capture-policy.js",
     "capture-quality-policy.js",
     "source-adapter-runtime.js",

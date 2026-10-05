@@ -117,10 +117,10 @@ export function sourceAdapterScripts() {
 }
 
 export function sourceRuntimeScripts() {
-  return SOURCE_DEFINITIONS.flatMap((definition) => [
+  return ["capture-primitives.js", ...SOURCE_DEFINITIONS.flatMap((definition) => [
     ...(definition.supportScripts ?? []),
     definition.adapterScript,
-  ]);
+  ])];
 }
 
 export function sourceRequiresVisualHydration(source) {
