@@ -214,6 +214,26 @@ test("native foreground rejection is surfaced to the explicit caller", async () 
   } }), /Windows rejected foreground/);
 });
 
+test("native reader carries only manual-required foreground feedback to its caller", async () => {
+  const chrome = fakeChrome();
+  const message = "Switch to the Native Reader window manually.";
+  const result = await createReaderWindowRuntime(chrome).open("https://x.com/aku/status/101", { readerIntent: {
+    url: "http://127.0.0.1:11122/split-reader-intent?id=split_manual",
+    prepare: async () => {},
+    foreground: async () => ({ foreground: false, manualRequired: true, message }),
+  } });
+  assert.equal(result.foreground, "manual_required");
+  assert.equal(result.message, message);
+
+  const ordinary = await createReaderWindowRuntime(fakeChrome()).open("https://x.com/aku/status/101", { readerIntent: {
+    url: "http://127.0.0.1:11122/split-reader-intent?id=split_normal",
+    prepare: async () => {},
+    foreground: async () => ({ foreground: true, message: "discard this" }),
+  } });
+  assert.equal(Object.hasOwn(ordinary, "foreground"), false);
+  assert.equal(Object.hasOwn(ordinary, "message"), false);
+});
+
 test("cold reader binding failure never navigates or focuses an unbound window", async () => {
   const chrome = fakeChrome();
   let foregrounded = false;

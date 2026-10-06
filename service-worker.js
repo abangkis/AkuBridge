@@ -2214,7 +2214,14 @@ async function openNativePostInReaderWindow(source, value, readerIntent = null) 
     excludedWindowIds: await managedCaptureWindow.windowIds(),
     readerIntent,
   });
-  return { source, state: "native_post_opened", url: result.url };
+  return {
+    source,
+    state: "native_post_opened",
+    url: result.url,
+    ...(result.foreground === "manual_required"
+      ? { foreground: "manual_required", ...(typeof result.message === "string" ? { message: result.message.slice(0, 512) } : {}) }
+      : {}),
+  };
 }
 
 async function probeSourceFreshness(tabId, source) {

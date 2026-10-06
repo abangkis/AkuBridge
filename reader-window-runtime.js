@@ -97,11 +97,17 @@ async function openReaderTab(chromeApi, url, options = {}) {
       await chromeApi.windows.update(window.id, { focused: true });
     }
   }
-  if (options.readerIntent) await options.readerIntent.foreground();
+  const foregroundResult = options.readerIntent ? await options.readerIntent.foreground() : null;
   return {
     windowId: window?.id ?? windowId,
     tabId: tab?.id ?? null,
     url: tab?.url ?? normalizedUrl,
     created,
+    ...(foregroundResult?.foreground === false && foregroundResult?.manualRequired === true
+      ? {
+          foreground: "manual_required",
+          ...(typeof foregroundResult.message === "string" ? { message: foregroundResult.message.slice(0, 512) } : {}),
+        }
+      : {}),
   };
 }

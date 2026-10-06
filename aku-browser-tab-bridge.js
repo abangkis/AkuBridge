@@ -195,6 +195,9 @@
           requestId: message.requestId,
           source: response.source,
           url: response.url,
+          ...(response.foreground === "manual_required"
+            ? { foreground: "manual_required", ...(typeof response.message === "string" ? { message: response.message.slice(0, 512) } : {}) }
+            : {}),
         }, allowedOrigin);
       } catch (error) {
         window.postMessage({
