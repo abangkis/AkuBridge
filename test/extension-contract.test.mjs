@@ -313,7 +313,13 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
   assert.doesNotMatch(contentScript, /captureVisibilityMode: payload\.tabAcquisition/);
   assert.match(contentScript, /fallbackUsed: mediaAcquisition\.outcomes\.recovered > 0/);
   assert.match(contentScript, /restorationScope: feedMutation \? "post_reveal_start"/);
-  assert.equal(freshnessRuntime.match(/signal\.element\.click\(\)/g)?.length, 1);
+  const windowedReveal = freshnessRuntime.slice(freshnessRuntime.indexOf("async function reveal("),
+    freshnessRuntime.indexOf("function activatePending("));
+  const headlessActivation = freshnessRuntime.slice(freshnessRuntime.indexOf("function activatePending("),
+    freshnessRuntime.indexOf("function detectPendingControl("));
+  assert.equal(windowedReveal.match(/signal\.element\.click\(\)/g)?.length, 1);
+  assert.equal(headlessActivation.match(/signal\.element\.click\(\)/g)?.length, 1);
+  assert.equal(freshnessRuntime.match(/signal\.element\.click\(\)/g)?.length, 2);
   assert.equal(linkedInAdapter.match(/menuButton\.click\(\)/g)?.length, 2);
   assert.doesNotMatch(contentScript, /(?:like|comment|repost|send)Button\.click\(\)/i);
 });

@@ -78,6 +78,37 @@
     };
   }
 
+  // The headless host owns waiting and identity verification. Keep control
+  // discovery shared, but fence the synchronous click to its exact feed route
+  // and deadline so an expired evaluation cannot mutate a later page.
+  function activatePending(source, { expectedPageUrl, deadlineAt } = {}) {
+    const adapter = sourceAdapters.get(source);
+    const fail = (code) => { throw Object.assign(new Error(code), { code }); };
+    const check = () => {
+      if (!Number.isFinite(deadlineAt) || Date.now() >= deadlineAt) fail("freshness_deadline");
+      if (typeof expectedPageUrl !== "string" || location.href !== expectedPageUrl || !adapter.matchesPage()) {
+        fail("freshness_route_changed");
+      }
+      const contract = adapter.freshness.headless;
+      if (typeof contract?.matchesFeedURL !== "function" || !contract.matchesFeedURL(location.href)) {
+        fail("freshness_route_changed");
+      }
+    };
+    if (adapter.freshness.revealSupported !== true || adapter.freshness.headless?.enabled !== true) {
+      fail("freshness_reveal_unsupported");
+    }
+    check();
+    const candidates = adapter.discoverCandidates({ compactText, uniqueElements }).candidates ?? [];
+    const signal = detectPendingControl(adapter.freshness.pendingContentPattern,
+      adapter.freshness.rejectInsideFeedCandidate ? candidates : []);
+    if (!signal?.element?.isConnected || typeof signal.element.click !== "function") {
+      fail("freshness_control_unavailable");
+    }
+    check();
+    signal.element.click();
+    return { activated: true, label: signal.label.slice(0, 160) };
+  }
+
   function detectPendingControl(pattern, feedCandidates = []) {
     for (const element of document.querySelectorAll('button,[role="button"]')) {
       if (!isVisibleInWindow(element)) continue;
@@ -146,5 +177,6 @@
     runtimeRevision,
     probe,
     reveal,
+    activatePending,
   });
 })();

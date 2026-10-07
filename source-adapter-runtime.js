@@ -63,6 +63,18 @@
         `AkuBridge ${adapter.source} adapter requires a bounded reveal observation window.`,
       );
     }
+    const headlessFreshness = adapter.freshness.headless;
+    if (headlessFreshness !== undefined &&
+        (!headlessFreshness || typeof headlessFreshness.enabled !== "boolean")) {
+      throw new Error(`AkuBridge ${adapter.source} adapter has an invalid headless freshness contract.`);
+    }
+    if (headlessFreshness?.enabled === true &&
+        (adapter.freshness.revealSupported !== true ||
+          typeof headlessFreshness.version !== "string" || !headlessFreshness.version ||
+          typeof headlessFreshness.matchesFeedURL !== "function" ||
+          typeof headlessFreshness.primaryIdentity !== "function")) {
+      throw new Error(`AkuBridge ${adapter.source} adapter requires headless freshness route and identity methods.`);
+    }
     if (!adapter.mediaAcquisition || typeof adapter.mediaAcquisition !== "object") {
       throw new Error(`AkuBridge ${adapter.source} adapter requires a media-acquisition strategy.`);
     }

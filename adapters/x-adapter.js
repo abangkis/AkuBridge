@@ -23,6 +23,23 @@
     return capturePrimitives.canonicalizeXPermalink(value);
   }
 
+  function matchesFreshnessFeedURL(value) {
+    if (typeof value !== "string" || value.length > 2048) return false;
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && url.hostname === "x.com" &&
+        !url.username && !url.password && !url.port && url.pathname === "/home";
+    } catch { return false; }
+  }
+
+  function freshnessPrimaryIdentity(post) {
+    if (typeof post?.id !== "string" || typeof post?.permalink !== "string") return null;
+    const id = /^(?:x:status:)?(\d{1,30})$/.exec(post.id)?.[1];
+    const permalink = canonicalizeXPermalink(post.permalink);
+    if (!id || !permalink || new URL(permalink).pathname.match(/\/status\/(\d+)$/)?.[1] !== id) return null;
+    return { id, permalink };
+  }
+
   registry.register({
     source: "x",
     version: "x-dom-v22",
@@ -69,6 +86,12 @@
       revealObservationMs: 5_000,
       rejectInsideFeedCandidate: true,
       pendingContentPattern: /^(?:new posts?|show(?: \d+)? posts?)$/i,
+      headless: Object.freeze({
+        enabled: true,
+        version: "x-headless-freshness-v1",
+        matchesFeedURL: matchesFreshnessFeedURL,
+        primaryIdentity: freshnessPrimaryIdentity,
+      }),
     }),
     mediaAcquisition: Object.freeze({
       version: "x-media-acquisition-v2",

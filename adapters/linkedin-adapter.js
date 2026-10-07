@@ -97,6 +97,7 @@
     }),
     freshness: Object.freeze({
       version: "linkedin-freshness-v2",
+      headless: Object.freeze({ enabled: false }),
       wakeWhenBackground: true,
       settledWakeIsCurrent: true,
       wakeObservationMs: 4_000,

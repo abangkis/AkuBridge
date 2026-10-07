@@ -45,6 +45,7 @@
     }),
     freshness: Object.freeze({
       version: "instagram-freshness-v1",
+      headless: Object.freeze({ enabled: false }),
       wakeWhenBackground: true,
       settledWakeIsCurrent: true,
       wakeObservationMs: 3_500,

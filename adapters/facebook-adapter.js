@@ -51,6 +51,7 @@
     }),
     freshness: Object.freeze({
       version: "facebook-freshness-v1",
+      headless: Object.freeze({ enabled: false }),
       wakeWhenBackground: true,
       settledWakeIsCurrent: true,
       wakeObservationMs: 4_000,

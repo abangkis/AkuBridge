@@ -317,6 +317,23 @@ test("the complete adapter bundle can replace its current registry generation", 
   );
 });
 
+test("headless freshness registration requires explicit support and pure route/identity methods", () => {
+  const context = createBrowserContext();
+  runScript(context, "source-adapter-runtime.js");
+  runScript(context, path.join("adapters", "x-adapter.js"));
+  const adapter = context.AkuSourceAdapters.get("x");
+  for (const headless of [null, {}, {enabled:true}, {...adapter.freshness.headless,matchesFeedURL:null},
+    {...adapter.freshness.headless,primaryIdentity:null}]) {
+    runScript(context, "source-adapter-runtime.js");
+    assert.throws(()=>context.AkuSourceAdapters.register({...adapter,
+      freshness:{...adapter.freshness,headless}}), /headless freshness/);
+  }
+  runScript(context, "source-adapter-runtime.js");
+  assert.doesNotThrow(()=>context.AkuSourceAdapters.register({...adapter,
+    freshness:{...adapter.freshness,headless:{enabled:false}}}));
+  assert.equal(context.AkuSourceAdapters.get("x").freshness.headless.enabled,false);
+});
+
 function createBrowserContext() {
   const document = {
     body: {},
