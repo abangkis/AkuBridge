@@ -147,9 +147,15 @@ test("MAIN-world resolver is cycle-safe, getter-safe, and traversal-bounded", ()
     maxTraversalNodes: 100,
     maxDepth: 12,
   }));
+  const mp4Result = withDocument([article], () => resolveXStructuredMediaInMainWorld({
+    maxTraversalNodes: 100,
+    maxDepth: 12,
+    playbackFormat: "mp4",
+  }));
 
   assert.equal(result.diagnostics.traversedNodeCount <= 100, true);
   assert.equal(result.candidates.length, 0);
+  assert.equal(mp4Result.candidates.length, 0);
 });
 
 test("explicit deeper traversal resolves own media while preserving Bridge defaults and the depth cap", () => {
@@ -186,6 +192,101 @@ test("MP4 preference pairs matching assets, prefers available resolution, and le
   const unmatched=syntheticArticle("23456",{rest_id:"23456",media_url_https:poster,variants:[{url:hls},{url:other}]});
   const unresolved=withDocument([unmatched],()=>resolveXStructuredMediaInMainWorld({playbackFormat:"mp4"}));
   assert.equal(unresolved.candidates[0].media.find(m=>m.posterUrl===poster).playbackUrl,null);
+});
+
+test("MP4 extraction finds a later own poster pair without spending the output limit on earlier media or variants", () => {
+  const poster = "https://pbs.twimg.com/ext_tw_video_thumb/23456/pu/img/poster.jpg";
+  const high = "https://video.twimg.com/ext_tw_video/23456/pu/vid/1280x720/high.mp4";
+  const article = syntheticArticle("23456", {
+    rest_id: "23456",
+    media: [
+      { media_url_https: "https://pbs.twimg.com/media/first.jpg" },
+      { media_url_https: "https://pbs.twimg.com/media/second.jpg" },
+      {
+        media_url_https: poster,
+        video_info: {
+          variants: [
+            { url: "https://video.twimg.com/ext_tw_video/23456/pu/pl/master.m3u8" },
+            { url: "https://video.twimg.com/ext_tw_video/99999/pu/vid/1920x1080/foreign.mp4" },
+            { url: "https://video.twimg.com/ext_tw_video/23456/pu/vid/320x180/low.mp4" },
+            { url: high },
+          ],
+        },
+      },
+    ],
+  });
+
+  const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({
+    maxMediaPerCandidate: 1,
+    playbackFormat: "mp4",
+  }));
+
+  assert.equal(result.candidates.length, 1);
+  assert.deepEqual(result.candidates[0].media.map(({ kind, posterUrl, playbackUrl }) => ({
+    kind, posterUrl, playbackUrl,
+  })), [{ kind: "video", posterUrl: poster, playbackUrl: high }]);
+});
+
+test("MP4 extraction cannot borrow a matching variant from a quoted Tweet", () => {
+  const poster = "https://pbs.twimg.com/ext_tw_video_thumb/23456/pu/img/poster.jpg";
+  const quotedPlayback = "https://video.twimg.com/ext_tw_video/23456/pu/vid/1280x720/quoted.mp4";
+  const article = syntheticArticle("23456", {
+    __typename: "Tweet",
+    rest_id: "23456",
+    legacy: {
+      full_text: "Owning post",
+      extended_entities: {
+        media: [{ media_url_https: poster }],
+      },
+    },
+    quoted_status_result: {
+      result: {
+        __typename: "Tweet",
+        rest_id: "99999",
+        legacy: {
+          full_text: "Quoted post",
+          extended_entities: {
+            media: [{ video_info: { variants: [{ url: quotedPlayback }] } }],
+          },
+        },
+      },
+    },
+  });
+
+  const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({
+    playbackFormat: "mp4",
+  }));
+
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates[0].media[0].posterUrl, poster);
+  assert.equal(result.candidates[0].media[0].playbackUrl, null);
+  assert.equal(JSON.stringify(result).includes("quoted.mp4"), false);
+});
+
+test("MP4 extraction follows the requested depth cap to find a deeply nested own variant", () => {
+  const poster = "https://pbs.twimg.com/ext_tw_video_thumb/23456/pu/img/poster.jpg";
+  const playback = "https://video.twimg.com/ext_tw_video/23456/pu/vid/1280x720/deep.mp4";
+  let deepVariant = { url: playback };
+  for (let index = 0; index < 9; index += 1) deepVariant = { next: deepVariant };
+  const article = syntheticArticle("23456", {
+    __typename: "Tweet",
+    rest_id: "23456",
+    legacy: {
+      full_text: "Owning post",
+      extended_entities: { media: [{ media_url_https: poster }] },
+    },
+    nested: deepVariant,
+  });
+
+  const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({
+    maxDepth: 16,
+    maxTraversalNodes: 1_500,
+    playbackFormat: "mp4",
+  }));
+
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates[0].media[0].kind, "video");
+  assert.equal(result.candidates[0].media[0].playbackUrl, playback);
 });
 
 function syntheticArticle(candidateId, structuredState) {

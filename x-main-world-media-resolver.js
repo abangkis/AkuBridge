@@ -50,48 +50,10 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
       }
     }
 
-    const media = [];
-    const mediaSeen = new Set();
-    let mediaNodesVisited = 0;
-    const mediaQueue = matched.map((value) => ({ value, depth: 0 }));
-    const mediaObjectsSeen = new Set();
-    while (mediaQueue.length > 0 && mediaNodesVisited < 600 && media.length < maxMediaPerCandidate) {
-      const current = mediaQueue.shift();
-      const value = current?.value;
-      if (!isObject(value) || mediaObjectsSeen.has(value)) continue;
-      mediaObjectsSeen.add(value);
-      mediaNodesVisited += 1;
-      const owningTweetId = explicitTweetId(value);
-      if (owningTweetId && owningTweetId !== numericId) continue;
-      const dimensions = dimensionsFromObject(value);
-      for (const [key, rawUrl] of stringEntries(value, 80)) {
-        if (!/(?:url|src|poster)/i.test(key)) continue;
-        const url = safeXMediaUrl(rawUrl);
-        const mediaIdentity = xAssetIdentity(url);
-        if (!url || mediaSeen.has(mediaIdentity)) continue;
-        const kind = url.startsWith("https://video.twimg.com/") ? "video" : "image";
-        mediaSeen.add(mediaIdentity);
-        media.push({
-          kind,
-          url,
-          posterUrl: kind === "video" ? null : url,
-          playbackUrl: kind === "video" ? url : null,
-          playbackMode: kind === "video" ? "inline" : null,
-          width: dimensions.width,
-          height: dimensions.height,
-          provenance: "main_structured_state",
-        });
-        if (media.length >= maxMediaPerCandidate) break;
-      }
-      if (current.depth >= 7) continue;
-      for (const child of dataValues(value, 80)) {
-        if (isObject(child) && !mediaObjectsSeen.has(child)) {
-          mediaQueue.push({ value: child, depth: current.depth + 1 });
-        }
-      }
-    }
-
-    pairVideoEvidence(media);
+    const media = request.playbackFormat === "mp4"
+      ? collectMp4PreferredMedia(matched, numericId, maxMediaPerCandidate, maxDepth)
+      : collectStructuredMedia(matched, numericId, maxMediaPerCandidate);
+    if (request.playbackFormat !== "mp4") pairVideoEvidence(media);
     if (media.length > 0) candidates.push({ candidateId, media });
   }
 
@@ -234,24 +196,134 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
     };
   }
 
-  function pairVideoEvidence(media) {
-    if (request.playbackFormat === "mp4") {
-      // Headless's inline-media contract requires MP4. Pair only matching
-      // native asset identities; never attach an arbitrary candidate variant.
-      for (const poster of media.filter(item => item.posterUrl?.startsWith("https://pbs.twimg.com/"))) {
-        const identity = videoAssetIdentity(poster.posterUrl);
-        if (!identity) continue;
-        const variants = media.filter(item => item.playbackUrl &&
-          /\.mp4$/i.test(new URL(item.playbackUrl).pathname) &&
-          videoAssetIdentity(item.playbackUrl) === identity);
-        variants.sort((a, b) => playbackArea(b.playbackUrl) - playbackArea(a.playbackUrl));
-        if (!variants.length) continue;
-        poster.kind = "video";
-        poster.playbackUrl = variants[0].playbackUrl;
-        poster.playbackMode = "inline";
+  function collectStructuredMedia(matched, numericId, limit) {
+    const media = [];
+    const mediaSeen = new Set();
+    let mediaNodesVisited = 0;
+    const mediaQueue = matched.map((value) => ({ value, depth: 0 }));
+    const mediaObjectsSeen = new Set();
+    while (mediaQueue.length > 0 && mediaNodesVisited < 600 && media.length < limit) {
+      const current = mediaQueue.shift();
+      const value = current?.value;
+      if (!isObject(value) || mediaObjectsSeen.has(value)) continue;
+      mediaObjectsSeen.add(value);
+      mediaNodesVisited += 1;
+      const owningTweetId = explicitTweetId(value);
+      if (owningTweetId && owningTweetId !== numericId) continue;
+      const dimensions = dimensionsFromObject(value);
+      for (const [key, rawUrl] of stringEntries(value, 80)) {
+        if (!/(?:url|src|poster)/i.test(key)) continue;
+        const url = safeXMediaUrl(rawUrl);
+        const mediaIdentity = xAssetIdentity(url);
+        if (!url || mediaSeen.has(mediaIdentity)) continue;
+        const kind = url.startsWith("https://video.twimg.com/") ? "video" : "image";
+        mediaSeen.add(mediaIdentity);
+        media.push({
+          kind,
+          url,
+          posterUrl: kind === "video" ? null : url,
+          playbackUrl: kind === "video" ? url : null,
+          playbackMode: kind === "video" ? "inline" : null,
+          width: dimensions.width,
+          height: dimensions.height,
+          provenance: "main_structured_state",
+        });
+        if (media.length >= limit) break;
       }
-      return;
+      if (current.depth >= 7) continue;
+      for (const child of dataValues(value, 80)) {
+        if (isObject(child) && !mediaObjectsSeen.has(child)) {
+          mediaQueue.push({ value: child, depth: current.depth + 1 });
+        }
+      }
     }
+    return media;
+  }
+
+  // In MP4 mode, collect bounded poster and variant evidence before applying the output limit.
+  function collectMp4PreferredMedia(matched, numericId, limit, maxMediaDepth) {
+    const posters = new Map();
+    const variants = new Map();
+    const images = [];
+    const imageSeen = new Set();
+    let mediaNodesVisited = 0;
+    const mediaQueue = matched.map((value) => ({ value, depth: 0 }));
+    const mediaObjectsSeen = new Set();
+    while (mediaQueue.length > 0 && mediaNodesVisited < 600) {
+      const current = mediaQueue.shift();
+      const value = current?.value;
+      if (!isObject(value) || mediaObjectsSeen.has(value)) continue;
+      mediaObjectsSeen.add(value);
+      mediaNodesVisited += 1;
+      const owningTweetId = explicitTweetId(value);
+      if (owningTweetId && owningTweetId !== numericId) continue;
+      const dimensions = dimensionsFromObject(value);
+      for (const [key, rawUrl] of stringEntries(value, 80)) {
+        if (!/(?:url|src|poster)/i.test(key)) continue;
+        const url = safeXMediaUrl(rawUrl);
+        if (!url) continue;
+        const parsed = new URL(url);
+        if (parsed.hostname === "pbs.twimg.com") {
+          const identity = videoAssetIdentity(url);
+          if (identity) {
+            if (!posters.has(identity)) {
+              posters.set(identity, {
+                url,
+                width: dimensions.width,
+                height: dimensions.height,
+              });
+            }
+            continue;
+          }
+          const mediaIdentity = xAssetIdentity(url);
+          if (images.length >= limit || imageSeen.has(mediaIdentity)) continue;
+          imageSeen.add(mediaIdentity);
+          images.push({
+            kind: "image",
+            url,
+            posterUrl: url,
+            playbackUrl: null,
+            playbackMode: null,
+            width: dimensions.width,
+            height: dimensions.height,
+            provenance: "main_structured_state",
+          });
+          continue;
+        }
+        if (parsed.hostname !== "video.twimg.com" || !/\.mp4$/i.test(parsed.pathname)) continue;
+        const identity = videoAssetIdentity(url);
+        if (!identity) continue;
+        const previous = variants.get(identity);
+        if (!previous || playbackArea(url) > playbackArea(previous)) variants.set(identity, url);
+      }
+      if (current.depth >= maxMediaDepth) continue;
+      for (const child of dataValues(value, 80)) {
+        if (isObject(child) && !mediaObjectsSeen.has(child)) {
+          mediaQueue.push({ value: child, depth: current.depth + 1 });
+        }
+      }
+    }
+
+    const pairedPosters = [];
+    const unresolvedPosters = [];
+    for (const [identity, poster] of posters) {
+      const playbackUrl = variants.get(identity) ?? null;
+      const item = {
+        kind: playbackUrl ? "video" : "image",
+        url: poster.url,
+        posterUrl: poster.url,
+        playbackUrl,
+        playbackMode: playbackUrl ? "inline" : null,
+        width: poster.width,
+        height: poster.height,
+        provenance: "main_structured_state",
+      };
+      (playbackUrl ? pairedPosters : unresolvedPosters).push(item);
+    }
+    return [...pairedPosters, ...unresolvedPosters, ...images].slice(0, limit);
+  }
+
+  function pairVideoEvidence(media) {
     const playback = media.find((value) => value.playbackUrl);
     const poster = media.find((value) => value.url?.startsWith("https://pbs.twimg.com/") &&
       /video_thumb|tweet_video_thumb/.test(new URL(value.url).pathname));
