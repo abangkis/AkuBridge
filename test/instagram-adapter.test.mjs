@@ -70,6 +70,38 @@ test("Instagram adapter captures a live-shaped Home Feed article without admitti
   assert.equal(adapter.findAuthor(candidate, helpers), "aku.example");
   assert.equal(adapter.findAvatar(candidate, helpers), "https://instagram.fcgk4-2.fna.fbcdn.net/avatar.jpg");
   assert.equal(adapter.extractText(candidate, helpers), "A bounded Instagram caption with useful source evidence.");
+  assert.equal(
+    adapter.extractText(instagramCandidate({
+      captionText: "",
+      interfaceLabels: ["SUGGESTED FOR YOU", "Disarankan untuk Anda", "Ｓｅｅ ｔｒａｎｓｌａｔｉｏｎ"],
+    }), helpers),
+    "",
+  );
+  assert.equal(
+    adapter.extractText(instagramCandidate({
+      captionText: "今日もありがとう。",
+      interfaceLabels: [
+        "Suggested for you",
+        "See translation",
+        "Liked by kiyoisaki_official and 2,345 others",
+        "View all 125 comments",
+      ],
+    }), helpers),
+    "今日もありがとう。",
+  );
+  assert.equal(
+    adapter.extractText(instagramCandidate({
+      captionText: "The phrase ‘Suggested for you’ appeared under my post, but this is my caption.",
+    }), helpers),
+    "The phrase ‘Suggested for you’ appeared under my post, but this is my caption.",
+  );
+  assert.equal(
+    adapter.extractText(instagramCandidate({
+      captionText: "Suggested for you, this was the best part of my trip.",
+      interfaceLabels: ["Suggested for you"],
+    }), helpers),
+    "Suggested for you, this was the best part of my trip.",
+  );
   assert.deepEqual(JSON.parse(JSON.stringify(adapter.findPermalinkDetails(candidate, helpers))), {
     url: "https://www.instagram.com/p/ABC_123/",
     source: "native_post_anchor",
@@ -203,7 +235,12 @@ test("Instagram adapter can anchor a candidate to a native permalink without an 
   assert.equal(discovery.selectorCounts.native_permalink_ancestor, 1);
 });
 
-function instagramCandidate({ permalink = "https://www.instagram.com/p/ABC_123/", author = "aku.example" } = {}) {
+function instagramCandidate({
+  permalink = "https://www.instagram.com/p/ABC_123/",
+  author = "aku.example",
+  captionText = "A bounded Instagram caption with useful source evidence. ... more",
+  interfaceLabels = [],
+} = {}) {
   const avatar = {
     currentSrc: "https://instagram.fcgk4-2.fna.fbcdn.net/avatar.jpg",
     src: "https://instagram.fcgk4-2.fna.fbcdn.net/avatar.jpg",
@@ -229,10 +266,15 @@ function instagramCandidate({ permalink = "https://www.instagram.com/p/ABC_123/"
     closest: () => null,
   };
   const caption = {
-    innerText: "A bounded Instagram caption with useful source evidence. ... more",
-    textContent: "A bounded Instagram caption with useful source evidence. ... more",
+    innerText: captionText,
+    textContent: captionText,
     closest: () => null,
   };
+  const labels = interfaceLabels.map((text) => ({
+    innerText: text,
+    textContent: text,
+    closest: () => null,
+  }));
   const action = (label, text = "") => ({
     innerText: text,
     getAttribute: () => null,
@@ -266,7 +308,7 @@ function instagramCandidate({ permalink = "https://www.instagram.com/p/ABC_123/"
     querySelectorAll(selector) {
       if (selector === "a[href]") return [profile, nativeLink].filter(Boolean);
       if (selector === 'a[href^="/"]') return [profile];
-      if (selector === 'span[dir="auto"]') return [authorSpan, caption];
+      if (selector === 'span[dir="auto"]') return [authorSpan, caption, ...labels];
       if (selector === '[role="button"], button') return controls;
       if (selector === "video" || selector.includes("img:not")) return [];
       return [];

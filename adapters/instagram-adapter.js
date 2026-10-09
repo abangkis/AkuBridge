@@ -403,6 +403,37 @@
     return "";
   }
 
+  const instagramInterfaceLabels = new Set([
+    "sponsored",
+    "bersponsor",
+    "see translation",
+    "lihat terjemahan",
+    "suggested for you",
+    "disarankan untuk anda",
+    "suggested posts",
+    "postingan yang disarankan",
+    "liked by",
+    "and others",
+    "disukai oleh",
+    "dan lainnya",
+    "view all comments",
+    "see all comments",
+    "lihat semua komentar",
+  ]);
+  const instagramDynamicInterfaceLabels = [
+    /^liked by .+ and (?:[\d,.]+(?:[km])?\s+)?others$/,
+    /^disukai oleh .+ dan (?:[\d.,]+\s+)?lainnya$/,
+    /^view all (?:[\d,.]+\s+)?comments$/,
+    /^see all (?:[\d,.]+\s+)?comments$/,
+    /^lihat semua(?: [\d.,]+)? komentar$/,
+  ];
+
+  function isInstagramInterfaceLabel(text) {
+    const normalized = text.normalize("NFKC").toLowerCase();
+    return instagramInterfaceLabels.has(normalized) ||
+      instagramDynamicInterfaceLabels.some((pattern) => pattern.test(normalized));
+  }
+
   function instagramCaption(container, compactText) {
     const author = instagramAuthor(container, { compactText }).toLocaleLowerCase();
     const candidates = [...(container.querySelectorAll?.('span[dir="auto"]') ?? [])]
@@ -416,7 +447,7 @@
         !element.closest?.("a,time") &&
         !element.closest?.('[role="button"]') &&
         text.toLocaleLowerCase() !== author &&
-        !/^(?:sponsored|see translation|liked by|and others)$/i.test(text));
+        !isInstagramInterfaceLabel(text));
     candidates.sort((left, right) => right.text.length - left.text.length);
     return candidates[0]?.text ?? "";
   }
