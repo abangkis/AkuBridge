@@ -251,7 +251,7 @@ export function resolveLinkedInStructuredMediaInMainWorld(request = {}) {
         const imagePoster = host === "media.licdn.com" && /^\/dms\/image\//i.test(url.pathname);
         const playlistPoster = host === "dms.licdn.com" &&
           /^\/playlist\/vid\//i.test(url.pathname) &&
-          /\/thumbnail(?:-[a-z0-9]+)?\//i.test(url.pathname);
+          /\/thumbnail(?:-[a-z0-9]+(?:_\d{1,4}_\d{1,4})?)?\//i.test(url.pathname);
         if (
           url.protocol !== "https:" || url.username || url.password || url.port ||
           (!imagePoster && !playlistPoster)

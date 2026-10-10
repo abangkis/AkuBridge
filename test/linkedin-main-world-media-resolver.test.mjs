@@ -70,6 +70,52 @@ test("LinkedIn resolver assigns one recovered native identity only to its exact 
   assert.deepEqual(unassigned.candidates, []);
 });
 
+test("LinkedIn resolver accepts dimensioned thumbnail posters even at its traversal ceiling", () => {
+  const candidateId = "linkedin:ugcpost:7514519298036576256";
+  for (const suffix of ["thumbnail", "thumbnail-low", "thumbnail-shrink_720_1280"]) {
+    const fixture = linkedInPlayerFixture({
+      candidateUrn: "urn:li:ugcPost:7514519298036576256",
+      playbackUrl: "https://dms.licdn.com/playlist/vid/v2/fixture/mp4-720p-30fp/0/video",
+      posterUrl: `https://dms.licdn.com/playlist/vid/v2/fixture/${suffix}/0/frame`,
+    });
+    fixture.player.noise = Array.from({ length: 100 }, () =>
+      Array.from({ length: 100 }, () => ({ unrelated: true })));
+    const result = resolveLinkedInStructuredMediaInMainWorld({
+      ...fixture.request, candidateIds: [candidateId], maxCandidates: 1, maxTraversalNodes: 3000,
+    });
+    assert.equal(result.diagnostics.traversedNodeCount, 3000, suffix);
+    assert.equal(result.candidates.length, 1, suffix);
+    assert.equal(result.candidates[0].candidateId, candidateId);
+    assert.equal(result.candidates[0].media[0].posterUrl, fixture.posterUrl);
+    assert.equal(result.candidates[0].media[0].playbackUrl, fixture.playbackUrl);
+    const foreign = resolveLinkedInStructuredMediaInMainWorld({
+      ...fixture.request, candidateIds: ["linkedin:ugcpost:9999999999"],
+    });
+    assert.deepEqual(foreign.candidates, [], suffix);
+  }
+});
+
+test("LinkedIn dimensioned poster acceptance keeps host, transport and thumbnail path restrictions", () => {
+  const path = "/playlist/vid/v2/fixture/thumbnail-shrink_720_1280/0/frame";
+  const invalidPosters = [
+    `https://attacker.example${path}`,
+    `https://dms.licdn.com.attacker.example${path}`,
+    `http://dms.licdn.com${path}`,
+    `https://user@dms.licdn.com${path}`,
+    `https://dms.licdn.com:444${path}`,
+    "https://dms.licdn.com/other/thumbnail-shrink_720_1280/0/frame",
+    "https://dms.licdn.com/playlist/vid/v2/fixture/mp4-720p-30fp/0/video",
+    "https://dms.licdn.com/playlist/vid/v2/fixture/thumbnail-shrink_720_1280_extra/0/frame",
+  ];
+  for (const posterUrl of invalidPosters) {
+    const fixture = linkedInPlayerFixture({
+      candidateUrn: "urn:li:ugcPost:7514519298036576256",
+      playbackUrl: "https://dms.licdn.com/playlist/vid/v2/fixture/mp4-720p-30fp/0/video", posterUrl,
+    });
+    assert.deepEqual(resolveLinkedInStructuredMediaInMainWorld(fixture.request).candidates, [], posterUrl);
+  }
+});
+
 test("LinkedIn resolver does not treat a playlist MP4 as a poster", () => {
   const fixture = linkedInPlayerFixture({
     candidateUrn: "urn:li:activity:7490315383795568643",
