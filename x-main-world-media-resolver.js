@@ -125,7 +125,10 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
     }
     const typeName = dataProperty(value, "__typename");
     const legacy = dataProperty(value, "legacy");
-    const tweetShaped = typeof typeName === "string" && /^Tweet(?:WithVisibilityResults)?$/i.test(typeName) ||
+    // Flat legacy Tweet payloads carry full_text beside id_str, without a
+    // __typename or legacy wrapper. A media entity ID alone is not a Tweet ID.
+    const tweetShaped = typeof dataProperty(value, "full_text") === "string" ||
+      typeof typeName === "string" && /^Tweet(?:WithVisibilityResults)?$/i.test(typeName) ||
       isObject(legacy) && (
         typeof dataProperty(legacy, "full_text") === "string" ||
         isObject(dataProperty(legacy, "extended_entities"))

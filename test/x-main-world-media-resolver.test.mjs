@@ -263,6 +263,43 @@ test("MP4 extraction cannot borrow a matching variant from a quoted Tweet", () =
   assert.equal(JSON.stringify(result).includes("quoted.mp4"), false);
 });
 
+test("flat legacy quote and repost Tweets cannot supply playback for the owning poster", () => {
+  for (const branch of ["quoted_status", "retweeted_status"]) {
+    for (const poster of [
+      "https://pbs.twimg.com/media/flat-legacy.jpg",
+      "https://pbs.twimg.com/ext_tw_video_thumb/23456/pu/img/poster.jpg",
+    ]) {
+      for (const playbackFormat of [undefined, "mp4"]) {
+        const playback = "https://video.twimg.com/ext_tw_video/23456/pu/vid/1280x720/foreign.mp4";
+        const article = syntheticArticle("23456", {
+          rest_id: "23456", legacy: {
+            full_text: "Owning post", extended_entities: { media: [{ type: "video", media_url_https: poster }] },
+            [branch]: { id_str: "99999", full_text: "Nested foreign post", extended_entities: {
+              media: [{ type: "video", media_url_https: poster, video_info: { variants: [{ url: playback }] } }],
+            } },
+          },
+        });
+        const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({ playbackFormat }));
+        assert.equal(JSON.stringify(result).includes("foreign.mp4"), false, `${branch}: ${poster}: ${playbackFormat}`);
+        assert.equal(result.candidates[0].media[0].posterUrl, poster);
+        assert.equal(result.candidates[0].media[0].playbackUrl, null);
+      }
+    }
+  }
+});
+
+test("flat owning Tweet and media entity IDs remain eligible for their own video", () => {
+  const poster = "https://pbs.twimg.com/media/flat-own.jpg";
+  const playback = "https://video.twimg.com/amplify_video/asset-own/vid/640x360/own.mp4";
+  const article = syntheticArticle("23456", { id_str: "23456", full_text: "Own flat Tweet",
+    extended_entities: { media: [{ id_str: "88888", type: "video", media_url_https: poster,
+      video_info: { variants: [{ url: playback }] } }] },
+  });
+  const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({ playbackFormat: "mp4" }));
+  assert.equal(result.candidates[0].media[0].playbackUrl, playback);
+  assert.equal(result.candidates[0].media[0].pairing, "same_video_media_entity");
+});
+
 test("MP4 extraction follows the requested depth cap to find a deeply nested own variant", () => {
   const poster = "https://pbs.twimg.com/ext_tw_video_thumb/23456/pu/img/poster.jpg";
   const playback = "https://video.twimg.com/ext_tw_video/23456/pu/vid/1280x720/deep.mp4";
