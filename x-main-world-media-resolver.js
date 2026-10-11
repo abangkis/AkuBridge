@@ -246,6 +246,7 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
     const variants = new Map();
     const images = [];
     const imageSeen = new Set();
+    const directVideoEntities = new Map();
     let mediaNodesVisited = 0;
     const mediaQueue = matched.map((value) => ({ value, depth: 0 }));
     const mediaObjectsSeen = new Set();
@@ -258,6 +259,33 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
       const owningTweetId = explicitTweetId(value);
       if (owningTweetId && owningTweetId !== numericId) continue;
       const dimensions = dimensionsFromObject(value);
+      const directVideo = directPairFromVideoEntity(value);
+      if (directVideo) {
+        const posterIdentity = xAssetIdentity(directVideo.posterUrl);
+        const previous = directVideoEntities.get(posterIdentity);
+        if (directVideo.ambiguous) {
+          directVideoEntities.set(posterIdentity, { conflict: true });
+        } else if (previous?.conflict) {
+          // Once the same poster is tied to conflicting entity evidence, fail closed.
+        } else if (previous && previous.assetIdentity !== directVideo.assetIdentity) {
+          directVideoEntities.set(posterIdentity, { conflict: true });
+        } else if (!previous || playbackArea(directVideo.playbackUrl) > playbackArea(previous.item.playbackUrl)) {
+          directVideoEntities.set(posterIdentity, {
+            assetIdentity: directVideo.assetIdentity,
+            item: {
+              kind: "video",
+              url: directVideo.posterUrl,
+              posterUrl: directVideo.posterUrl,
+              playbackUrl: directVideo.playbackUrl,
+              playbackMode: "inline",
+              pairing: "same_video_media_entity",
+              width: dimensions.width,
+              height: dimensions.height,
+              provenance: "main_structured_state",
+            },
+          });
+        }
+      }
       for (const [key, rawUrl] of stringEntries(value, 80)) {
         if (!/(?:url|src|poster)/i.test(key)) continue;
         const url = safeXMediaUrl(rawUrl);
@@ -320,7 +348,93 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
       };
       (playbackUrl ? pairedPosters : unresolvedPosters).push(item);
     }
-    return [...pairedPosters, ...unresolvedPosters, ...images].slice(0, limit);
+    const directPairs = [];
+    const directPosterIdentities = new Set();
+    for (const [posterIdentity, value] of directVideoEntities) {
+      if (value.conflict || !value.item) continue;
+      directPairs.push(value.item);
+      directPosterIdentities.add(posterIdentity);
+    }
+    const remainingImages = images.filter((item) => !directPosterIdentities.has(xAssetIdentity(item.url)));
+    return [...directPairs, ...pairedPosters, ...unresolvedPosters, ...remainingImages].slice(0, limit);
+  }
+
+  // Pair only evidence carried by one explicit video media entity. Generic /media posters do
+  // not expose the video asset ID, so variants from neighboring entities cannot identify them.
+  function directPairFromVideoEntity(value) {
+    const type = dataProperty(value, "type");
+    if (type !== "video" && type !== "animated_gif") return null;
+    const videoInfo = dataProperty(value, "video_info");
+    const variants = dataProperty(videoInfo, "variants");
+    if (!Array.isArray(variants)) return null;
+    const variantLength = dataProperty(variants, "length");
+    if (!Number.isSafeInteger(variantLength) || variantLength < 0) return null;
+
+    const posterCandidates = [];
+    for (const key of ["media_url_https", "media_url", "poster_url", "posterUrl", "poster", "url"]) {
+      const posterUrl = safeGenericVideoPosterUrl(dataProperty(value, key));
+      if (posterUrl) posterCandidates.push(posterUrl);
+    }
+    const postersByIdentity = new Map();
+    for (const posterUrl of posterCandidates) {
+      const identity = xAssetIdentity(posterUrl);
+      if (!postersByIdentity.has(identity)) postersByIdentity.set(identity, posterUrl);
+    }
+    if (postersByIdentity.size !== 1) return null;
+    const posterUrl = [...postersByIdentity.values()][0];
+    // Unexamined variants could bind this poster to another asset. A capped
+    // traversal cannot establish an unambiguous entity in that case.
+    if (variantLength > 32) return { posterUrl, ambiguous: true };
+
+    const assets = new Map();
+    const variantCount = Math.min(variantLength, 32);
+    for (let index = 0; index < variantCount; index += 1) {
+      const variant = dataProperty(variants, String(index));
+      if (!isObject(variant)) continue;
+      const contentType = dataProperty(variant, "content_type");
+      if (contentType !== undefined &&
+          (typeof contentType !== "string" || contentType.trim().toLowerCase() !== "video/mp4")) continue;
+      const playbackUrl = safeProgressiveVideoUrl(dataProperty(variant, "url"));
+      if (!playbackUrl) continue;
+      const assetIdentity = videoAssetIdentity(playbackUrl);
+      if (!assetIdentity) continue;
+      const previous = assets.get(assetIdentity);
+      if (!previous || playbackArea(playbackUrl) > playbackArea(previous)) assets.set(assetIdentity, playbackUrl);
+    }
+    if (assets.size === 0) return null;
+    if (assets.size > 1) return { posterUrl, ambiguous: true };
+    const [assetIdentity, playbackUrl] = [...assets.entries()][0];
+    return { posterUrl, assetIdentity, playbackUrl, ambiguous: false };
+  }
+
+  function safeGenericVideoPosterUrl(value) {
+    const url = safeStrictXUrl(value, "pbs.twimg.com");
+    if (!url || !/^\/media\//i.test(url.pathname)) return null;
+    const extension = url.pathname.match(/\.(jpe?g|png|gif|webp|avif)$/i)?.[1]?.toLowerCase() ?? null;
+    const formats = url.searchParams.getAll("format").map((format) => format.toLowerCase());
+    const supportedFormats = new Set(["jpg", "jpeg", "png", "gif", "webp", "avif"]);
+    if (formats.some((format) => !supportedFormats.has(format))) return null;
+    if (!extension && (formats.length !== 1 || !supportedFormats.has(formats[0]))) return null;
+    return url.href;
+  }
+
+  function safeProgressiveVideoUrl(value) {
+    const url = safeStrictXUrl(value, "video.twimg.com");
+    if (!url || !/^\/(?:amplify_video|ext_tw_video|tweet_video)\/[^/]+\//i.test(url.pathname)) return null;
+    return /\.mp4$/i.test(url.pathname) ? url.href : null;
+  }
+
+  function safeStrictXUrl(value, expectedHost) {
+    if (typeof value !== "string") return null;
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "https:" || url.username || url.password || url.port ||
+          url.hostname.toLowerCase() !== expectedHost) return null;
+      url.hash = "";
+      return url;
+    } catch {
+      return null;
+    }
   }
 
   function pairVideoEvidence(media) {

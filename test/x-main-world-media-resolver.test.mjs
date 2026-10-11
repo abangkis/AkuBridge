@@ -289,6 +289,220 @@ test("MP4 extraction follows the requested depth cap to find a deeply nested own
   assert.equal(result.candidates[0].media[0].playbackUrl, playback);
 });
 
+test("MP4 extraction pairs a generic /media/ poster with the best variant in its own video entity", () => {
+  const poster = "https://pbs.twimg.com/media/GlKfj-9W4AAMzDO.jpg?format=jpg&name=large";
+  const low = "https://video.twimg.com/amplify_video/asset-a/vid/320x180/low.mp4";
+  const high = "https://video.twimg.com/amplify_video/asset-a/vid/1280x720/high.mp4";
+  const article = syntheticArticle("67890", {
+    rest_id: "67890",
+    legacy: {
+      extended_entities: {
+        media: [
+          { type: "photo", media_url_https: "https://pbs.twimg.com/media/earlier-photo.jpg" },
+          {
+            type: "video",
+            media_url_https: poster,
+            original_info: { width: 1920, height: 1080 },
+            video_info: { variants: [
+              { content_type: "video/mp4", url: low },
+              { content_type: "application/x-mpegURL", url: "https://video.twimg.com/amplify_video/asset-a/pu/pl/master.m3u8" },
+              { content_type: "video/mp4", url: high },
+            ] },
+          },
+        ],
+      },
+    },
+  });
+
+  const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({
+    maxMediaPerCandidate: 1,
+    playbackFormat: "mp4",
+  }));
+
+  assert.deepEqual(result.candidates[0].media, [{
+    kind: "video",
+    url: poster,
+    posterUrl: poster,
+    playbackUrl: high,
+    playbackMode: "inline",
+    pairing: "same_video_media_entity",
+    width: 1920,
+    height: 1080,
+    provenance: "main_structured_state",
+  }]);
+});
+
+test("MP4 extraction resolves distinct generic poster entities and animated GIF media", () => {
+  const firstPoster = "https://pbs.twimg.com/media/first-generic?format=webp&name=large";
+  const secondPoster = "https://pbs.twimg.com/media/second-generic.png";
+  const firstPlayback = "https://video.twimg.com/ext_tw_video/video-a/vid/640x360/first.mp4";
+  const secondPlayback = "https://video.twimg.com/tweet_video/video-b/vid/1280x720/second.mp4";
+  const article = syntheticArticle("67891", {
+    rest_id: "67891",
+    legacy: {
+      extended_entities: {
+        media: [
+          { type: "video", media_url_https: firstPoster, video_info: { variants: [{ url: firstPlayback }] } },
+          { type: "animated_gif", media_url_https: secondPoster, video_info: { variants: [{ url: secondPlayback }] } },
+        ],
+      },
+    },
+  });
+
+  const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({ playbackFormat: "mp4" }));
+
+  assert.deepEqual(result.candidates[0].media.map(({ kind, posterUrl, playbackUrl, pairing }) => ({
+    kind, posterUrl, playbackUrl, pairing,
+  })), [
+    { kind: "video", posterUrl: firstPoster, playbackUrl: firstPlayback, pairing: "same_video_media_entity" },
+    { kind: "video", posterUrl: secondPoster, playbackUrl: secondPlayback, pairing: "same_video_media_entity" },
+  ]);
+});
+
+test("MP4 extraction fails closed when one generic poster maps to conflicting video entities", () => {
+  const poster = "https://pbs.twimg.com/media/reused-poster?format=jpg";
+  const article = syntheticArticle("67892", {
+    rest_id: "67892",
+    legacy: {
+      extended_entities: {
+        media: [
+          { type: "video", media_url_https: poster, video_info: { variants: [{ url: "https://video.twimg.com/ext_tw_video/video-a/vid/640x360/a.mp4" }] } },
+          { type: "video", media_url_https: poster, video_info: { variants: [{ url: "https://video.twimg.com/ext_tw_video/video-b/vid/640x360/b.mp4" }] } },
+        ],
+      },
+    },
+  });
+
+  const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({ playbackFormat: "mp4" }));
+  const media = result.candidates[0].media;
+
+  assert.equal(media.length, 1);
+  assert.equal(media[0].kind, "image");
+  assert.equal(media[0].posterUrl, poster);
+  assert.equal(media[0].playbackUrl, null);
+  assert.equal("pairing" in media[0], false);
+});
+
+test("MP4 extraction does not pair generic posters with image-only, HLS-only, or ambiguous entities", () => {
+  const imagePoster = "https://pbs.twimg.com/media/image-only.jpg";
+  const hlsPoster = "https://pbs.twimg.com/media/hls-only?format=png";
+  const ambiguousPoster = "https://pbs.twimg.com/media/ambiguous?format=avif";
+  const article = syntheticArticle("67893", {
+    rest_id: "67893",
+    legacy: {
+      extended_entities: {
+        media: [
+          { type: "photo", media_url_https: imagePoster, video_info: { variants: [{ url: "https://video.twimg.com/ext_tw_video/image/vid/640x360/photo.mp4" }] } },
+          { type: "video", media_url_https: hlsPoster, video_info: { variants: [{ url: "https://video.twimg.com/ext_tw_video/hls/pu/pl/master.m3u8" }] } },
+          { type: "video", media_url_https: ambiguousPoster, video_info: { variants: [
+            { url: "https://video.twimg.com/ext_tw_video/ambiguous-a/vid/640x360/a.mp4" },
+            { url: "https://video.twimg.com/ext_tw_video/ambiguous-b/vid/1280x720/b.mp4" },
+          ] } },
+        ],
+      },
+    },
+  });
+
+  const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({ playbackFormat: "mp4" }));
+
+  assert.equal(result.candidates[0].media.some((item) => item.kind === "video"), false);
+  assert.equal(result.candidates[0].media.some((item) => item.posterUrl === imagePoster), true);
+  assert.equal(result.candidates[0].media.some((item) => item.posterUrl === hlsPoster), true);
+  assert.equal(result.candidates[0].media.some((item) => item.posterUrl === ambiguousPoster), true);
+});
+
+test("MP4 extraction fails closed when generic entity variants exceed the inspection cap", () => {
+  const poster = "https://pbs.twimg.com/media/bounded.jpg";
+  const variants = Array.from({ length: 32 }, () => ({
+    url: "https://video.twimg.com/amplify_video/asset-a/vid/640x360/a.mp4",
+  }));
+  variants.push({ url: "https://video.twimg.com/amplify_video/asset-b/vid/640x360/b.mp4" });
+  const article = syntheticArticle("67896", {
+    rest_id: "67896", legacy: { extended_entities: { media: [
+      { type: "video", media_url_https: poster, video_info: { variants } },
+    ] } },
+  });
+  const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({ playbackFormat: "mp4" }));
+  assert.equal(result.candidates[0].media.some(item => item.playbackUrl), false);
+});
+
+test("MP4 extraction rejects unsafe generic poster and playback URLs", () => {
+  const cases = [
+    {
+      poster: "http://pbs.twimg.com/media/insecure.jpg",
+      playback: "https://video.twimg.com/ext_tw_video/unsafe-a/vid/640x360/a.mp4",
+    },
+    {
+      poster: "https://user@pbs.twimg.com/media/credentials.jpg",
+      playback: "https://video.twimg.com:444/ext_tw_video/unsafe-b/vid/640x360/b.mp4",
+    },
+    {
+      poster: "https://pbs.twimg.com:444/media/nondefault-port.jpg",
+      playback: "https://video.twimg.com/ext_tw_video/unsafe-c/vid/640x360/c.mp4",
+    },
+    {
+      poster: "https://pbs.twimg.com/media/credentialed-playback.jpg",
+      playback: "https://user@video.twimg.com/ext_tw_video/unsafe-c2/vid/640x360/c.mp4",
+    },
+    {
+      poster: "https://pbs.twimg.com/media/no-image-format",
+      playback: "https://video.twimg.com.evil.example/ext_tw_video/unsafe-d/vid/640x360/d.mp4",
+    },
+  ];
+  const article = syntheticArticle("67894", {
+    rest_id: "67894",
+    legacy: {
+      extended_entities: {
+        media: cases.map(({ poster, playback }) => ({
+          type: "video",
+          media_url_https: poster,
+          video_info: { variants: [{ content_type: "video/mp4", url: playback }] },
+        })),
+      },
+    },
+  });
+
+  const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({ playbackFormat: "mp4" }));
+
+  assert.equal(result.candidates[0].media.some((item) => item.pairing === "same_video_media_entity"), false);
+});
+
+test("MP4 extraction cannot borrow generic poster variants from sibling, quoted, or foreign Tweet entities", () => {
+  const poster = "https://pbs.twimg.com/media/isolated-generic?format=jpg";
+  const foreignPlayback = "https://video.twimg.com/ext_tw_video/foreign-video/vid/1280x720/foreign.mp4";
+  const own = {
+    __typename: "Tweet",
+    rest_id: "67895",
+    legacy: {
+      full_text: "Owning post",
+      extended_entities: {
+        media: [{ type: "video", media_url_https: poster }],
+      },
+    },
+    sibling_media: { video_info: { variants: [{ url: foreignPlayback }] } },
+    quoted_status_result: {
+      result: {
+        __typename: "Tweet",
+        rest_id: "99999",
+        legacy: {
+          full_text: "Quoted post",
+          extended_entities: {
+            media: [{ video_info: { variants: [{ url: "https://video.twimg.com/ext_tw_video/quote-video/vid/1280x720/quoted.mp4" }] } }],
+          },
+        },
+      },
+    },
+  };
+  const article = syntheticArticle("67895", own);
+
+  const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({ playbackFormat: "mp4" }));
+
+  assert.equal(result.candidates[0].media.some((item) => item.pairing === "same_video_media_entity"), false);
+  assert.equal(result.candidates[0].media.some((item) => item.posterUrl === poster && item.kind === "image"), true);
+  assert.equal(JSON.stringify(result).includes("foreign.mp4"), false);
+  assert.equal(JSON.stringify(result).includes("quoted.mp4"), false);
+});
+
 function syntheticArticle(candidateId, structuredState) {
   const anchor = {
     href: `https://x.com/author/status/${candidateId}`,
