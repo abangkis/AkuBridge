@@ -17,6 +17,32 @@
     'a[href*="/school/"] img',
     'a[href*="/showcase/"] img',
   ].join(", ");
+
+  function matchesLinkedInFreshnessFeedURL(value) {
+    if (typeof value !== "string" || value.length > 2048) return false;
+    const origin = "https://www.linkedin.com";
+    if (!value.startsWith(`${origin}/`)) return false;
+    const rawPath = value.slice(origin.length).split(/[?#]/, 1)[0];
+    if (rawPath !== "/feed/") return false;
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && url.origin === origin &&
+        url.hostname === "www.linkedin.com" && !url.username && !url.password &&
+        !url.port && url.pathname === "/feed/";
+    } catch { return false; }
+  }
+
+  function linkedinFreshnessPrimaryIdentity(post) {
+    if (typeof post?.id !== "string" || typeof post?.permalink !== "string") return null;
+    const idMatch = /^linkedin:(activity|ugcpost|share):(\d{5,30})$/.exec(post.id);
+    if (!idMatch) return null;
+    const urnType = idMatch[1] === "ugcpost" ? "ugcPost" : idMatch[1];
+    const expectedPermalink =
+      `https://www.linkedin.com/feed/update/urn:li:${urnType}:${idMatch[2]}/`;
+    if (post.permalink !== expectedPermalink) return null;
+    return { id: post.id, permalink: expectedPermalink };
+  }
+
   let lastLiveMediaDiagnostics = null;
   const baseMediaEvidenceRuntime = globalThis.AkuMediaPostProcessor?.createEvidenceRuntime?.({
     source: "linkedin",
@@ -97,7 +123,12 @@
     }),
     freshness: Object.freeze({
       version: "linkedin-freshness-v2",
-      headless: Object.freeze({ enabled: false }),
+      headless: Object.freeze({
+        enabled: true,
+        version: "linkedin-headless-freshness-v1",
+        matchesFeedURL: matchesLinkedInFreshnessFeedURL,
+        primaryIdentity: linkedinFreshnessPrimaryIdentity,
+      }),
       wakeWhenBackground: true,
       settledWakeIsCurrent: true,
       wakeObservationMs: 4_000,
