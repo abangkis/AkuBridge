@@ -1,0 +1,25 @@
+<!-- Synthetic DOM only: no provider content, network requests or credentials. -->
+<div id="synthetic-feed-post">
+  <div data-view-name="feed-social-context"><a href="https://www.linkedin.com/in/synthetic">Synthetic account</a> commented</div>
+  <div data-view-name="feed-actor-name">Synthetic post author</div>
+  <p data-testid="expandable-text-box">Synthetic post body.</p>
+  <div id="replaceableComment_urn:li:comment:(activity:1234567890123456789,1111111111111111111)">
+    <a href="https://www.linkedin.com/in/synthetic">Synthetic account</a>
+    <button aria-label="View more options for Synthetic account’s comment.">Options</button>
+    <div data-testid="expandable-text-box">First observed comment.</div>
+    <div data-testid="expandable-text-box"></div>
+  </div>
+  <div componentkey="replaceableComment_urn:li:comment:(activity:1234567890123456789,2222222222222222222)">
+    <a href="https://www.linkedin.com/in/synthetic">Synthetic account</a>
+    <button aria-label="View more options for Synthetic account’s comment.">Options</button>
+    <div data-testid="expandable-text-box">Second observed comment.</div>
+  </div>
+  <div componentkey="replaceableComment_urn:li:comment:(activity:1234567890123456789,1111111111111111111)">
+    <a href="https://www.linkedin.com/in/synthetic">Synthetic account display variant</a>
+    <div data-testid="expandable-text-box"></div>
+  </div>
+  <div id="replaceableComment_urn:li:comment:(activity:1234567890123456789,3333333333333333333)" data-qa-read-failure>
+    <a href="https://www.linkedin.com/in/synthetic">Synthetic account</a>
+    <div data-testid="expandable-text-box">Synthetic read fault target.</div>
+  </div>
+</div>

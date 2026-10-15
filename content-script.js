@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v113";
+  const runtimeRevision = "source-adapters-v114";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -1011,6 +1011,17 @@
     }
     const contentRoot = findContentRoot(container, source);
     const media = findMedia(container, source, { excludeRoot: quotedRoot });
+    let directContext = [];
+    try {
+      const observed = adapter.extractDirectContext?.(container, {
+        compactText, structuredText, normalizeHttpUrl, permalink, quotedPost,
+      }) ?? [];
+      if (!Array.isArray(observed)) throw new Error("Invalid direct context result");
+      directContext = observed.slice(0, 8);
+    } catch {
+      // Context is optional evidence. Its failure must not discard the post.
+      presentation.directContextStatus = "extraction_failed";
+    }
     return {
       text,
       author: sourceAdapters.get(source).findAuthor(container, { compactText }),
@@ -1024,9 +1035,7 @@
       relationshipType: semantics.relationshipType ?? "original",
       parentPermalink: normalizeHttpUrl(semantics.parentPermalink),
       quotedPost,
-      directContext: adapter.extractDirectContext?.(container, {
-        compactText, structuredText, normalizeHttpUrl, permalink, quotedPost,
-      }) ?? [],
+      directContext,
       engagement: semantics.engagement ?? {},
       presentation,
       attachments,

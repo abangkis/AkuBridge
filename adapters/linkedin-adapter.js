@@ -60,7 +60,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v21",
+    version: "linkedin-dom-v22",
     maxBlocksPerSnapshot: 8,
     scrollContext: "nearest_scrollable",
     scrollRootSelectors: Object.freeze(['[data-testid="mainFeed"]', "main", "#workspace"]),
@@ -905,51 +905,281 @@
   function extractLinkedInDirectContext(container, { compactText, structuredText }) {
     const banner = interactionBanner(container, compactText);
     if (!banner || /\breposted\b/i.test(banner.text)) return [];
-    const kind = /\b(?:replied|membalas)\b/i.test(banner.text) ? "feed_reply" : "feed_comment";
     const selector = linkedInCommentRootSelector;
-    const nodes = [...container.querySelectorAll(selector)].filter((node) =>
-      !node.getClientRects || node.getClientRects().length > 0);
-    const own = (node, query) => [...node.querySelectorAll(query)].filter((child) => child.closest(selector) === node);
+    const roots = [...new Set(container.querySelectorAll(selector))];
+    const nodes = [];
+    const visibility = new Map();
+    const failedRootNodes = new Set();
+    const own = (node, query) => [...(node.querySelectorAll?.(query) || [])]
+      .filter((child) => child.closest?.(selector) === node);
+    const isVisible = (node) => !node.getClientRects || node.getClientRects().length > 0;
+    for (const node of roots) {
+      try {
+        const visible = isVisible(node);
+        visibility.set(node, visible);
+        if (visible) nodes.push(node);
+      } catch {
+        visibility.set(node, null);
+        failedRootNodes.add(node);
+      }
+    }
     const authorOf = (node) => {
       const legacy = own(node, '.comments-post-meta__name-text, .comments-comment-meta__description-title, a[data-view-name="comment-actor"]')[0];
-      if (legacy) return { element: legacy, url: profileIdentity(legacy.href || legacy.closest?.('a[href]')?.href), name: compactText(legacy.innerText).slice(0, 300) };
+      if (legacy) {
+        const url = profileIdentity(legacy.href || legacy.closest?.('a[href]')?.href);
+        return { element: legacy, url, name: compactText(legacy.innerText).slice(0, 300), identityUrls: url ? [url] : [] };
+      }
       const bodies = own(node, linkedInCommentBodySelector);
       const links = own(node, 'a[href*="/in/"]')
         .filter((link) => !bodies.some((body) => body.contains?.(link)))
         .map((element) => ({ element, url: profileIdentity(element.href || element.getAttribute?.('href')) }))
         .filter((author) => author.url);
       const identities = [...new Set(links.map((author) => author.url))];
-      if (identities.length !== 1) return null;
-      return { element: links.find((author) => author.url === identities[0]).element, url: identities[0], name: cleanCommentName(node, compactText) };
+      if (identities.length !== 1) {
+        return { element: null, url: "", name: cleanCommentName(node, compactText), identityUrls: identities };
+      }
+      return {
+        element: links.find((author) => author.url === identities[0]).element,
+        url: identities[0],
+        name: cleanCommentName(node, compactText),
+        identityUrls: identities,
+      };
     };
-    const matches = banner.actor ? nodes.filter((node) => {
-      const author = authorOf(node);
-      return author?.url === banner.actor.url;
-    }) : [];
-    const readComment = (node) => {
-      const author = authorOf(node);
-      const bodies = own(node, linkedInCommentBodySelector);
+    const commentId = (node) => {
+      const rawID = node.getAttribute?.('data-id') || node.getAttribute?.('data-comment-id') ||
+        node.id?.replace(/^replaceableComment_/, '') || node.getAttribute?.('componentkey')?.replace(/^replaceableComment_/, '') || '';
+      return /^(?:urn:li:comment:[A-Za-z0-9:(),_-]+|\d+)$/.test(rawID) ? rawID.slice(0, 200) : "";
+    };
+    const normalizeBodyText = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
+    const bodyEvidence = (node) => {
+      const bodies = own(node, linkedInCommentBodySelector).filter(isVisible);
       const leafBodies = bodies.filter((candidate) => !bodies.some((other) =>
         other !== candidate && candidate.contains?.(other)));
-      const body = leafBodies.length === 1 ? leafBodies[0] : null;
-      const fullText = body ? (structuredText?.(body) || compactText(body.innerText)).trim() : "";
+      const candidatesByText = new Map();
+      for (const candidate of leafBodies) {
+        const fullText = String(structuredText?.(candidate) || compactText(candidate.innerText)).trim();
+        const normalizedText = normalizeBodyText(fullText);
+        if (normalizedText && !candidatesByText.has(normalizedText)) {
+          candidatesByText.set(normalizedText, { body: candidate, fullText, normalizedText });
+        }
+      }
+      const candidates = [...candidatesByText.values()];
+      const resolved = candidates.length === 1 ? candidates[0] : null;
+      const body = resolved?.body || null;
+      const fullText = resolved?.fullText || "";
       const text = fullText.slice(0, 4000);
       const partial = Boolean(text && (fullText.length > 4000 || body?.querySelector?.('[data-testid="expandable-text-button"]')));
-      const rawID = node.getAttribute('data-id') || node.getAttribute('data-comment-id') ||
-        node.id?.replace(/^replaceableComment_/, '') || node.getAttribute('componentkey')?.replace(/^replaceableComment_/, '') || '';
-      const id = /^(?:urn:li:comment:[A-Za-z0-9:(),_-]+|\d+)$/.test(rawID) ? rawID.slice(0, 200) : "";
-      return { kind: "comment", id, author: author?.name || "", text,
-        availability: text ? partial ? "partial" : "captured" : "reference_only" };
+      let captureReason = "";
+      if (candidates.length === 0) captureReason = "comment_body_not_observed";
+      else if (candidates.length > 1) captureReason = "comment_body_ambiguous";
+      return {
+        body,
+        text,
+        partial,
+        captureReason,
+        comparisonText: captureReason ? "" : resolved.normalizedText,
+      };
     };
-    // Multiple comments by one actor cannot be tied to the feed banner without
-    // an explicit comment identity. Keep that ambiguity visible.
-    const comment = matches.length === 1 ? matches[0] : null;
-    const parentNode = comment?.parentElement?.closest(selector);
-    const attributable = comment && (kind === "feed_reply" ? Boolean(parentNode) : !parentNode);
-    return [{ kind, actor: banner.actor?.name || "", actorUrl: banner.actor?.url || "",
-      observedText: banner.text, provenance: "observed_dom", capturedAt: new Date().toISOString(),
-      target: attributable ? readComment(comment) : { kind: "comment", availability: "reference_only" },
-      ...(kind === "feed_reply" && parentNode && nodes.includes(parentNode) ? { parent: readComment(parentNode) } : {}),
-    }];
+    const baseEvidence = new Map();
+    const baseFor = (node) => {
+      if (!node) return null;
+      if (baseEvidence.has(node)) return baseEvidence.get(node);
+      try {
+        const base = { node, id: commentId(node), author: authorOf(node), body: bodyEvidence(node) };
+        baseEvidence.set(node, base);
+        return base;
+      } catch {
+        failedRootNodes.add(node);
+        const failed = { node, readFailed: true };
+        baseEvidence.set(node, failed);
+        return failed;
+      }
+    };
+    const recordFor = (node) => {
+      const base = baseFor(node);
+      if (!base || base.readFailed) return null;
+      let parentNode = null;
+      let parentLookupFailed = false;
+      try {
+        parentNode = node.parentElement?.closest?.(selector) || null;
+      } catch {
+        parentLookupFailed = true;
+        failedRootNodes.add(node);
+      }
+      const parentBaseCandidate = parentNode && visibility.get(parentNode) === true
+        ? baseFor(parentNode)
+        : null;
+      const parentReadFailed = Boolean(parentNode && (
+        failedRootNodes.has(parentNode) || parentBaseCandidate?.readFailed
+      ));
+      return {
+        ...base,
+        parentNode,
+        parentBase: parentBaseCandidate && !parentBaseCandidate.readFailed ? parentBaseCandidate : null,
+        parentLookupFailed,
+        parentReadFailed,
+        kind: !parentLookupFailed && parentNode ? "feed_reply" : "feed_comment",
+      };
+    };
+    const records = [];
+    for (const node of nodes) {
+      const record = recordFor(node);
+      if (record) records.push(record);
+    }
+    const uniqueValuesConflict = (values) => new Set(values.filter(Boolean)).size > 1;
+    const authorUrls = (record) => [
+      record.author?.url,
+      ...(record.author?.identityUrls || []),
+    ].filter(Boolean);
+    const resolvedBodyTexts = (record) => record.body?.comparisonText ? [record.body.comparisonText] : [];
+    const parentEvidenceConflicts = (group) => {
+      const ancestryKnown = group.filter((record) => !record.parentLookupFailed);
+      if (new Set(ancestryKnown.map((record) => Boolean(record.parentNode))).size > 1) return true;
+      const parents = ancestryKnown.filter((record) => record.parentNode && record.parentBase);
+      if (uniqueValuesConflict(parents.map((record) => record.parentBase.id))) return true;
+      if (uniqueValuesConflict(parents.flatMap((record) => authorUrls(record.parentBase)))) return true;
+      if (uniqueValuesConflict(parents.flatMap((record) => resolvedBodyTexts(record.parentBase)))) return true;
+      return false;
+    };
+    const evidenceConflicts = (group) => (
+      uniqueValuesConflict(group.flatMap(authorUrls)) ||
+      uniqueValuesConflict(group.flatMap(resolvedBodyTexts)) ||
+      parentEvidenceConflicts(group)
+    );
+    const recordsById = new Map();
+    for (const record of records) {
+      if (!record.id) continue;
+      if (!recordsById.has(record.id)) recordsById.set(record.id, []);
+      recordsById.get(record.id).push(record);
+    }
+    const ambiguousCommentIds = new Set([...recordsById]
+      .filter(([, group]) => evidenceConflicts(group))
+      .map(([id]) => id));
+    const bodyEvidenceRank = (record) => record.body.comparisonText
+      ? record.body.partial ? 2 : 3
+      : 0;
+    const preferredRecordById = new Map([...recordsById]
+      .filter(([id]) => !ambiguousCommentIds.has(id))
+      .map(([id, group]) => [id, [...group].sort((left, right) =>
+        bodyEvidenceRank(right) - bodyEvidenceRank(left) ||
+        nodes.indexOf(left.node) - nodes.indexOf(right.node))[0]]));
+    const makeComment = (record) => ({
+      kind: "comment",
+      id: record.id,
+      author: record.author?.name || "",
+      text: record.body.text,
+      availability: record.body.captureReason
+        ? "reference_only"
+        : record.body.partial ? "partial" : "captured",
+      ...(record.body.captureReason ? { captureReason: record.body.captureReason } : {}),
+    });
+    const matchedGroups = [];
+    if (banner.actor) {
+      const stableGroups = new Map();
+      const withoutIds = [];
+      for (const record of records) {
+        if (record.id) {
+          if (!stableGroups.has(record.id)) stableGroups.set(record.id, []);
+          stableGroups.get(record.id).push(record);
+        } else {
+          withoutIds.push(record);
+        }
+      }
+      for (const [id, group] of stableGroups) {
+        const matches = group.filter((record) => record.author?.url === banner.actor.url);
+        if (!matches.length) continue;
+        const conflicts = evidenceConflicts(group);
+        const rankedMatches = [...matches].sort((left, right) =>
+          bodyEvidenceRank(right) - bodyEvidenceRank(left) ||
+          nodes.indexOf(left.node) - nodes.indexOf(right.node));
+        matchedGroups.push({ id, records: group, record: rankedMatches[0], conflicts, order: nodes.indexOf(group[0].node) });
+      }
+      const exactUnknownIdClones = new Map();
+      for (const record of withoutIds) {
+        if (record.author?.url !== banner.actor.url) continue;
+        const key = JSON.stringify({
+          kind: record.kind,
+          authorUrl: record.author.url,
+          body: record.body.comparisonText || record.body.captureReason,
+          parentId: record.parentBase?.id || "",
+          parentAuthorUrl: record.parentBase?.author?.url || "",
+          parentBody: record.parentBase?.body?.comparisonText || "",
+        });
+        if (!exactUnknownIdClones.has(key)) exactUnknownIdClones.set(key, []);
+        exactUnknownIdClones.get(key).push(record);
+      }
+      for (const group of exactUnknownIdClones.values()) {
+        matchedGroups.push({ id: "", records: group, record: group[0], conflicts: false, order: nodes.indexOf(group[0].node) });
+      }
+    }
+    matchedGroups.sort((left, right) => left.order - right.order);
+
+    const capturedAt = new Date().toISOString();
+    const relationFor = (group) => {
+      const record = group.record;
+      const consistentKind = group.records.every((candidate) => candidate.kind === record.kind);
+      const kind = consistentKind ? record.kind : "feed_comment";
+      const target = group.conflicts
+        ? { kind: "comment", id: group.id, availability: "reference_only", captureReason: "comment_identity_ambiguous" }
+        : makeComment(record);
+      const preferredParent = record.parentBase?.id
+        ? preferredRecordById.get(record.parentBase.id) || record.parentBase
+        : record.parentBase;
+      const parentTarget = record.parentBase?.id && ambiguousCommentIds.has(record.parentBase.id)
+        ? {
+          kind: "comment",
+          id: record.parentBase.id,
+          availability: "reference_only",
+          captureReason: "comment_identity_ambiguous",
+        }
+        : preferredParent ? makeComment(preferredParent)
+          : record.parentReadFailed
+            ? { kind: "comment", availability: "reference_only", captureReason: "comment_read_failed" }
+            : null;
+      return {
+        kind,
+        actor: banner.actor?.name || "",
+        actorUrl: banner.actor?.url || "",
+        observedText: banner.text,
+        provenance: "observed_dom",
+        capturedAt,
+        matchBasis: "actor_profile",
+        target,
+        ...(!group.conflicts && record.kind === "feed_reply" && parentTarget
+          ? { parent: parentTarget }
+          : {}),
+      };
+    };
+    if (!matchedGroups.length) {
+      let captureReason = "matching_comments_not_observed";
+      if (!banner.actor) captureReason = "actor_identity_unresolved";
+      else if (failedRootNodes.size > 0) captureReason = "comment_read_failed";
+      else if (roots.length === 0) captureReason = "comments_not_observed";
+      else if (nodes.length === 0) captureReason = "comments_not_visible";
+      else if (records.some((record) => !record.author?.url)) captureReason = "comment_author_unresolved";
+      const relation = {
+        kind: /\b(?:replied|membalas)\b/i.test(banner.text) ? "feed_reply" : "feed_comment",
+        actor: banner.actor?.name || "",
+        actorUrl: banner.actor?.url || "",
+        observedText: banner.text,
+        provenance: "observed_dom",
+        capturedAt,
+        target: { kind: "comment", availability: "reference_only", captureReason },
+      };
+      if (failedRootNodes.size) relation.commentReadErrorCount = failedRootNodes.size;
+      return [relation];
+    }
+    const rankedGroups = [...matchedGroups].sort((left, right) => {
+      const rank = (group) => group.conflicts || !group.record.body.comparisonText
+        ? 0
+        : group.record.body.partial ? 1 : 2;
+      return rank(right) - rank(left) || left.order - right.order;
+    });
+    const selectedGroups = rankedGroups.slice(0, 8).sort((left, right) => left.order - right.order);
+    const relations = selectedGroups.map(relationFor);
+    const omittedCommentCount = Math.max(0, matchedGroups.length - relations.length);
+    if (omittedCommentCount) relations[0].omittedCommentCount = omittedCommentCount;
+    if (failedRootNodes.size) relations[0].commentReadErrorCount = failedRootNodes.size;
+    return relations;
   }
 })();
