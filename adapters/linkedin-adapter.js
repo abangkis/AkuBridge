@@ -60,7 +60,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v20",
+    version: "linkedin-dom-v21",
     maxBlocksPerSnapshot: 8,
     scrollContext: "nearest_scrollable",
     scrollRootSelectors: Object.freeze(['[data-testid="mainFeed"]', "main", "#workspace"]),
@@ -851,6 +851,21 @@
       && /^\/in\/[^/]+\/?$/.test(url.pathname) ? `${url.origin}${url.pathname.replace(/\/$/, "")}` : ""; } catch { return ""; }
   }
 
+  const linkedInCommentRootSelector = '.comments-comment-item, .comments-comment-entity, [data-id^="urn:li:comment:"], [id^="replaceableComment_urn:li:comment:"], [componentkey^="replaceableComment_urn:li:comment:"]';
+  const linkedInCommentBodySelector = '.comments-comment-item__main-content, .comments-comment-item-content-body, .comments-comment-entity__content, [data-testid="expandable-text-box"]';
+  const linkedInPostBodySelector = '[data-testid="expandable-text-box"], .update-components-text, .feed-shared-update-v2__description';
+
+  function cleanCommentName(node, compactText) {
+    const buttons = [...(node.querySelectorAll?.('button[aria-label]') || [])]
+      .filter((button) => button.closest?.(linkedInCommentRootSelector) === node);
+    for (const button of buttons) {
+      const label = compactText(button.getAttribute?.("aria-label"));
+      const match = label.match(/^View more options for (.+?)[’']s comment\.$/i);
+      if (match?.[1]) return match[1].slice(0, 300);
+    }
+    return "";
+  }
+
   function interactionBanner(container, compactText) {
     const author = postAuthor(container, compactText);
     const lines = String(container.innerText || "").split(/\n+/).map(compactText).filter(Boolean);
@@ -860,12 +875,30 @@
     if (!text) return null;
     const headers = [...container.querySelectorAll('.update-components-header__text-view, .feed-shared-header__text-view, [data-view-name="feed-social-context"]')];
     const header = headers.find((node) => compactText(node.innerText) === text);
-    const actors = header ? [...header.querySelectorAll('a[href*="/in/"]')]
+    let actorNodes = header ? [...header.querySelectorAll('a[href*="/in/"]')] : [];
+    // The current LinkedIn SDUI header may have no legacy header class. Accept
+    // only a linked actor inside an ancestor whose complete visible text is the
+    // already observed banner line, and never derive identity from plain text.
+    if (!actorNodes.length) {
+      for (const candidate of container.querySelectorAll('a[href*="/in/"]')) {
+        if (candidate.closest?.(linkedInCommentRootSelector) || candidate.closest?.(linkedInPostBodySelector)) continue;
+        for (let ancestor = candidate.parentElement; ancestor && ancestor !== container; ancestor = ancestor.parentElement) {
+          if (compactText(ancestor.innerText) !== text) continue;
+          if (ancestor.closest?.(linkedInCommentRootSelector) || ancestor.closest?.(linkedInPostBodySelector)) break;
+          actorNodes.push(candidate);
+          break;
+        }
+      }
+    }
+    const actors = actorNodes
       .map((node) => ({ url: profileIdentity(node.href), name: compactText(node.innerText).slice(0, 300) }))
-      .filter((actor) => actor.url && actor.name) : [];
+      .filter((actor) => actor.url && actor.name);
     // A reply banner can mention both people. Only the leading linked name is
     // the actor; unlinked names never establish identity.
-    const actor = actors.find((candidate) => text.startsWith(candidate.name));
+    const actorPrefix = text.replace(/\s+(?:commented(?: on this)?|replied to .+|reposted(?: this)?|mengomentari(?: ini)?|membalas .+)$/i, "").trim();
+    const leadingActors = actors.filter((candidate) => candidate.name === actorPrefix);
+    const leadingActorUrls = [...new Set(leadingActors.map((candidate) => candidate.url))];
+    const actor = leadingActorUrls.length === 1 ? leadingActors.find((candidate) => candidate.url === leadingActorUrls[0]) : null;
     return { text: text.slice(0, 500), actor };
   }
 
@@ -873,23 +906,40 @@
     const banner = interactionBanner(container, compactText);
     if (!banner || /\breposted\b/i.test(banner.text)) return [];
     const kind = /\b(?:replied|membalas)\b/i.test(banner.text) ? "feed_reply" : "feed_comment";
-    const selector = '.comments-comment-item, .comments-comment-entity, [data-id^="urn:li:comment:"]';
+    const selector = linkedInCommentRootSelector;
     const nodes = [...container.querySelectorAll(selector)].filter((node) =>
       !node.getClientRects || node.getClientRects().length > 0);
     const own = (node, query) => [...node.querySelectorAll(query)].filter((child) => child.closest(selector) === node);
-    const authorOf = (node) => own(node, '.comments-post-meta__name-text, .comments-comment-meta__description-title, a[data-view-name="comment-actor"]')[0];
+    const authorOf = (node) => {
+      const legacy = own(node, '.comments-post-meta__name-text, .comments-comment-meta__description-title, a[data-view-name="comment-actor"]')[0];
+      if (legacy) return { element: legacy, url: profileIdentity(legacy.href || legacy.closest?.('a[href]')?.href), name: compactText(legacy.innerText).slice(0, 300) };
+      const bodies = own(node, linkedInCommentBodySelector);
+      const links = own(node, 'a[href*="/in/"]')
+        .filter((link) => !bodies.some((body) => body.contains?.(link)))
+        .map((element) => ({ element, url: profileIdentity(element.href || element.getAttribute?.('href')) }))
+        .filter((author) => author.url);
+      const identities = [...new Set(links.map((author) => author.url))];
+      if (identities.length !== 1) return null;
+      return { element: links.find((author) => author.url === identities[0]).element, url: identities[0], name: cleanCommentName(node, compactText) };
+    };
     const matches = banner.actor ? nodes.filter((node) => {
       const author = authorOf(node);
-      return profileIdentity(author?.href || author?.closest('a[href]')?.href) === banner.actor.url;
+      return author?.url === banner.actor.url;
     }) : [];
     const readComment = (node) => {
       const author = authorOf(node);
-      const body = own(node, '.comments-comment-item__main-content, .comments-comment-item-content-body, .comments-comment-entity__content')[0];
-      const text = body ? (structuredText?.(body) || compactText(body.innerText)).slice(0, 4000) : "";
-      const rawID = node.getAttribute('data-id') || node.getAttribute('data-comment-id') || '';
+      const bodies = own(node, linkedInCommentBodySelector);
+      const leafBodies = bodies.filter((candidate) => !bodies.some((other) =>
+        other !== candidate && candidate.contains?.(other)));
+      const body = leafBodies.length === 1 ? leafBodies[0] : null;
+      const fullText = body ? (structuredText?.(body) || compactText(body.innerText)).trim() : "";
+      const text = fullText.slice(0, 4000);
+      const partial = Boolean(text && (fullText.length > 4000 || body?.querySelector?.('[data-testid="expandable-text-button"]')));
+      const rawID = node.getAttribute('data-id') || node.getAttribute('data-comment-id') ||
+        node.id?.replace(/^replaceableComment_/, '') || node.getAttribute('componentkey')?.replace(/^replaceableComment_/, '') || '';
       const id = /^(?:urn:li:comment:[A-Za-z0-9:(),_-]+|\d+)$/.test(rawID) ? rawID.slice(0, 200) : "";
-      return { kind: "comment", id, author: compactText(author?.innerText).slice(0, 300), text,
-        availability: text ? "captured" : "reference_only" };
+      return { kind: "comment", id, author: author?.name || "", text,
+        availability: text ? partial ? "partial" : "captured" : "reference_only" };
     };
     // Multiple comments by one actor cannot be tied to the feed banner without
     // an explicit comment identity. Keep that ambiguity visible.

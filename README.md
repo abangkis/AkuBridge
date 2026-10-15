@@ -1,7 +1,7 @@
 # AkuBridge
 
 Current stable identity: **`0.9.2`** / Chrome manifest
-**`0.9.2.0`** / runtime **`source-adapters-v112`**.
+**`0.9.2.0`** / runtime **`source-adapters-v113`**.
 
 Runtime v73 adds bounded background command dispatch for AkuBrowser Auto
 Update. After a trusted local AkuBrowser page configures the loopback endpoint
@@ -67,7 +67,7 @@ or validate the complete bridge observation by themselves.
 flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
     DOM --> XA["X adapter<br/>x-dom-v22<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
-    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v20<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v2"]
+    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v21<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v2"]
     DOM --> FA["Facebook adapter<br/>facebook-dom-v19<br/>facebook-media-acquisition-v2"]
     DOM --> IA["Instagram adapter<br/>instagram-dom-v6<br/>instagram-media-acquisition-v2"]
     XA --> R["Source-adapter registry"]
@@ -353,6 +353,16 @@ LinkedIn `presentation.socialContext` preserves the source-native reason a post
 entered the feed, including compact forms such as `Mohamad Ramzy commented` as
 well as `Reza Lesmana likes this`. The optional small context avatar is kept
 separate from the post author's identity and is presentation evidence only.
+
+LinkedIn direct comment context supports both legacy comment markup and SDUI
+`replaceableComment_urn:li:comment:` roots. It reads the comment's own
+`expandable-text-box` and matches the feed actor by a linked profile identity;
+mentions inside comment text do not establish authorship. Missing, hidden, or
+ambiguous comments remain reference-only. A native post detail page may show
+comments without the feed activity banner: those comments alone cannot identify
+which interaction caused the post to enter the feed. This is passive capture of
+loaded content; it does not open comment threads or recover old missing bodies
+retroactively.
 
 When a rendered media root remains empty, the generic Media Acquisition Engine
 tries source-exposed structured state, then uses at most one pre-authorized
