@@ -42,7 +42,7 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v22",
+    version: "x-dom-v23",
     mediaHosts: Object.freeze(["pbs.twimg.com", "video.twimg.com"]),
     structuredMediaEvidence: Object.freeze({
       payloadField: "xStructuredMediaEvidence",
@@ -179,10 +179,20 @@
     permalinkPatterns: Object.freeze([/\/status\/\d+/]),
     contentRootSelector: '[data-testid="tweetText"], ' + xArticleRootSelector,
     extractText: (container, { compactText, structuredText }) => {
-      const read = typeof structuredText === "function" ? structuredText : compactText;
-      return read(container.querySelector('[data-testid="tweetText"]'))
-        || read(container.querySelector(xArticleRootSelector))
-        || read(container);
+      const read = (node) => typeof structuredText === "function"
+        ? structuredText(node)
+        : compactText(node?.innerText ?? node?.textContent);
+      if (!container) return "";
+      if (isXTextRoot(container)) return read(container);
+
+      const quoted = findQuotedPostContainer(container);
+      const authoredText = [...container.querySelectorAll('[data-testid="tweetText"]')]
+        .find((root) => !quoted?.contains?.(root));
+      if (authoredText) return read(authoredText);
+
+      const article = container.querySelector(xArticleRootSelector);
+      if (article && !quoted?.contains?.(article)) return read(article);
+      return "";
     },
     extractSemantics: (container, { compactText, normalizeHttpUrl }) => {
       const socialContext = compactText(
@@ -404,10 +414,16 @@ function imageUrls(image) {
     const explicit = container.querySelector('[data-testid="quoteTweet"]');
     if (explicit) return explicit;
     const textRoots = [...container.querySelectorAll('[data-testid="tweetText"]')];
-    for (const textRoot of textRoots.slice(1)) {
+    for (const textRoot of textRoots) {
       const quoted = textRoot.closest?.('[role="link"]');
-      if (quoted && quoted !== container) return quoted;
+      if (quoted && quoted !== container && container.contains(quoted)) return quoted;
     }
     return null;
+  }
+
+  function isXTextRoot(element) {
+    const testId = element.getAttribute?.("data-testid");
+    return testId === "tweetText" || testId === "twitterArticleReadView" ||
+      Boolean(element.matches?.('[data-testid="tweetText"], ' + xArticleRootSelector));
   }
 })();

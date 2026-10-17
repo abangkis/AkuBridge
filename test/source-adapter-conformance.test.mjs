@@ -284,7 +284,7 @@ function syntheticCandidate(source) {
       : "Feed post\nReza Lesmana likes this\nDr. Semi Yulianto\n• 2nd\nCybersecurity Leader | Executive\n12h · Edited ·\nFollow\nA complete LinkedIn post body.",
     parentElement: null,
     matches(selector) { return source === "linkedin" && selector.includes("feed-full-update"); },
-    contains() { return false; },
+    contains(element) { return [mainText, quotedContainer, quotedText].includes(element); },
     getAttribute(name) { return attributes[name] ?? null; },
     querySelector(selector) {
       if (source === "x" && selector === '[data-testid="tweetText"]') return mainText;

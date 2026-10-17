@@ -18,7 +18,7 @@ test("source adapters register independently behind one contract", () => {
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v22" },
+      { source: "x", version: "x-dom-v23" },
       { source: "linkedin", version: "linkedin-dom-v22" },
       { source: "facebook", version: "facebook-dom-v19" },
       { source: "instagram", version: "instagram-dom-v6" },
@@ -309,7 +309,7 @@ test("the complete adapter bundle can replace its current registry generation", 
   assert.deepEqual(
     [...context.AkuSourceAdapters.capabilities()].map(({ source, version }) => ({ source, version })),
     [
-      { source: "x", version: "x-dom-v22" },
+      { source: "x", version: "x-dom-v23" },
       { source: "linkedin", version: "linkedin-dom-v22" },
       { source: "facebook", version: "facebook-dom-v19" },
       { source: "instagram", version: "instagram-dom-v6" },
