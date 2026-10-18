@@ -186,7 +186,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v115/);
+  assert.match(contentScript, /source-adapters-v116/);
   assert.match(contentScript, /AKU_BROWSER_RECOVER_SOURCE_READINESS/);
   assert.match(serviceWorker, /recoverSourceReadiness/);
   assert.match(contentScript, /candidateDiagnostics: normalizeCandidateDiagnostics/);
@@ -532,8 +532,8 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /protocolMajor: sidecarProtocolMajor/);
   const capabilities = createBridgeCapabilities({ version: "0.9.2.0", version_name: "0.9.2", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.9.2");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v115");
-  assert.equal(capabilities.buildId, "aku-bridge-0.9.2-source-adapters-v115");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v116");
+  assert.equal(capabilities.buildId, "aku-bridge-0.9.2-source-adapters-v116");
   assert.equal(capabilities.focusPolicyRevision, "quiet-containment-only-v2");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.equal(capabilities.protocolMajor, 2);
