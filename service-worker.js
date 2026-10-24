@@ -115,6 +115,27 @@ const AKU_BROWSER_ORIGINS = new Set([
   "http://localhost:11122",
 ]);
 const CAPTURE_DELAY_MAX_MS = 2_000;
+const ACCESS_CHALLENGE_MESSAGES = Object.freeze({
+  cloudflare: "Cloudflare is asking for human verification in the source browser. Complete the check there, then start capture again.",
+  x_human_verification: "X is asking for access verification in the source browser. Complete the check there, then start capture again.",
+});
+function accessChallengeCategory(value) {
+  return Object.hasOwn(ACCESS_CHALLENGE_MESSAGES, value) ? value : null;
+}
+function accessChallengeMessage(category) {
+  return ACCESS_CHALLENGE_MESSAGES[accessChallengeCategory(category)]
+    ?? "The source page is asking for human verification in the source browser. Complete the check there, then start capture again.";
+}
+function throwAccessChallenge(response, source, stage) {
+  if (response?.code !== "challenge_required") return;
+  const challengeCategory = accessChallengeCategory(response.challengeCategory);
+  throw new AkuBridgeError(
+    "challenge_required",
+    stage,
+    accessChallengeMessage(challengeCategory),
+    { source, challengeCategory },
+  );
+}
 const STRUCTURED_MEDIA_COLLECTION_BUDGET_MS = 250;
 const STRUCTURED_MEDIA_DELIVERY_WAIT_MS = 400;
 const PENDING_SELF_RELOAD_KEY = "akuBridgePendingSelfReload";
@@ -1347,7 +1368,18 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
         ),
       })).response
     : await collectFromTabWithDeadline(prepared.tab.id, payload);
-  if (!response?.ok) throw new Error(response?.message || "Source content script failed.");
+  if (!response?.ok) {
+    if (response?.code === "challenge_required") {
+      const challengeCategory = accessChallengeCategory(response.challengeCategory);
+      throw new AkuBridgeError(
+        "challenge_required",
+        "capture",
+        accessChallengeMessage(challengeCategory),
+        { source: command.payload.source, challengeCategory },
+      );
+    }
+    throw new Error(response?.message || "Source content script failed.");
+  }
   await assertTabLease(prepared.lease, "after_capture");
   return response.observation;
 }
@@ -1623,7 +1655,7 @@ async function findOrOpenSourceTab(
         lifecycleEvents.push(...(releaseOutcome?.events ?? []));
       }
       error.captureSurfaceLifecycle = lifecycleEvents;
-      if (["visible_recovery_required", "source_unavailable", "login_required"].includes(error?.code)) {
+      if (["visible_recovery_required", "source_unavailable", "login_required", "challenge_required"].includes(error?.code)) {
         throw error;
       }
       const wrapped = new AkuBridgeError(
@@ -1904,7 +1936,8 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
       { requireVisualHydration },
     );
   }
-  if (retryAfterActivationMs && readiness.state !== "feed_ready") {
+  if (retryAfterActivationMs && readiness.state !== "feed_ready" &&
+      readiness.state !== "challenge_required") {
     await activate();
     readiness = await waitForSourceReady(tab.id, source, retryAfterActivationMs);
   }
@@ -1923,6 +1956,15 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
         "readiness",
         readiness.availability?.message ?? `${sourceLabel(source)} is temporarily unavailable.`,
         { source, availability: readiness.availability ?? null },
+      );
+    }
+    if (readiness.state === "challenge_required") {
+      const challengeCategory = accessChallengeCategory(readiness.challengeCategory);
+      throw new AkuBridgeError(
+        "challenge_required",
+        "readiness",
+        accessChallengeMessage(challengeCategory),
+        { source, challengeCategory },
       );
     }
     if (readiness.state === "login_required") {
@@ -2077,7 +2119,7 @@ async function waitForSourceReady(
       !requireVisualHydration || latest.visualHydrationReady === true
     )) break;
     if (latest.diagnosis === "dom_contract_mismatch" && latest.visualHydrationReady === true) break;
-    if (["login_required", "source_unavailable", "wrong_page"].includes(latest.state)) break;
+    if (["login_required", "challenge_required", "source_unavailable", "wrong_page"].includes(latest.state)) break;
     if (!inPageRecoveryAttempted && latest.recoveryHint?.inPageAction) {
       inPageRecoveryAttempted = true;
       await recoverSourceReadiness(tabId, source, latest).catch(() => null);
@@ -2234,6 +2276,7 @@ async function probeSourceFreshness(tabId, source) {
   } catch {
     response = null;
   }
+  throwAccessChallenge(response, source, "freshness");
   if (response?.ok && response.freshness?.runtimeRevision === "source-freshness-runtime-v1") {
     return response.freshness;
   }
@@ -2245,6 +2288,7 @@ async function probeSourceFreshness(tabId, source) {
     type: "AKU_BROWSER_PROBE_SOURCE_FRESHNESS",
     source,
   });
+  throwAccessChallenge(response, source, "freshness");
   if (!response?.ok) throw new Error(response?.message || "Source freshness probe failed.");
   return response.freshness;
 }
@@ -2258,6 +2302,7 @@ async function revealPendingSourceContent(tabId, payload) {
       settleMs: payload.pendingContentSettleMs,
     },
   });
+  throwAccessChallenge(response, payload.source, "freshness_reveal");
   if (!response?.ok) throw new Error(response?.message || "Pending-content reveal failed.");
   return response.freshness;
 }

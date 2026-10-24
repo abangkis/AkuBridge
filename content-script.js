@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v116";
+  const runtimeRevision = "source-adapters-v117";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -34,6 +34,15 @@
       return false;
     }
     if (message?.type === "AKU_BROWSER_RECOVER_SOURCE_READINESS") {
+      const challenge = detectXAccessChallenge(message.source);
+      if (challenge) {
+        sendResponse({ ok: true, recovery: {
+          attempted: false,
+          outcome: "challenge_required",
+          challengeCategory: challenge.category,
+        } });
+        return false;
+      }
       const adapter = sourceAdapters.get(message.source);
       const recovery = adapter.recoverReadiness?.(message.readiness ?? {}) ?? {
         attempted: false,
@@ -43,13 +52,25 @@
       return false;
     }
     if (message?.type === "AKU_BROWSER_PROBE_SOURCE_FRESHNESS") {
+      const challenge = detectXAccessChallenge(message.source);
+      if (challenge) {
+        sendResponse({ ok: false, code: challenge.code, challengeCategory: challenge.category });
+        return false;
+      }
       sendResponse({ ok: true, freshness: freshnessRuntime.probe(message.source) });
       return false;
     }
     if (message?.type === "AKU_BROWSER_REVEAL_PENDING_CONTENT") {
+      try {
+        assertNoXAccessChallenge(message.source);
+      } catch (error) {
+        sendResponse(challengeResponse(error));
+        return false;
+      }
       freshnessRuntime.reveal(message.source, message.options)
         .then((freshness) => sendResponse({ ok: true, freshness }))
-        .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+        .catch((error) => sendResponse(challengeResponse(error)
+          ?? { ok: false, message: String(error?.message ?? error) }));
       return true;
     }
     if (message?.type === "AKU_BROWSER_STRUCTURED_MEDIA_READY") {
@@ -61,7 +82,8 @@
     if (message?.type !== "AKU_BROWSER_COLLECT_VISIBLE") return undefined;
     collectBoundedObservation(message.payload)
       .then((observation) => sendResponse({ ok: true, observation }))
-      .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
+      .catch((error) => sendResponse(challengeResponse(error)
+        ?? { ok: false, message: String(error?.message ?? error) }));
     return true;
   };
   globalThis.__akuBrowserSourceBridgeMessageHandler = messageHandler;
@@ -70,6 +92,15 @@
   function probeSourceReadiness(source) {
     if (!sourceMatchesPage(source)) {
       return readiness("wrong_page", source, 0, 0, false, false);
+    }
+    const challenge = source === "x"
+      ? capturePrimitives.detectXAccessChallenge(document, window.location)
+      : null;
+    if (challenge) {
+      return readiness(
+        "challenge_required", source, 0, 0, false, false, "window", 0, 0, 0,
+        {}, null, 0, 0, { diagnosis: "access_challenge" }, challenge,
+      );
     }
     const adapter = sourceAdapters.get(source);
     const availability = adapter.availability?.() ?? null;
@@ -154,6 +185,7 @@
     structuralCandidateCount = selectorCandidateCount,
     visibleStructuralCandidateCount = visibleSelectorCandidateCount,
     assessment = null,
+    challenge = null,
   ) {
     return {
       runtimeRevision,
@@ -173,6 +205,7 @@
       visibleStructuralCandidateCount,
       diagnosis: assessment?.diagnosis ?? null,
       recoveryHint: assessment?.recovery ?? null,
+      ...(challenge ? { challengeCategory: challenge.category } : {}),
       ...visualHydration,
       availability,
       documentReadyState: document.readyState,
@@ -185,6 +218,7 @@
     if (!sourceMatchesPage(source)) {
       throw new Error(`The active source page does not match ${source}.`);
     }
+    assertNoXAccessChallenge(source);
     const structuredMediaPolicy = sourceAdapters.get(source).structuredMediaEvidence;
     const structuredMediaRuntime = structuredMediaPolicy?.runtime?.() ?? null;
     let structuredMediaPayload = structuredMediaPolicy?.payloadField
@@ -255,6 +289,7 @@
           scrollStopReason = "deadline";
           break;
         }
+        assertNoXAccessChallenge(source);
         updateCaptureProgress("snapshot_started", { source, snapshotIndex: index });
         const snapshot = await captureVisibleSnapshot(
           source,
@@ -293,6 +328,7 @@
           break;
         }
 
+        assertNoXAccessChallenge(source);
         const beforeScrollY = readScrollPosition(scrollContext).y;
         const adapter = sourceAdapters.get(source);
         const captureTuning = adapter.captureTuning ?? {};
@@ -608,6 +644,7 @@
     captureVisibilityMode,
     structuredMediaRuntime,
   ) {
+    assertNoXAccessChallenge(source);
     const capturedAt = new Date().toISOString();
     const discovery = discoverSourceCandidates(source);
     const selectorCandidates = discovery.candidates;
@@ -793,6 +830,30 @@
       viewportHeight: Math.round(viewportHeight(scrollContext)),
       blocks,
       qualityReports,
+    };
+  }
+
+  function assertNoXAccessChallenge(source) {
+    const challenge = detectXAccessChallenge(source);
+    if (!challenge) return;
+    const error = new Error(challenge.message);
+    error.code = challenge.code;
+    error.details = { source, challengeCategory: challenge.category };
+    throw error;
+  }
+
+  function detectXAccessChallenge(source) {
+    return source === "x"
+      ? capturePrimitives.detectXAccessChallenge(document, window.location)
+      : null;
+  }
+
+  function challengeResponse(error) {
+    if (error?.code !== "challenge_required") return null;
+    return {
+      ok: false,
+      code: "challenge_required",
+      challengeCategory: error?.details?.challengeCategory ?? null,
     };
   }
 

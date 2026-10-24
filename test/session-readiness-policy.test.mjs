@@ -11,6 +11,7 @@ test("session readiness maps adapter probes without treating permission as login
   assert.equal(sourceSessionStateFromReadiness({ state: "feed_ready" }), "ready");
   assert.equal(sourceSessionStateFromReadiness({ state: "feed_empty" }), "ready");
   assert.equal(sourceSessionStateFromReadiness({ state: "login_required" }), "login_required");
+  assert.equal(sourceSessionStateFromReadiness({ state: "challenge_required" }), "challenge_required");
   assert.equal(sourceSessionStateFromReadiness({ state: "loading" }), "loading");
   assert.equal(sourceSessionStateFromReadiness({ state: "source_unavailable" }), "unavailable");
   assert.equal(sourceSessionStateFromReadiness({ state: "wrong_page" }), "not_observed");
@@ -19,6 +20,10 @@ test("session readiness maps adapter probes without treating permission as login
 });
 
 test("session state prefers an observed feed and is bounded across existing tabs", () => {
+  assert.equal(sourceSessionStateForTabs([
+    { readiness: { state: "feed_ready" } }, { readiness: { state: "challenge_required" } },
+  ]), "challenge_required");
+  assert.equal(createSourceSessionObservation({ source: "x", state: "challenge_required" }).state, "challenge_required");
   assert.equal(sourceSessionStateForTabs([]), "not_observed");
   assert.equal(sourceSessionStateForTabs([
     { readiness: { state: "feed_ready" } },

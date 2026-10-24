@@ -1,6 +1,7 @@
 const SOURCE_SESSION_STATES = new Set([
   "ready",
   "login_required",
+  "challenge_required",
   "not_observed",
   "loading",
   "unavailable",
@@ -13,6 +14,7 @@ export const SOURCE_SESSION_STATE_VALUES = Object.freeze([...SOURCE_SESSION_STAT
 export function sourceSessionStateFromReadiness(readiness) {
   if (!readiness || typeof readiness !== "object") return "unknown";
   if (readiness.state === "login_required") return "login_required";
+  if (readiness.state === "challenge_required") return "challenge_required";
   if (readiness.state === "source_unavailable" || readiness.availability?.state === "source_unavailable") {
     return "unavailable";
   }
@@ -45,6 +47,7 @@ export function createSourceSessionObservation({
 export function sourceSessionStateForTabs(tabs = []) {
   if (!Array.isArray(tabs) || tabs.length === 0) return "not_observed";
   const states = tabs.map((entry) => sourceSessionStateFromReadiness(entry?.readiness));
+  if (states.includes("challenge_required")) return "challenge_required";
   if (states.includes("ready")) return "ready";
   if (states.includes("login_required")) return "login_required";
   if (states.includes("unavailable")) return "unavailable";

@@ -30,6 +30,88 @@ test("capture primitives are frozen and structured text keeps paragraphs and emo
   assert.equal(api.structuredText(text), "First 🌻\nSecond");
 });
 
+function challengeText(value) {
+  return { nodeType: 3, nodeValue: value };
+}
+
+function challengeElement(tagName, attributes = {}, children = []) {
+  return {
+    nodeType: 1,
+    tagName: tagName.toUpperCase(),
+    childNodes: children,
+    hidden: false,
+    getAttribute(name) { return attributes[name] ?? null; },
+    matches(selector) {
+      if (selector === 'article[data-testid="tweet"]') {
+        return tagName.toLowerCase() === "article" && attributes["data-testid"] === "tweet";
+      }
+      if (selector === '[data-testid="tweetText"]') return attributes["data-testid"] === "tweetText";
+      if (selector === '[data-testid="quoteTweet"]') return attributes["data-testid"] === "quoteTweet";
+      return false;
+    },
+  };
+}
+
+function challengeDocument(children = [], challengeSelectors = []) {
+  return {
+    body: challengeElement("body", {}, children),
+    querySelector(selector) { return challengeSelectors.includes(selector) ? {} : null; },
+  };
+}
+
+test("X access challenges recognize the exact Cloudflare and X human verification screens", () => {
+  const detect = primitives().detectXAccessChallenge;
+  const location = { hostname: "x.com" };
+  const cloudflare = detect(challengeDocument([
+    challengeElement("main", {}, [challengeText("Performing security verification. Verify you are human.")]),
+  ]), location);
+  assert.equal(cloudflare.code, "challenge_required");
+  assert.equal(cloudflare.category, "cloudflare");
+  assert.match(cloudflare.message, /source browser/);
+  assert.doesNotMatch(cloudflare.message, /Performing security verification/);
+
+  const xChallenge = detect(challengeDocument([
+    challengeElement("main", {}, [challengeText("Let’s confirm you are a human. Open the X app on your phone to continue.")]),
+  ]), location);
+  assert.equal(xChallenge.code, "challenge_required");
+  assert.equal(xChallenge.category, "x_human_verification");
+  assert.match(xChallenge.message, /source browser/);
+});
+
+test("X access challenge detection ignores quoted posts, login screens, and other hosts", () => {
+  const detect = primitives().detectXAccessChallenge;
+  const postText = "Let’s confirm you are a human. Open the X app on your phone to continue.";
+  const quotedPost = challengeElement("article", { "data-testid": "tweet" }, [
+    challengeElement("div", { "data-testid": "quoteTweet" }, [challengeText(postText)]),
+  ]);
+  const loginPage = challengeDocument([
+    challengeElement("main", {}, [challengeText("Sign in to X. Email or username. Password.")]),
+  ]);
+  assert.equal(detect(challengeDocument([quotedPost]), { hostname: "x.com" }), null);
+  assert.equal(detect(loginPage, { hostname: "x.com" }), null);
+  assert.equal(detect(challengeDocument([
+    challengeElement("main", {}, [challengeText("Performing security verification. Verify you are human.")]),
+  ]), { hostname: "example.com" }), null);
+});
+
+test("X Cloudflare challenge DOM marker is detected without reading its page text", () => {
+  const challenge = primitives().detectXAccessChallenge(
+    challengeDocument([], ["#challenge-running"]),
+    { hostname: "x.com" },
+  );
+  assert.equal(challenge.code, "challenge_required");
+  assert.equal(challenge.category, "cloudflare");
+});
+
+test("legacy X captcha and Arkose iframe markers remain access challenges", () => {
+  const detect = primitives().detectXAccessChallenge;
+  for (const selector of ['iframe[src*="captcha"]', 'iframe[src*="arkoselabs"]']) {
+    const challenge = detect(challengeDocument([], [selector]), { hostname: "x.com" });
+    assert.equal(challenge.code, "challenge_required", selector);
+    assert.equal(challenge.category, "x_human_verification", selector);
+  }
+});
+
 test("X canonical permalink validation requires the exact secure host and no explicit port", () => {
   const canonicalize = primitives().canonicalizeXPermalink;
 

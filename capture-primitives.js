@@ -31,6 +31,88 @@
       .trim();
   }
 
+  const X_ACCESS_CHALLENGE_MESSAGES = Object.freeze({
+    cloudflare: "Cloudflare is asking for human verification in the source browser. Complete the check there, then start capture again.",
+    x_human_verification: "X is asking for access verification in the source browser. Complete the check there, then start capture again.",
+  });
+  const X_CLOUDFLARE_CHALLENGE_SELECTORS = Object.freeze([
+    "#challenge-running",
+    "#challenge-stage",
+    "#challenge-form",
+    ".cf-browser-verification",
+    "[data-cf-challenge]",
+    'iframe[src*="challenges.cloudflare.com"]',
+  ]);
+  const X_PLATFORM_CHALLENGE_SELECTORS = Object.freeze([
+    'iframe[src*="captcha"]',
+    'iframe[src*="arkoselabs"]',
+  ]);
+  const X_POST_TEXT_SELECTORS = Object.freeze([
+    'article[data-testid="tweet"]',
+    '[data-testid="tweetText"]',
+    '[data-testid="quoteTweet"]',
+  ]);
+
+  function detectXAccessChallenge(document = globalThis.document, location = globalThis.location) {
+    if (String(location?.hostname ?? "").toLowerCase() !== "x.com" || !document?.body) return null;
+    if (X_CLOUDFLARE_CHALLENGE_SELECTORS.some((selector) => {
+      try { return Boolean(document.querySelector?.(selector)); } catch { return false; }
+    })) return xAccessChallenge("cloudflare");
+    if (X_PLATFORM_CHALLENGE_SELECTORS.some((selector) => {
+      try { return Boolean(document.querySelector?.(selector)); } catch { return false; }
+    })) return xAccessChallenge("x_human_verification");
+
+    const pageText = pageTextOutsideXPosts(document.body).replace(/[‘’]/g, "'").toLowerCase();
+    if (pageText.includes("performing security verification") && pageText.includes("verify you are human")) {
+      return xAccessChallenge("cloudflare");
+    }
+    if (pageText.includes("let's confirm you are a human") &&
+        pageText.includes("open the x app on your phone to continue")) {
+      return xAccessChallenge("x_human_verification");
+    }
+    return null;
+  }
+
+  function xAccessChallenge(category) {
+    return Object.freeze({
+      code: "challenge_required",
+      category,
+      message: X_ACCESS_CHALLENGE_MESSAGES[category],
+    });
+  }
+
+  function pageTextOutsideXPosts(root) {
+    const text = [];
+    let length = 0;
+    const maxCharacters = 96_000;
+    const visit = (node) => {
+      if (!node || length >= maxCharacters) return;
+      if (node.nodeType === 3) {
+        const value = String(node.nodeValue ?? "");
+        if (length + value.length > maxCharacters) {
+          text.push(value.slice(0, maxCharacters - length));
+          length = maxCharacters;
+        } else {
+          text.push(value);
+          length += value.length;
+        }
+        return;
+      }
+      if (node.nodeType !== 1 && node.nodeType !== 9 && node.nodeType !== 11) return;
+      if (node.nodeType === 1) {
+        const tag = String(node.tagName ?? "").toLowerCase();
+        if (["script", "style", "noscript", "template"].includes(tag) || node.hidden === true ||
+            String(node.getAttribute?.("aria-hidden") ?? "").toLowerCase() === "true") return;
+        try {
+          if (X_POST_TEXT_SELECTORS.some((selector) => node.matches?.(selector))) return;
+        } catch { /* A nonstandard DOM fixture may not support every selector. */ }
+      }
+      for (const child of Array.from(node.childNodes ?? [])) visit(child);
+    };
+    visit(root);
+    return text.join(" ");
+  }
+
   function canonicalizeXPermalink(value) {
     try {
       const raw = String(value ?? "");
@@ -353,6 +435,7 @@
 
   globalThis.AkuCapturePrimitives = Object.freeze({
     structuredText,
+    detectXAccessChallenge,
     canonicalizeXPermalink,
     expansionLabel,
     expandContent,
