@@ -60,3 +60,26 @@ test("Bridge ownership excludes native posts but retains explicit feed redirects
   assert.equal(isBridgeOwnedFeedUrl("https://www.facebook.com/home.php", "facebook"), true);
   assert.equal(isBridgeOwnedFeedUrl("https://www.facebook.com/posts/123", "facebook"), false);
 });
+
+test("LinkedIn For You is a bounded managed redirect without changing canonical entry", () => {
+  for (const url of [
+    "https://www.linkedin.com/feed/foryou",
+    "https://www.linkedin.com/feed/foryou/",
+    "https://www.linkedin.com/feed/foryou/?trk=feed",
+  ]) {
+    assert.equal(isBridgeOwnedFeedUrl(url, "linkedin"), true, url);
+    assert.equal(isCanonicalFeedUrl(url, "linkedin"), false, url);
+  }
+  assert.equal(expectedFeedUrl("linkedin"), "https://www.linkedin.com/feed/");
+  for (const url of [
+    "http://www.linkedin.com/feed/foryou/",
+    "https://linkedin.com/feed/foryou/",
+    "https://www.linkedin.com.example.org/feed/foryou/",
+    "https://www.linkedin.com/feed/foryou/extra",
+    "https://www.linkedin.com/feed/foryou-other/",
+    "https://www.linkedin.com/feed/update/urn:li:activity:123",
+    "https://www.linkedin.com/posts/example-123",
+  ]) {
+    assert.equal(isBridgeOwnedFeedUrl(url, "linkedin"), false, url);
+  }
+});

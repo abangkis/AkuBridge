@@ -32,6 +32,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
     matchPatterns: Object.freeze(["https://www.linkedin.com/*"]),
     hostnames: Object.freeze(["www.linkedin.com"]),
     canonicalFeedPath: /^\/feed\/?$/,
+    managedFeedRedirectPath: /^\/feed\/foryou\/?$/,
     nativePostPath: /\/(?:posts\/|feed\/update\/)/,
     mediaEvidenceAdapterVersion: "linkedin-main-world-video-v1",
     structuredMediaCollector: "linkedin_main_world",

@@ -755,6 +755,76 @@ test("shared window survives sequential source release, then full release closes
     "managed_placeholder_closed");
 });
 
+test("repeated Instagram to LinkedIn For You batches leave no capture windows", async (t) => {
+  for (const recreateWorker of [false, true]) {
+    await t.test(recreateWorker ? "worker recreated before cleanup" : "same worker", async () => {
+      const chrome = fakeChrome();
+      // Chrome storage crosses a serialization boundary, including worker restarts.
+      const storageGet = chrome.storage.local.get;
+      const storageSet = chrome.storage.local.set;
+      chrome.storage.local.get = async (key) => structuredClone(await storageGet(key));
+      chrome.storage.local.set = async (value) => storageSet(structuredClone(value));
+      let runtime = createManagedCaptureWindowRuntime(chrome);
+      for (let batch = 1; batch <= 3; batch += 1) {
+        const leaseId = `session-${batch}`;
+        const instagram = await runtime.prepare("instagram", { leaseId });
+        assert.equal((await runtime.releaseSource("instagram", leaseId)).closedTabs, 1);
+        const linkedin = await runtime.prepare("linkedin", { leaseId });
+        assert.equal(linkedin.tab.windowId, instagram.tab.windowId);
+        await chrome.tabs.update(linkedin.tab.id, {
+          url: "https://www.linkedin.com/feed/foryou/",
+        });
+        if (recreateWorker) runtime = createManagedCaptureWindowRuntime(chrome);
+        const release = await runtime.releaseSource("linkedin", leaseId);
+        assert.equal(release.closedTabs, 1);
+        assert.equal(release.preservedUserTabs, 0);
+        assert.equal(release.windowRetained, true);
+        assert.equal((await runtime.release(leaseId)).released, true);
+        await runtime.reconcile();
+        assert.deepEqual([...chrome.windowsById.keys()], [1]);
+        assert.equal((await chrome.tabs.get(11)).url, "http://127.0.0.1:11122/");
+        const stored = await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY);
+        const ledger = await chrome.storage.local.get(CAPTURE_SURFACE_LEDGER_STORAGE_KEY);
+        assert.equal(stored[CAPTURE_WINDOW_STORAGE_KEY], undefined);
+        assert.deepEqual(ledger[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].surfaces, []);
+      }
+    });
+  }
+});
+
+test("LinkedIn For You cleanup preserves user tabs in the same window", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const prepared = await runtime.prepare("linkedin", { leaseId: "session-1" });
+  await chrome.tabs.update(prepared.tab.id, { url: "https://www.linkedin.com/feed/foryou/" });
+  const reader = chrome.addTab(prepared.tab.windowId,
+    "https://www.linkedin.com/feed/update/urn:li:activity:123", 99);
+  const release = await runtime.releaseSource("linkedin", "session-1");
+  assert.equal(release.closedTabs, 1);
+  assert.equal(release.preservedUserTabs, 1);
+  await runtime.release("session-1");
+  await runtime.reconcile();
+  assert.equal((await chrome.tabs.get(reader.id)).url, reader.url);
+  assert.equal(chrome.windowsById.has(reader.windowId), true);
+  assert.deepEqual(chrome.removedTabIds, [prepared.tab.id]);
+});
+
+test("LinkedIn native-post adoption remains preserved after a For You feed", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const prepared = await runtime.prepare("linkedin", { leaseId: "session-1" });
+  await chrome.tabs.update(prepared.tab.id, { url: "https://www.linkedin.com/feed/foryou/" });
+  const nativeURL = "https://www.linkedin.com/feed/update/urn:li:activity:123";
+  await chrome.tabs.update(prepared.tab.id, { url: nativeURL });
+  const release = await runtime.releaseSource("linkedin", "session-1");
+  assert.equal(release.closedTabs, 0);
+  assert.equal(release.preservedUserTabs, 1);
+  await runtime.release("session-1");
+  await runtime.reconcile();
+  assert.equal((await chrome.tabs.get(prepared.tab.id)).url, nativeURL);
+  assert.deepEqual(chrome.removedWindowIds, []);
+});
+
 test("worker recreation reuses the persisted placeholder and ledger surface", async () => {
   const chrome = fakeChrome();
   const firstRuntime = createManagedCaptureWindowRuntime(chrome);
