@@ -26,6 +26,8 @@ import {
   planCaptureVisibility,
 } from "./capture-visibility-policy.js";
 import { createManagedCaptureWindowRuntime } from "./capture-window-runtime.js";
+import { captureSurfacePolicyIdentity } from "./capture-surface-policy.js";
+import { isVerifiedSurfaceCleanupReceipt } from "./surface-cleanup-receipt.js";
 import { createReaderWindowRuntime } from "./reader-window-runtime.js";
 import { inspectCaptureSurface, focusPolicyEvidence } from "./capture-surface-telemetry.js";
 import {
@@ -862,6 +864,7 @@ async function releaseTerminalBackgroundLease(config) {
     throw new Error(await responseError(response, "Could not inspect background session lifecycle"));
   }
   const releasedSources = new Set(Array.isArray(config.releasedSources) ? config.releasedSources : []);
+  let cleanupPending = false;
   if (session?.runs && typeof config.activeLeaseId === "string") {
     for (const run of session.runs) {
       if (!sourceIds().includes(run?.source) || !sourceCaptureSurfaceReleasable(run) || releasedSources.has(run.source)) continue;
@@ -884,13 +887,17 @@ async function releaseTerminalBackgroundLease(config) {
         run.source,
         outcome?.events ?? [],
       ).catch(() => undefined);
-      if (outcome && outcome.reason !== "lease_mismatch") releasedSources.add(run.source);
+      if (isVerifiedSurfaceCleanupReceipt(outcome, config.activeLeaseId, run.source)) {
+        releasedSources.add(run.source);
+      } else {
+        cleanupPending = true;
+      }
     }
   }
   if (!terminal) {
     const next = { ...config, releasedSources: [...releasedSources] };
     await chrome.storage.local.set({ [BACKGROUND_DISPATCH_CONFIG_KEY]: next });
-    return next;
+    return cleanupPending ? null : next;
   }
   const terminalOutcome = await managedCaptureWindow.release(config.activeLeaseId).catch(() => null);
   await postCaptureSurfaceEvents(
@@ -901,6 +908,11 @@ async function releaseTerminalBackgroundLease(config) {
     null,
     terminalOutcome?.events ?? [],
   ).catch(() => undefined);
+  if (!isVerifiedSurfaceCleanupReceipt(terminalOutcome, config.activeLeaseId, null)) {
+    const next = { ...config, releasedSources: [...releasedSources] };
+    await chrome.storage.local.set({ [BACKGROUND_DISPATCH_CONFIG_KEY]: next });
+    return null;
+  }
   const next = { ...config };
   delete next.activeLeaseId;
   delete next.releasedSources;
@@ -1121,6 +1133,7 @@ async function postCaptureSurfaceEvents(
     !Array.isArray(events) ||
     events.length === 0
   ) return;
+  const executingPolicy = await captureSurfacePolicyIdentity();
   const payload = events.flatMap((event) => {
     const source = sourceIds().includes(event?.source)
       ? event.source
@@ -1135,9 +1148,10 @@ async function postCaptureSurfaceEvents(
       source,
       event: event.event,
       outcome: String(event.outcome ?? event.detail?.outcome ?? "").slice(0, 120),
-      detail: event.detail && typeof event.detail === "object"
-        ? event.detail
-        : {},
+      detail: {
+        ...(event.detail && typeof event.detail === "object" ? event.detail : {}),
+        captureSurfacePolicy: executingPolicy,
+      },
       occurredAt: typeof event.occurredAt === "string"
         ? event.occurredAt
         : new Date().toISOString(),
@@ -2514,6 +2528,7 @@ async function bridgeCapabilitiesWithSourceAccess() {
   const sources = await sourceAccessReadiness(chrome);
   return {
     ...bridgeCapabilities(),
+    captureSurfacePolicy: await captureSurfacePolicyIdentity(),
     sourceAccess: {
       grantedSources: sourcesForGrantedOrigins(permissions.origins),
       sources,

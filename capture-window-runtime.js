@@ -5,6 +5,7 @@ import {
 } from "./source-tab-policy.js";
 import { sourceIds } from "./source-catalog.js";
 import { focusPolicyEvidence } from "./capture-surface-telemetry.js";
+import { createSurfaceCleanupJournal } from "./surface-cleanup-journal.js";
 
 export const CAPTURE_WINDOW_STORAGE_KEY = "akuBridgeManagedCaptureWindowV1";
 export const CAPTURE_SURFACE_LEDGER_STORAGE_KEY = "akuBridgeManagedCaptureSurfaceLedgerV2";
@@ -14,8 +15,13 @@ const FOCUS_SETTLE_INTERVAL_MS = 50;
 const CAPTURE_WINDOW_RUNTIME_REVISION = "managed-window-lease-reuse-v2";
 const MANAGED_WINDOW_PLACEHOLDER_PATH = "capture-placeholder.html";
 
+export function captureWindowPolicyDescriptor() {
+  return Object.freeze({ revision: "surface-lifecycle-v1", cleanupSchema: "aku.surface-cleanup.v1" });
+}
+
 export function createManagedCaptureWindowRuntime(chromeApi) {
   const runtime = createUnserializedManagedCaptureWindowRuntime(chromeApi);
+  const cleanup = createSurfaceCleanupJournal(chromeApi);
   let operationTail = Promise.resolve();
   const serialize = (operation) => {
     const result = operationTail.then(operation, operation);
@@ -23,14 +29,29 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
     return result;
   };
   return Object.freeze({
-    prepare: (...args) => serialize(() => runtime.prepare(...args)),
-    reconcile: (...args) => serialize(() => runtime.reconcile(...args)),
-    trackOpenedTab: (...args) => serialize(() => runtime.trackOpenedTab(...args)),
+    prepare: (...args) => serialize(async () => {
+      await cleanup.assertReady();
+      const result = await runtime.prepare(...args);
+      await cleanup.capture();
+      return result;
+    }),
+    reconcile: (...args) => serialize(async () => { await cleanup.assertReady(); return runtime.reconcile(...args); }),
+    trackOpenedTab: (...args) => serialize(async () => {
+      await cleanup.assertReady();
+      const result = await runtime.trackOpenedTab(...args);
+      await cleanup.capture();
+      return result;
+    }),
     isTrackedTab: (...args) => serialize(() => runtime.isTrackedTab(...args)),
     windowIds: (...args) => serialize(() => runtime.windowIds(...args)),
-    closeBackgroundTabsForHandoff: (...args) => serialize(() => runtime.closeBackgroundTabsForHandoff(...args)),
-    releaseSource: (...args) => serialize(() => runtime.releaseSource(...args)),
-    release: (...args) => serialize(() => runtime.release(...args)),
+    closeBackgroundTabsForHandoff: (...args) => serialize(async () => {
+      await cleanup.assertReady();
+      const result = await runtime.closeBackgroundTabsForHandoff(...args);
+      await cleanup.assertReady();
+      return result;
+    }),
+    releaseSource: (source, leaseId, options) => serialize(() => cleanup.release(leaseId, source, () => runtime.releaseSource(source, leaseId, options))),
+    release: (leaseId) => serialize(() => cleanup.release(leaseId, null, () => runtime.release(leaseId))),
   });
 }
 

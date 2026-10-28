@@ -457,15 +457,14 @@ test("handoff closes only unchanged minimized managed feeds and keeps transient,
   await runtime.trackOpenedTab("linkedin", source.id, "handoff");
   await chrome.tabs.update(facebook.tab.id, { url: "https://www.facebook.com/permalink.php?id=123" });
 
-  const outcome = await runtime.closeBackgroundTabsForHandoff(host.id);
-  assert.deepEqual(outcome, { closedTabs: 1, preservedTabs: 1, skippedSurfaces: 0 });
-  assert.deepEqual(chrome.removedTabIds, [x.tab.id]);
+  await assert.rejects(runtime.closeBackgroundTabsForHandoff(host.id), { code: "cleanup_pending" });
+  assert.deepEqual(chrome.removedTabIds, []);
   assert.deepEqual(chrome.removedWindowIds, []);
   for (const id of [host.id, source.id, reader.id, facebook.tab.id]) {
     await assert.doesNotReject(chrome.tabs.get(id));
   }
   const saved = (await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY))[CAPTURE_WINDOW_STORAGE_KEY];
-  assert.equal(saved.tabs.x, undefined);
+  assert.equal(saved.tabs.x, x.tab.id);
   assert.equal(saved.sourceWindows.facebook.tabId, facebook.tab.id);
   assert.equal(saved.transientTabs.linkedin, source.id);
   assert.ok(x && facebook);
@@ -477,8 +476,7 @@ test("handoff preserves a captured tab whose pending navigation leaves its feed"
   const prepared = await runtime.prepare("x", { leaseId: "handoff" });
   chrome.setPendingUrl(prepared.tab.id, "https://x.com/i/web/status/123");
 
-  const outcome = await runtime.closeBackgroundTabsForHandoff(900);
-  assert.deepEqual(outcome, { closedTabs: 0, preservedTabs: 1, skippedSurfaces: 0 });
+  await assert.rejects(runtime.closeBackgroundTabsForHandoff(900), { code: "cleanup_pending" });
   assert.deepEqual(chrome.removedTabIds, []);
   await assert.doesNotReject(chrome.tabs.get(prepared.tab.id));
 });
@@ -654,30 +652,17 @@ test("managed Facebook capture resets an internal redirect instead of leaking a 
   assert.equal(chrome.createdWindowOptionsList.length, 1);
 });
 
-test("native-post adoption detaches the reader window and creates a fresh update window", async () => {
+test("native-post navigation remains pending without claiming user transfer", async () => {
   const chrome = fakeChrome();
   const runtime = createManagedCaptureWindowRuntime(chrome);
   const first = await runtime.prepare("x", { leaseId: "session-1" });
-  const nativePostUrl = "https://x.com/aku/status/123";
-  await chrome.tabs.update(first.tab.id, { url: nativePostUrl });
-
-  const second = await runtime.prepare("x", { leaseId: "session-1" });
-
-  assert.notEqual(second.tab.windowId, first.tab.windowId);
-  assert.equal(chrome.createdWindowOptionsList.length, 2);
-  assert.equal((await chrome.tabs.get(first.tab.id)).url, nativePostUrl);
+  await chrome.tabs.update(first.tab.id, { url: "https://x.com/aku/status/123" });
+  await assert.rejects(runtime.prepare("x", { leaseId: "session-1" }), { code: "cleanup_pending" });
+  const outcome = await runtime.release("session-1");
+  assert.equal(outcome.cleanup.pending, 1);
+  assert.equal(outcome.cleanup.transferred, 0);
+  await assert.rejects(runtime.reconcile(), { code: "cleanup_pending" });
   assert.equal(chrome.windowsById.has(first.tab.windowId), true);
-  assert.equal(chrome.removedWindowIds.includes(first.tab.windowId), false);
-
-  await runtime.release("session-1");
-  await runtime.reconcile();
-  assert.equal(chrome.removedWindowIds.includes(second.tab.windowId), true);
-  assert.equal(chrome.removedWindowIds.includes(first.tab.windowId), false);
-  assert.equal(chrome.windowsById.has(first.tab.windowId), true);
-  assert.equal(second.lifecycleEvents.some((event) =>
-    event.event === "preserved_user_owned" &&
-    event.outcome === "navigation_adopted_by_user"
-  ), true, JSON.stringify(second.lifecycleEvents));
 });
 
 test("a native reader tab added beside a managed feed forces a separate update window", async () => {
@@ -817,10 +802,10 @@ test("LinkedIn native-post adoption remains preserved after a For You feed", asy
   const nativeURL = "https://www.linkedin.com/feed/update/urn:li:activity:123";
   await chrome.tabs.update(prepared.tab.id, { url: nativeURL });
   const release = await runtime.releaseSource("linkedin", "session-1");
-  assert.equal(release.closedTabs, 0);
-  assert.equal(release.preservedUserTabs, 1);
+  assert.equal(release.cleanup.closed, 0);
+  assert.equal(release.cleanup.pending, 1);
   await runtime.release("session-1");
-  await runtime.reconcile();
+  await assert.rejects(runtime.reconcile(), { code: "cleanup_pending" });
   assert.equal((await chrome.tabs.get(prepared.tab.id)).url, nativeURL);
   assert.deepEqual(chrome.removedWindowIds, []);
 });
@@ -893,7 +878,7 @@ test("full release preserves a placeholder tab with pending user navigation", as
   assert.equal((await chrome.tabs.get(placeholder.id)).pendingUrl, "https://example.com/adopted");
   assert.deepEqual(chrome.removedTabIds, removedTabsBeforeFullRelease);
   assert.deepEqual(chrome.removedWindowIds, []);
-  assert.equal(release.preservedUserTabs, 1);
+  assert.equal(release.cleanup.pending, 1);
 });
 
 test("new lease cleanup removes the prior placeholder window before creating its surface", async () => {
@@ -938,8 +923,7 @@ test("adopted tabs and manually closed placeholder windows are preserved or recr
   await navigatedChrome.tabs.update(navigatedPlaceholder.id, {
     url: "https://example.com/adopted-placeholder",
   });
-  const afterAdoption = await navigatedRuntime.prepare("linkedin", { leaseId: "session-1" });
-  assert.notEqual(afterAdoption.tab.windowId, navigatedSource.tab.windowId);
+  await assert.rejects(navigatedRuntime.prepare("linkedin", { leaseId: "session-1" }), { code: "cleanup_pending" });
   assert.equal((await navigatedChrome.tabs.get(navigatedPlaceholder.id)).url,
     "https://example.com/adopted-placeholder");
   assert.equal(navigatedChrome.windowsById.has(navigatedSource.tab.windowId), true);
@@ -975,7 +959,7 @@ test("source cleanup cannot close a newer leased managed tab", async () => {
   const runtime = createManagedCaptureWindowRuntime(chrome);
   await runtime.prepare("facebook", { leaseId: "session-2" });
 
-  assert.deepEqual(await runtime.releaseSource("facebook", "session-1"), {
+  assert.deepEqual(withoutLifecycleEvents(await runtime.releaseSource("facebook", "session-1")), {
     released: false,
     reason: "lease_mismatch",
   });
@@ -988,7 +972,7 @@ test("release does not close a newer leased surface", async () => {
   const runtime = createManagedCaptureWindowRuntime(chrome);
   await runtime.prepare("x", { leaseId: "session-2" });
 
-  assert.deepEqual(await runtime.release("session-1"), {
+  assert.deepEqual(withoutLifecycleEvents(await runtime.release("session-1")), {
     released: false,
     reason: "lease_mismatch",
   });
@@ -1018,36 +1002,17 @@ test("ledger reconciliation closes an orphaned managed surface after runtime sta
   );
 });
 
-test("ledger reconciliation migrates a legacy Adaptive tab before release", async () => {
+test("legacy ownership without a browser generation remains pending", async () => {
   const chrome = fakeChrome();
   chrome.addTab(1, "https://x.com/home", 31);
   await chrome.storage.local.set({
-    [CAPTURE_WINDOW_STORAGE_KEY]: {
-      transientTabs: { x: 31 },
-      leaseId: "session-1",
-      ownedByBridge: true,
-    },
+    [CAPTURE_WINDOW_STORAGE_KEY]: { transientTabs: { x: 31 }, leaseId: "legacy", ownedByBridge: true },
   });
-
   const runtime = createManagedCaptureWindowRuntime(chrome);
-  const outcome = await runtime.reconcile();
-  const stored = await chrome.storage.local.get(CAPTURE_SURFACE_LEDGER_STORAGE_KEY);
-
-  assert.deepEqual(outcome.events, []);
-  assert.deepEqual(stored[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].surfaces, [{
-    surfaceId: "transient-tab:31",
-    windowId: 1,
-    kind: "transient_tab",
-    isolation: "shared",
-    bindings: { x: 31 },
-    leaseId: "session-1",
-    createdAt: stored[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].surfaces[0].createdAt,
-    updatedAt: stored[CAPTURE_SURFACE_LEDGER_STORAGE_KEY].surfaces[0].updatedAt,
-  }]);
-
-  await runtime.release("session-1");
-
-  assert.deepEqual(chrome.removedTabIds, [31]);
+  await assert.rejects(runtime.reconcile(), { code: "cleanup_pending" });
+  const outcome = await runtime.release("legacy");
+  assert.equal(outcome.cleanup.pending, 1);
+  assert.deepEqual(chrome.removedTabIds, []);
 });
 
 test("a new lease reconciles the prior lease before taking ownership", async () => {
@@ -1085,6 +1050,7 @@ test("per-source cleanup closes an Adaptive tab and records its ledger receipt",
 function withoutLifecycleEvents(value) {
   const result = { ...value };
   delete result.events;
+  delete result.cleanup;
   return result;
 }
 
@@ -1129,12 +1095,141 @@ test("unreadable adopted placeholder is preserved during terminal cleanup", asyn
   // Chrome omits URL when a tab leaves the extension's permitted origins.
   delete window.tabs[0].url;
   const outcome = await runtime.release("adoption");
-  assert.equal(outcome.preservedUserTabs, 1);
+  assert.equal(outcome.cleanup.pending, 1);
   assert.equal(chrome.windowsById.has(window.id), true);
+});
+
+test("unknown navigation remains pending across restart and lost legacy state", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const tab = (await runtime.prepare("linkedin", { leaseId: "durable" })).tab;
+  await chrome.tabs.update(tab.id, { url: "https://www.linkedin.com/feed/update/native" });
+  const first = await runtime.releaseSource("linkedin", "durable");
+  assert.equal(first.cleanup.pending, 1);
+  assert.equal(first.cleanup.complete, false);
+  await chrome.storage.local.remove(CAPTURE_WINDOW_STORAGE_KEY);
+  await chrome.storage.local.remove(CAPTURE_SURFACE_LEDGER_STORAGE_KEY);
+  const restarted = createManagedCaptureWindowRuntime(chrome);
+  const terminal = await restarted.release("durable");
+  assert.equal(terminal.reason, "cleanup_pending");
+  assert.equal(terminal.cleanup.pending, 1);
+  assert.equal(terminal.cleanup.transferred, 0);
+  await assert.rejects(restarted.reconcile(), { code: "cleanup_pending" });
+  assert.equal((await chrome.tabs.get(tab.id)).id, tab.id);
+  await chrome.tabs.remove(tab.id);
+  const confirmed = await restarted.release("durable");
+  assert.equal(confirmed.cleanup.closed, 1);
+  assert.equal(confirmed.cleanup.complete, true);
+});
+
+test("cleanup requires successful inventory and verified absence after close", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const tab = (await runtime.prepare("x", { leaseId: "proof" })).tab;
+  const query = chrome.tabs.query;
+  chrome.tabs.query = async () => { throw new Error("read unavailable"); };
+  assert.equal((await runtime.release("proof")).cleanup.pending, 1);
+  assert.equal(chrome.windowsById.has(tab.windowId), true);
+  chrome.tabs.query = query;
+  const remove = chrome.windows.remove;
+  chrome.windows.remove = async () => {};
+  assert.equal((await runtime.release("proof")).cleanup.pending, 1);
+  chrome.windows.remove = remove;
+  const recovered = await createManagedCaptureWindowRuntime(chrome).release("proof");
+  assert.equal(recovered.cleanup.closed, 1);
+  assert.equal(recovered.cleanup.complete, true);
+});
+
+test("failed removal retains a retryable cleanup record and strict accounting", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  await runtime.prepare("instagram", { leaseId: "retry" });
+  const remove = chrome.tabs.remove;
+  chrome.tabs.remove = async () => { throw new Error("close failed"); };
+  const failed = await runtime.releaseSource("instagram", "retry");
+  assert.equal(failed.cleanup.complete, false);
+  chrome.tabs.remove = remove;
+  const recovered = await createManagedCaptureWindowRuntime(chrome).release("retry");
+  assert.equal(recovered.cleanup.pending, 0);
+  assert.equal(recovered.cleanup.expected, recovered.cleanup.closed + recovered.cleanup.transferred + recovered.cleanup.retained);
+  const empty = await runtime.release("never-owned");
+  assert.equal(empty.cleanup.expected, 0);
+  assert.equal(empty.cleanup.complete, true);
+});
+
+test("browser restart cannot close a reused feed identity or infer its absence", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const tab = (await runtime.prepare("x", { leaseId: "old-browser" })).tab;
+  await chrome.storage.session.clear();
+  const restarted = createManagedCaptureWindowRuntime(chrome);
+  const result = await restarted.release("old-browser");
+  assert.equal(result.cleanup.pending, 1);
+  assert.equal(result.cleanup.closed, 0);
+  assert.equal(chrome.windowsById.has(tab.windowId), true);
+  await assert.rejects(restarted.closeBackgroundTabsForHandoff(900), { code: "cleanup_pending" });
+  await chrome.tabs.remove(tab.id);
+  assert.equal((await restarted.release("old-browser")).cleanup.pending, 1);
+});
+
+test("unavailable browser-session storage fails closed", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const tab = (await runtime.prepare("instagram", { leaseId: "session-storage" })).tab;
+  delete chrome.storage.session;
+  const result = await createManagedCaptureWindowRuntime(chrome).release("session-storage");
+  assert.equal(result.cleanup.pending, 1);
+  assert.equal(chrome.windowsById.has(tab.windowId), true);
+});
+
+test("journal capacity blocks new capture without evicting history", async () => {
+  const chrome = fakeChrome();
+  const key = "akuBridgeSurfaceCleanupJournalV1";
+  const rows = Array.from({ length: 4095 }, (_, tabId) => ({ tabId, windowId: 1, source: "x", role: "batch_capture",
+    ownerGeneration: "00000000-0000-4000-8000-000000000000", leaseId: "history", status: "closed" }));
+  await chrome.storage.local.set({ [key]: rows });
+  await assert.rejects(createManagedCaptureWindowRuntime(chrome).prepare("x", { leaseId: "new" }), { code: "cleanup_pending" });
+  assert.equal((await chrome.storage.local.get(key))[key].length, 4095);
+  assert.equal(chrome.createdWindowOptionsList.length, 0);
+});
+
+test("corrupt persisted cleanup journal never becomes verified empty", async (t) => {
+  const valid = { tabId: 21, windowId: 2, source: "x", role: "batch_capture", status: "active", leaseId: "corrupt",
+    ownerGeneration: "00000000-0000-4000-8000-000000000000" };
+  const cases = {
+    null: null, object: {}, string: "discard-me", missingId: [{ ...valid, tabId: undefined }],
+    invalidId: [{ ...valid, tabId: -1 }], invalidWindow: [{ ...valid, windowId: "2" }],
+    invalidStatus: [{ ...valid, status: "done" }], invalidRole: [{ ...valid, role: "user_owned" }],
+    invalidLease: [{ ...valid, leaseId: "x".repeat(201) }],
+    invalidGeneration: [{ ...valid, ownerGeneration: "same-owner" }],
+    sparse: new Array(1), oversized: Array.from({ length: 4097 }, () => ({ ...valid })),
+  };
+  for (const [name, value] of Object.entries(cases)) await t.test(name, async () => {
+    const chrome = fakeChrome();
+    const runtime = createManagedCaptureWindowRuntime(chrome);
+    const tab = (await runtime.prepare("x", { leaseId: "corrupt" })).tab;
+    await chrome.storage.local.set({ akuBridgeSurfaceCleanupJournalV1: value });
+    await assert.rejects(runtime.release("corrupt"), { code: "cleanup_pending" });
+    await assert.rejects(runtime.reconcile(), { code: "cleanup_pending" });
+    assert.equal(chrome.windowsById.has(tab.windowId), true);
+    assert.deepEqual(chrome.removedTabIds, []);
+    assert.deepEqual(chrome.removedWindowIds, []);
+  });
+});
+
+test("malformed browser generation cannot grant ownership or be silently replaced", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const tab = (await runtime.prepare("x", { leaseId: "generation-corrupt" })).tab;
+  await chrome.storage.session.set({ akuBridgeSurfaceOwnerGenerationV1: "trusted" });
+  await assert.rejects(runtime.release("generation-corrupt"), { code: "cleanup_pending" });
+  assert.equal(chrome.windowsById.has(tab.windowId), true);
+  assert.equal((await chrome.storage.session.get("akuBridgeSurfaceOwnerGenerationV1")).akuBridgeSurfaceOwnerGenerationV1, "trusted");
 });
 
 function fakeChrome() {
   const storage = {};
+  const sessionStorage = {};
   const windows = new Map([[1, {
     id: 1,
     tabs: [{ id: 11, windowId: 1, active: true, url: "http://127.0.0.1:11122/" }],
@@ -1169,7 +1264,11 @@ function fakeChrome() {
       if (tab) tab.pendingUrl = pendingUrl;
     },
     runtime: { getURL: (path) => `chrome-extension://test-bridge/${path}` },
-    storage: { local: {
+    storage: { session: {
+      async get(key) { return { [key]: sessionStorage[key] }; },
+      async set(value) { Object.assign(sessionStorage, value); },
+      async clear() { for (const key of Object.keys(sessionStorage)) delete sessionStorage[key]; },
+    }, local: {
       async get(key) { return { [key]: storage[key] }; },
       async set(value) { Object.assign(storage, value); },
       async remove(key) { delete storage[key]; },
@@ -1226,7 +1325,7 @@ function fakeChrome() {
         return { ...tab, active: activeByWindow.get(tab.windowId) === id };
       },
       async query({ active, windowId }) {
-        if (!active) return [];
+        if (!active) return [...tabs.values()].map(tab => ({ ...tab }));
         const id = activeByWindow.get(windowId);
         return id ? [{ ...tabs.get(id), active: true }] : [];
       },
