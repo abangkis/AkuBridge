@@ -10,6 +10,32 @@ const GENERATION_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]
 const validGeneration = value => typeof value === "string" && value.length === 36 && GENERATION_PATTERN.test(value);
 const validId = value => Number.isSafeInteger(value) && value >= 0;
 
+// Fixed categories only: no tab/window IDs, lease values, URLs, or API messages.
+function diagnostics(phase, rows, leaseId, state = {}) {
+  const counts = {};
+  let firstReason = "none";
+  const currentLeasePresent = Boolean(state.leaseId);
+  const currentLeaseMatches = state.leaseId ? state.leaseId === leaseId : null;
+  return {
+    note(reason) {
+      if (firstReason === "none") firstReason = reason;
+      counts[reason] = Math.min(MAX_RECORDS, (counts[reason] ?? 0) + 1);
+    },
+    project(runtimeLeaseMatches = null) {
+      const pending = rows.filter(row => row.status === "pending");
+      return {
+        schema: "aku.surface-pending-diagnostic.v1", phase, firstReason,
+        reasonCounts: { ...counts }, pending: pending.length,
+        sameLease: pending.filter(row => row.leaseId === leaseId && leaseId !== null).length,
+        otherLease: pending.filter(row => row.leaseId !== null && row.leaseId !== leaseId).length,
+        unscopedLease: pending.filter(row => row.leaseId === null).length,
+        currentLeasePresent, currentLeaseMatches,
+        runtimeLeaseMatches,
+      };
+    },
+  };
+}
+
 // Records survive ambiguous navigation, API errors, and service-worker restarts.
 export function createSurfaceCleanupJournal(chrome) {
   const read = async () => {
@@ -53,9 +79,14 @@ export function createSurfaceCleanupJournal(chrome) {
       return null;
     }
   }
-  function pendingError(message = "Capture surface cleanup remains unverified.") {
+  function pendingError(message = "Capture surface cleanup remains unverified.", diagnostic = null) {
     const error = new Error(message);
     error.code = "cleanup_pending";
+    if (diagnostic) {
+      error.details = { cleanupDiagnostics: diagnostic };
+      error.captureSurfaceLifecycle = [{ event: "reconciled", source: null,
+        outcome: "cleanup_pending", detail: error.details, occurredAt: new Date().toISOString() }];
+    }
     return error;
   }
   async function inventory(rows, ownerGeneration = null) {
@@ -91,6 +122,18 @@ export function createSurfaceCleanupJournal(chrome) {
         ? tab.url === chrome.runtime.getURL("capture-placeholder.html")
         : isBridgeOwnedFeedUrl(tab.url, row.source));
   }
+  function mismatchReasons(row, tab, ownerGeneration) {
+    const reasons = [];
+    if (!ownerGeneration) reasons.push("owner_generation_unavailable");
+    else if (!row.ownerGeneration) reasons.push("record_generation_missing");
+    else if (row.ownerGeneration !== ownerGeneration) reasons.push("owner_generation_mismatch");
+    if (Number.isInteger(row.windowId) && row.windowId !== tab.windowId) reasons.push("window_mismatch");
+    if (tab.pendingUrl && tab.pendingUrl !== tab.url) reasons.push("navigation_pending");
+    if (row.role === "lease_placeholder"
+      ? tab.url !== chrome.runtime.getURL("capture-placeholder.html")
+      : !isBridgeOwnedFeedUrl(tab.url, row.source)) reasons.push("url_not_owned");
+    return reasons;
+  }
   function receipt(rows, leaseId, source) {
     const selected = rows.filter(row => row.leaseId === leaseId && (source === null || row.source === source || row.retainedFor === source));
     const closed = selected.filter(row => row.status === "closed").length;
@@ -104,6 +147,7 @@ export function createSurfaceCleanupJournal(chrome) {
       const ownerGeneration = await generation();
       const rows = await read();
       const state = await inventory(rows);
+      const diagnostic = diagnostics("release", rows, leaseId, state);
       await save(rows);
       const selected = rows.filter(row => row.leaseId === leaseId && row.status !== "closed" &&
         (source === null || row.source === source || row.retainedFor === source));
@@ -118,12 +162,14 @@ export function createSurfaceCleanupJournal(chrome) {
           if (!tab) { row.status = "closed"; continue; }
           if (!ownerGeneration || row.ownerGeneration !== ownerGeneration || !matches(row, tab) ||
               claimedElsewhere(row)) {
+            mismatchReasons(row, tab, ownerGeneration).forEach(reason => diagnostic.note(reason));
+            if (claimedElsewhere(row)) diagnostic.note("claimed_by_other_lease");
             unsafe = true;
             row.status = "pending";
           } else if (!(source !== null && row.status === "retained" && row.role === "lease_placeholder")) {
             row.status = "pending";
           }
-        } catch { unsafe = true; row.status = "pending"; }
+        } catch { diagnostic.note("inventory_unavailable"); unsafe = true; row.status = "pending"; }
       }
       await save(rows);
       let outcome;
@@ -150,7 +196,7 @@ export function createSurfaceCleanupJournal(chrome) {
       }
       else {
         try { outcome = await operation(); }
-        catch { outcome = { released: false, reason: "cleanup_pending" }; }
+        catch { diagnostic.note("release_operation_failed"); outcome = { released: false, reason: "cleanup_pending" }; }
         // The guarded operation can create its lease placeholder before a
         // later close fails. Register that new surface in this same generation.
         await inventory(rows, ownerGeneration);
@@ -191,6 +237,8 @@ export function createSurfaceCleanupJournal(chrome) {
       }
       await save(rows);
       const cleanup = receipt(rows, leaseId, source);
+      if (outcome.reason === "lease_mismatch") diagnostic.note("runtime_lease_mismatch");
+      if (!cleanup.complete && diagnostic.project().firstReason === "none") diagnostic.note("close_unverified");
       if (!cleanup.complete && outcome.reason !== "lease_mismatch") outcome = { ...outcome, released: false, reason: "cleanup_pending" };
       return {
         ...outcome,
@@ -202,29 +250,39 @@ export function createSurfaceCleanupJournal(chrome) {
             source,
             outcome: cleanup.complete && outcome.reason !== "lease_mismatch"
               ? "cleanup_verified" : "cleanup_pending",
-            detail: { cleanup, cleanupScope: "browser_lease" },
+            detail: { cleanup, cleanupScope: "browser_lease",
+              cleanupDiagnostics: diagnostic.project(outcome.runtimeLeaseMatches ?? null) },
             occurredAt: new Date().toISOString(),
           },
         ],
       };
     },
-    async assertReady() {
+    async assertReady(source = null, leaseId = null) {
       const ownerGeneration = await generation();
       const rows = await read();
-      await inventory(rows);
+      const state = await inventory(rows);
+      const diagnostic = diagnostics("admission", rows, leaseId ?? null, state);
       for (const row of rows.filter(row => row.status !== "closed")) {
         try {
           const tab = await observe(row);
           if (!tab) row.status = "closed";
-          else if (!ownerGeneration || row.ownerGeneration !== ownerGeneration || !matches(row, tab)) row.status = "pending";
-        } catch { row.status = "pending"; }
+          else if (!ownerGeneration || row.ownerGeneration !== ownerGeneration || !matches(row, tab)) {
+            mismatchReasons(row, tab, ownerGeneration).forEach(reason => diagnostic.note(reason));
+            row.status = "pending";
+          } else if (row.status === "pending") diagnostic.note("prior_pending_unresolved");
+        } catch { diagnostic.note("inventory_unavailable"); row.status = "pending"; }
       }
       await save(rows);
       if (rows.some(row => row.status === "pending")) {
-        throw pendingError();
+        const error = pendingError(undefined, diagnostic.project());
+        error.captureSurfaceLifecycle[0].source = sourceIds().includes(source) ? source : null;
+        throw error;
       }
       // Reserve room for a new capture and its optional lease placeholder.
-      if (!ownerGeneration || rows.length > MAX_RECORDS - 2) throw pendingError("Capture surface ownership or journal capacity is unavailable.");
+      if (!ownerGeneration || rows.length > MAX_RECORDS - 2) {
+        diagnostic.note(!ownerGeneration ? "owner_generation_unavailable" : "journal_capacity");
+        throw pendingError("Capture surface ownership or journal capacity is unavailable.", diagnostic.project());
+      }
     },
     async capture() {
       const rows = await read();

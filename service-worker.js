@@ -1659,6 +1659,9 @@ async function findOrOpenSourceTab(
       const lifecycleEvents = managed?.lifecycleEvents?.length
         ? [...managed.lifecycleEvents]
         : [...managedLifecycleEvents];
+      // Admission evidence belongs to the original failure. Cleanup appends
+      // its own receipt and must not erase why preparation was rejected.
+      lifecycleEvents.push(...(error?.captureSurfaceLifecycle ?? []));
       if (Number.isInteger(targetCaptureTabId)) {
         await chrome.tabs.remove(targetCaptureTabId).catch(() => undefined);
         targetCaptureTabId = null;

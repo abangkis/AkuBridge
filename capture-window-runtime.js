@@ -16,7 +16,7 @@ const CAPTURE_WINDOW_RUNTIME_REVISION = "managed-window-lease-reuse-v2";
 const MANAGED_WINDOW_PLACEHOLDER_PATH = "capture-placeholder.html";
 
 export function captureWindowPolicyDescriptor() {
-  return Object.freeze({ revision: "surface-lifecycle-v1", cleanupSchema: "aku.surface-cleanup.v1" });
+  return Object.freeze({ revision: "surface-lifecycle-pending-diagnostics-v2", cleanupSchema: "aku.surface-cleanup.v1" });
 }
 
 export function createManagedCaptureWindowRuntime(chromeApi) {
@@ -30,14 +30,14 @@ export function createManagedCaptureWindowRuntime(chromeApi) {
   };
   return Object.freeze({
     prepare: (...args) => serialize(async () => {
-      await cleanup.assertReady();
+      await cleanup.assertReady(args[0], args[1]?.leaseId);
       const result = await runtime.prepare(...args);
       await cleanup.capture();
       return result;
     }),
     reconcile: (...args) => serialize(async () => { await cleanup.assertReady(); return runtime.reconcile(...args); }),
     trackOpenedTab: (...args) => serialize(async () => {
-      await cleanup.assertReady();
+      await cleanup.assertReady(args[0], args[2]);
       const result = await runtime.trackOpenedTab(...args);
       await cleanup.capture();
       return result;
@@ -372,7 +372,7 @@ function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
       const state = await loadState(chromeApi);
       const requestedLeaseId = normalizeLeaseId(leaseId);
       if (state.leaseId && state.leaseId !== requestedLeaseId) {
-        return { released: false, reason: "lease_mismatch" };
+        return { released: false, reason: "lease_mismatch", runtimeLeaseMatches: false };
       }
       const transientTabId = state.transientTabs[source];
       if (Number.isInteger(transientTabId)) {
@@ -556,7 +556,7 @@ function createUnserializedManagedCaptureWindowRuntime(chromeApi) {
         return { released: false, reason: "no_owned_surface" };
       }
       if (state.leaseId && state.leaseId !== requestedLeaseId) {
-        return { released: false, reason: "lease_mismatch" };
+        return { released: false, reason: "lease_mismatch", runtimeLeaseMatches: false };
       }
       const transientBindings = { ...state.transientTabs };
       const transient = await closeTrackedTabs(chromeApi, transientBindings);

@@ -11,6 +11,7 @@ import {
 import { focusPolicyEvidence } from "../capture-surface-telemetry.js";
 import { createSurfaceCleanupJournal, CLEANUP_JOURNAL_KEY } from "../surface-cleanup-journal.js";
 import { isVerifiedSurfaceCleanupReceipt } from "../surface-cleanup-receipt.js";
+import { AkuBridgeError, serializeBridgeError } from "../bridge-runtime-policy.js";
 let backgroundFocusViolations = 0;
 test.afterEach(() => {
   const violations = backgroundFocusViolations;
@@ -1375,6 +1376,132 @@ test("background polling after worker restart reaches pending commands only afte
     assert.equal((await chrome.tabs.get(81)).id, 81);
     assert.deepEqual((await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY))[CAPTURE_WINDOW_STORAGE_KEY], current);
   });
+});
+
+test("pending admission identifies each failed predicate without changing ownership", async (t) => {
+  const cases = {
+    record_generation_missing: async (chrome, row) => { delete row.ownerGeneration; },
+    owner_generation_mismatch: async chrome => { await chrome.storage.session.clear(); },
+    owner_generation_unavailable: async chrome => { delete chrome.storage.session; },
+    window_mismatch: async (chrome, row) => { row.windowId = 999; },
+    navigation_pending: async (chrome, row) => { chrome.setPendingUrl(row.tabId, "https://private.example/secret"); },
+    url_not_owned: async (chrome, row) => { await chrome.tabs.update(row.tabId, { url: "https://www.linkedin.com/in/private-person" }); },
+    inventory_unavailable: async chrome => { chrome.tabs.query = async () => { throw Error("secret API error"); }; },
+    prior_pending_unresolved: async (chrome, row) => { row.status = "pending"; },
+  };
+  for (const [reason, mutate] of Object.entries(cases)) await t.test(reason, async () => {
+    const chrome = fakeChrome();
+    const runtime = createManagedCaptureWindowRuntime(chrome);
+    await runtime.prepare("linkedin", { leaseId: "private-lease" });
+    const rows = (await chrome.storage.local.get(CLEANUP_JOURNAL_KEY))[CLEANUP_JOURNAL_KEY];
+    await mutate(chrome, rows[0]);
+    await chrome.storage.local.set({ [CLEANUP_JOURNAL_KEY]: rows });
+    const created = chrome.createdWindowOptionsList.length;
+    await assert.rejects(runtime.prepare("linkedin", { leaseId: "private-lease" }), error => {
+      assert.equal(error.code, "cleanup_pending");
+      const diagnostic = error.details.cleanupDiagnostics;
+      assert.equal(diagnostic.phase, "admission");
+      assert.equal(diagnostic.firstReason, reason);
+      assert.deepEqual(diagnostic.reasonCounts, { [reason]: 1 });
+      assert.equal(diagnostic.pending, 1);
+      assert.equal(diagnostic.sameLease, 1);
+      assert.equal(error.captureSurfaceLifecycle[0].source, "linkedin");
+      const serialized = JSON.stringify(serializeBridgeError(error));
+      for (const secret of ["private-lease", "private-person", "secret API error", "https://", "tabId", "windowId", "ownerGeneration"]) {
+        assert.equal(serialized.includes(secret), false, secret);
+      }
+      return true;
+    });
+    assert.equal(chrome.createdWindowOptionsList.length, created);
+    assert.deepEqual(chrome.removedTabIds, []);
+    assert.deepEqual(chrome.removedWindowIds, []);
+  });
+});
+
+test("pending counts separate matching, foreign, and unscoped leases and keep all failed predicates", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  await runtime.prepare("linkedin", { leaseId: "current" });
+  const rows = (await chrome.storage.local.get(CLEANUP_JOURNAL_KEY))[CLEANUP_JOURNAL_KEY];
+  rows[0].status = "pending";
+  for (const [tabId, leaseId] of [[81, "foreign"], [82, null]]) {
+    chrome.addTab(1, "https://private.example/", tabId);
+    rows.push({ ...rows[0], tabId, windowId: 999, leaseId, ownerGeneration: null });
+  }
+  await chrome.storage.local.set({ [CLEANUP_JOURNAL_KEY]: rows });
+  await assert.rejects(runtime.prepare("linkedin", { leaseId: "current" }), error => {
+    const value = error.details.cleanupDiagnostics;
+    assert.equal(value.firstReason, "prior_pending_unresolved");
+    assert.deepEqual(value.reasonCounts, { prior_pending_unresolved: 1, record_generation_missing: 2, window_mismatch: 2, url_not_owned: 2 });
+    assert.equal(value.sameLease, 1);
+    assert.equal(value.otherLease, 1);
+    assert.equal(value.unscopedLease, 1);
+    assert.equal(value.currentLeaseMatches, true);
+    return true;
+  });
+});
+
+test("release distinguishes a late runtime lease mismatch even with an empty complete receipt", async () => {
+  const chrome = fakeChrome();
+  await createManagedCaptureWindowRuntime(chrome).prepare("linkedin", { leaseId: "current" });
+  // No records belong to the requested lease. The singleton can change after
+  // the journal precheck; simulate the guarded operation refusing that change.
+  const value = await createSurfaceCleanupJournal(chrome).release("current", "x", async () => ({
+    released: false, reason: "lease_mismatch", runtimeLeaseMatches: false,
+  }));
+  assert.equal(value.cleanup.expected, 0);
+  assert.equal(value.cleanup.complete, true);
+  assert.equal(isVerifiedSurfaceCleanupReceipt(value, "current", "x"), false);
+  const diagnostic = value.events.at(-1).detail.cleanupDiagnostics;
+  assert.equal(diagnostic.phase, "release");
+  assert.equal(diagnostic.firstReason, "runtime_lease_mismatch");
+  assert.equal(diagnostic.currentLeaseMatches, true);
+  assert.equal(diagnostic.runtimeLeaseMatches, false);
+  assert.equal(value.events.at(-1).outcome, "cleanup_pending");
+});
+
+test("prepare failure keeps admission diagnostics before separate cleanup events and serializes the original cause", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const tab = (await runtime.prepare("linkedin", { leaseId: "old" })).tab;
+  await chrome.tabs.update(tab.id, { url: "https://www.linkedin.com/in/user-owned" });
+  const worker = readFileSync(new URL("../service-worker.js", import.meta.url), "utf8");
+  const find = worker.slice(worker.indexOf("async function findOrOpenSourceTab("), worker.indexOf("async function findReadyReusableSourceTab("));
+  const post = worker.slice(worker.indexOf("async function postCaptureSurfaceEvents("), worker.indexOf("function captureSurfaceEvent("));
+  const posted = [];
+  const realm = vm.createContext({ chrome, managedCaptureWindow: runtime, AkuBridgeError,
+    planCaptureVisibility: () => ({ initialMode: "managed_window" }),
+    captureRequiresVisualHydration: () => false, findReadyReusableSourceTab: async () => null,
+    captureSurfaceEvent: (event, source, detail) => ({ event, source, detail }),
+    sourceIds: () => ["linkedin"], bridgeHeaders: () => ({}),
+    captureSurfacePolicyIdentity: async () => ({ schema: "aku.surface-policy.v1", fingerprint: "fixture" }),
+    createCaptureSurfaceEventId: () => `event-${posted.length}`,
+    fetch: async (_url, options) => { posted.push(JSON.parse(options.body)); return { ok: true }; },
+  });
+  vm.runInContext(find + post, realm);
+  let original;
+  await assert.rejects(vm.runInContext('findOrOpenSourceTab("linkedin", "catch_up", true, "quiet", "new")', realm), error => {
+    original = error;
+    assert.equal(error.code, "visible_recovery_required");
+    const value = serializeBridgeError(error);
+    assert.equal(value.details.causeCode, "cleanup_pending");
+    assert.equal(value.details.causeDetails.cleanupDiagnostics.firstReason, "url_not_owned");
+    const events = error.captureSurfaceLifecycle;
+    assert.equal(events[0].detail.cleanupDiagnostics.phase, "admission");
+    assert.equal(events.at(-1).detail.cleanupDiagnostics.phase, "release");
+    assert.equal(events[0].detail.cleanupDiagnostics.firstReason, "url_not_owned");
+    assert.equal(JSON.stringify(events).includes("user-owned"), false);
+    return true;
+  });
+  await realm.postCaptureSurfaceEvents("http://fixture.invalid", "unused-fixture", "new", "run", "linkedin", original.captureSurfaceLifecycle);
+  assert.equal(posted.length, 1);
+  const wire = posted[0].events;
+  assert.equal(wire[0].detail.cleanupDiagnostics.phase, "admission");
+  assert.equal(wire.at(-1).detail.cleanupDiagnostics.phase, "release");
+  assert.equal(wire[0].source, "linkedin");
+  assert.ok(wire.every(event => event.detail.captureSurfacePolicy.fingerprint === "fixture"));
+  assert.ok(Buffer.byteLength(JSON.stringify(wire[0].detail)) < 8192);
+  assert.deepEqual(chrome.removedTabIds, []);
 });
 
 function fakeChrome() {

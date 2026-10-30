@@ -9,7 +9,7 @@ import {
 
 test("executing policy identity includes imported feed and lifecycle rules", async () => {
   const descriptor = captureSurfacePolicyDescriptor();
-  assert.equal(descriptor.lifecycleRevision, "surface-lifecycle-v1");
+  assert.equal(descriptor.lifecycleRevision, "surface-lifecycle-pending-diagnostics-v2");
   assert.equal(descriptor.cleanupSchema, "aku.surface-cleanup.v1");
   assert.equal(descriptor.sources.find((value) => value.id === "linkedin").managedRedirect,
     "^\\/feed\\/foryou\\/?$");
