@@ -1,6 +1,20 @@
 (() => {
   const expansionContexts = new WeakMap();
 
+  // Shared classification only: readiness is never account or admission proof.
+  // Callers retain their own visibility measurements and adapter assessment.
+  function sourceReadinessState({ availability, loginRequired = false,
+    visibleCandidateCount = 0, visibleStructuralCandidateCount = 0,
+    loading = false, documentReady = false, candidateCount = 0,
+    structuralCandidateCount = 0, feedRootPresent = false } = {}) {
+    return availability?.state ?? (loginRequired ? "login_required"
+      : visibleCandidateCount > 0 ? "feed_ready"
+      : visibleStructuralCandidateCount > 0 ? "feed_empty"
+      : loading || !documentReady ? "loading"
+      : candidateCount > 0 || structuralCandidateCount > 0 ? "feed_not_visible"
+      : feedRootPresent ? "selector_mismatch" : "page_shell");
+  }
+
   function structuredText(value) {
     if (typeof value === "string") return normalizeStructuredWhitespace(value);
     if (!value || typeof value !== "object") return "";
@@ -434,6 +448,7 @@
   }
 
   globalThis.AkuCapturePrimitives = Object.freeze({
+    sourceReadinessState,
     structuredText,
     detectXAccessChallenge,
     canonicalizeXPermalink,

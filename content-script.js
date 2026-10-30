@@ -123,22 +123,13 @@
     const windowVisibleCandidates = candidates.filter((element) =>
       isVisibleInViewport(element, window),
     );
-    const baseState = availability?.state
-      ?? (loginRequired
-      ? "login_required"
-      : visibleCandidates.length > 0
-        ? "feed_ready"
-        : visibleReadinessCandidates.length > 0
-          ? "feed_empty"
-        : loading || document.readyState !== "complete"
-          ? "loading"
-        : candidates.length > 0
-          ? "feed_not_visible"
-        : readinessCandidates.length > 0
-          ? "feed_not_visible"
-        : feedRoot
-          ? "selector_mismatch"
-            : "page_shell");
+    const baseState = capturePrimitives.sourceReadinessState({
+      availability, loginRequired, loading, documentReady: document.readyState === "complete",
+      visibleCandidateCount: visibleCandidates.length,
+      visibleStructuralCandidateCount: visibleReadinessCandidates.length,
+      candidateCount: candidates.length, structuralCandidateCount: readinessCandidates.length,
+      feedRootPresent: feedRoot,
+    });
     const assessment = sourceAdapters.assessReadiness(source, {
       state: baseState,
       loadingIndicator: loading,

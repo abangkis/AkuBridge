@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import vm from "node:vm";
 import {
   CAPTURE_SURFACE_LEDGER_STORAGE_KEY,
   CAPTURE_WINDOW_STORAGE_KEY,
@@ -7,6 +9,8 @@ import {
   normalizeManagedCaptureState,
 } from "../capture-window-runtime.js";
 import { focusPolicyEvidence } from "../capture-surface-telemetry.js";
+import { createSurfaceCleanupJournal, CLEANUP_JOURNAL_KEY } from "../surface-cleanup-journal.js";
+import { isVerifiedSurfaceCleanupReceipt } from "../surface-cleanup-receipt.js";
 let backgroundFocusViolations = 0;
 test.afterEach(() => {
   const violations = backgroundFocusViolations;
@@ -961,7 +965,7 @@ test("source cleanup cannot close a newer leased managed tab", async () => {
 
   assert.deepEqual(withoutLifecycleEvents(await runtime.releaseSource("facebook", "session-1")), {
     released: false,
-    reason: "lease_mismatch",
+    reason: "surface_already_closed",
   });
   assert.equal(chrome.windowsById.has(2), true);
   assert.deepEqual(chrome.removedTabIds, []);
@@ -974,7 +978,7 @@ test("release does not close a newer leased surface", async () => {
 
   assert.deepEqual(withoutLifecycleEvents(await runtime.release("session-1")), {
     released: false,
-    reason: "lease_mismatch",
+    reason: "surface_already_closed",
   });
   assert.equal(chrome.windowsById.has(2), true);
   assert.deepEqual(chrome.removedWindowIds, []);
@@ -1169,7 +1173,10 @@ test("browser restart cannot close a reused feed identity or infer its absence",
   assert.equal(chrome.windowsById.has(tab.windowId), true);
   await assert.rejects(restarted.closeBackgroundTabsForHandoff(900), { code: "cleanup_pending" });
   await chrome.tabs.remove(tab.id);
-  assert.equal((await restarted.release("old-browser")).cleanup.pending, 1);
+  const absent = await restarted.release("old-browser");
+  assert.equal(absent.cleanup.pending, 0);
+  assert.equal(absent.cleanup.closed, 1);
+  assert.equal(isVerifiedSurfaceCleanupReceipt(absent, "old-browser"), true);
 });
 
 test("unavailable browser-session storage fails closed", async () => {
@@ -1227,9 +1234,156 @@ test("malformed browser generation cannot grant ownership or be silently replace
   assert.equal((await chrome.storage.session.get("akuBridgeSurfaceOwnerGenerationV1")).akuBridgeSurfaceOwnerGenerationV1, "trusted");
 });
 
+async function installIndependentCurrentLease(chrome, leaseId = "lease-B", tabId = 81) {
+  chrome.addTab(1, "https://www.linkedin.com/feed/foryou/", tabId);
+  await chrome.storage.local.set({ [CAPTURE_WINDOW_STORAGE_KEY]: {
+    ownedByBridge: true, leaseId, transientTabs: { linkedin: tabId },
+  } });
+  await createSurfaceCleanupJournal(chrome).capture();
+  return structuredClone((await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY))[CAPTURE_WINDOW_STORAGE_KEY]);
+}
+
+test("retired and empty leases acknowledge cleanup without changing the current lease", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  await runtime.prepare("x", { leaseId: "lease-A" });
+  assert.equal(isVerifiedSurfaceCleanupReceipt(await runtime.release("lease-A"), "lease-A"), true);
+  const current = await installIndependentCurrentLease(chrome);
+  const removed = [...chrome.removedTabIds];
+  const removedWindows = [...chrome.removedWindowIds];
+  for (const leaseId of ["lease-A", "never-owned"]) {
+    for (const source of [null, "x"]) {
+      const result = source === null ? await runtime.release(leaseId) : await runtime.releaseSource(source, leaseId);
+      assert.equal(isVerifiedSurfaceCleanupReceipt(result, leaseId, source), true);
+      assert.equal(result.events.at(-1).outcome, "cleanup_verified");
+    }
+  }
+  assert.deepEqual((await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY))[CAPTURE_WINDOW_STORAGE_KEY], current);
+  assert.deepEqual(chrome.removedTabIds, removed);
+  assert.deepEqual(chrome.removedWindowIds, removedWindows);
+  assert.equal((await chrome.tabs.get(81)).url, "https://www.linkedin.com/feed/foryou/");
+});
+
+test("an older live lease retires only its exact journal tab and preserves current lease and reader", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const old = await runtime.prepare("x", { leaseId: "lease-A" });
+  chrome.addTab(old.tab.windowId, "https://x.com/person/status/123", 71);
+  const current = await installIndependentCurrentLease(chrome);
+  const result = await runtime.release("lease-A");
+  assert.equal(isVerifiedSurfaceCleanupReceipt(result, "lease-A"), true);
+  assert.deepEqual(chrome.removedTabIds, [old.tab.id]);
+  assert.deepEqual(chrome.removedWindowIds, []);
+  assert.equal((await chrome.tabs.get(71)).id, 71);
+  assert.equal((await chrome.tabs.get(81)).id, 81);
+  assert.deepEqual((await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY))[CAPTURE_WINDOW_STORAGE_KEY], current);
+});
+
+test("a source receipt retains its own placeholder until terminal cleanup without touching a newer lease", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  await runtime.prepare("x", { leaseId: "lease-A" });
+  await runtime.releaseSource("x", "lease-A");
+  const current = await installIndependentCurrentLease(chrome);
+  const source = await runtime.releaseSource("x", "lease-A");
+  assert.equal(isVerifiedSurfaceCleanupReceipt(source, "lease-A", "x"), true);
+  assert.equal(source.cleanup.retained, 1);
+  assert.equal(isVerifiedSurfaceCleanupReceipt(await runtime.release("lease-A"), "lease-A"), true);
+  assert.deepEqual((await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY))[CAPTURE_WINDOW_STORAGE_KEY], current);
+  assert.equal((await chrome.tabs.get(81)).id, 81);
+});
+
+test("old-lease cleanup refuses a tab claimed by the current lease even with the same feed URL", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const tab = (await runtime.prepare("linkedin", { leaseId: "lease-A" })).tab;
+  await chrome.storage.local.set({ [CAPTURE_WINDOW_STORAGE_KEY]: {
+    ownedByBridge: true, leaseId: "lease-B", transientTabs: { linkedin: tab.id },
+  } });
+  const current = structuredClone((await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY))[CAPTURE_WINDOW_STORAGE_KEY]);
+  const result = await runtime.release("lease-A");
+  assert.equal(isVerifiedSurfaceCleanupReceipt(result, "lease-A"), false);
+  assert.equal(result.reason, "cleanup_pending");
+  assert.deepEqual(chrome.removedTabIds, []);
+  assert.deepEqual(chrome.removedWindowIds, []);
+  assert.deepEqual((await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY))[CAPTURE_WINDOW_STORAGE_KEY], current);
+});
+
+test("foreign-lease cleanup preserves ambiguous, old-generation, and unobserved tabs", async (t) => {
+  for (const kind of ["navigation", "pending-navigation", "generation", "inventory", "remove"]) await t.test(kind, async () => {
+    const chrome = fakeChrome();
+    const runtime = createManagedCaptureWindowRuntime(chrome);
+    const tab = (await runtime.prepare("x", { leaseId: "lease-A" })).tab;
+    const current = await installIndependentCurrentLease(chrome);
+    if (kind === "navigation") await chrome.tabs.update(tab.id, { url: "https://x.com/person/status/123" });
+    if (kind === "pending-navigation") chrome.setPendingUrl(tab.id, "https://x.com/person/status/123");
+    if (kind === "generation") await chrome.storage.session.clear();
+    if (kind === "inventory") chrome.tabs.query = async () => { throw Error("unavailable"); };
+    if (kind === "remove") chrome.tabs.remove = async () => { throw Error("unavailable"); };
+    const result = await runtime.release("lease-A");
+    assert.equal(result.cleanup.pending, 1);
+    assert.equal(isVerifiedSurfaceCleanupReceipt(result, "lease-A"), false);
+    assert.equal((await chrome.tabs.get(tab.id)).id, tab.id);
+    assert.equal((await chrome.tabs.get(81)).id, 81);
+    assert.deepEqual(chrome.removedTabIds, []);
+    assert.deepEqual(chrome.removedWindowIds, []);
+    assert.deepEqual((await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY))[CAPTURE_WINDOW_STORAGE_KEY], current);
+  });
+});
+
+test("successful inventory retires absent old-generation records during readiness, but failed inventory does not", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const tab = (await runtime.prepare("x", { leaseId: "lease-A" })).tab;
+  await chrome.storage.session.clear();
+  await chrome.tabs.remove(tab.id);
+  const query = chrome.tabs.query;
+  chrome.tabs.query = async () => { throw Error("unavailable"); };
+  await assert.rejects(createManagedCaptureWindowRuntime(chrome).reconcile(), { code: "cleanup_pending" });
+  chrome.tabs.query = query;
+  await createManagedCaptureWindowRuntime(chrome).reconcile();
+  const rows = (await chrome.storage.local.get(CLEANUP_JOURNAL_KEY))[CLEANUP_JOURNAL_KEY];
+  assert.equal(rows.filter(row => row.leaseId === "lease-A").every(row => row.status === "closed"), true);
+});
+
+test("background polling after worker restart reaches pending commands only after the old lease is verified", async (t) => {
+  const worker = readFileSync(new URL("../service-worker.js", import.meta.url), "utf8");
+  const release = worker.slice(worker.indexOf("async function releaseTerminalBackgroundLease("), worker.indexOf("async function refreshBackgroundHeartbeat("));
+  const poll = worker.slice(worker.indexOf("async function pollBackgroundDispatch("), worker.indexOf("function backgroundDispatchStageError("));
+  for (const pending of [false, true]) await t.test(pending ? "ambiguous old lease remains blocked" : "retired old lease no longer starves dispatch", async () => {
+    const chrome = fakeChrome();
+    const runtime = createManagedCaptureWindowRuntime(chrome);
+    const old = (await runtime.prepare("x", { leaseId: "lease-A" })).tab;
+    if (pending) await chrome.tabs.update(old.id, { url: "https://x.com/person/status/123" });
+    else await runtime.release("lease-A");
+    const current = await installIndependentCurrentLease(chrome);
+    const key = "background-config";
+    await chrome.storage.local.set({ [key]: { endpoint: "http://127.0.0.1:11122", token: "synthetic", activeLeaseId: "lease-A" } });
+    const paths = [];
+    const realm = vm.createContext({ chrome, managedCaptureWindow: createManagedCaptureWindowRuntime(chrome),
+      BACKGROUND_DISPATCH_CONFIG_KEY: key, backgroundDispatching: false,
+      bridgeHeaders: () => ({}), refreshBackgroundHeartbeat: async () => true,
+      isVerifiedSurfaceCleanupReceipt, postCaptureSurfaceEvents: async () => {}, sessionUsesBrowserCapture: () => true,
+      fetch: async url => { paths.push(url); return url.endsWith("/commands/pending")
+        ? { status: 204 } : { status: 200, ok: true, json: async () => ({ session: { status: "completed", runs: [] } }) }; },
+    });
+    vm.runInContext(release + poll, realm);
+    await vm.runInContext("pollBackgroundDispatch()", realm);
+    assert.equal(paths.some(path => path.endsWith("/commands/pending")), !pending);
+    const config = (await chrome.storage.local.get(key))[key];
+    assert.equal(config.activeLeaseId, pending ? "lease-A" : undefined);
+    assert.equal((await chrome.tabs.get(81)).id, 81);
+    assert.deepEqual((await chrome.storage.local.get(CAPTURE_WINDOW_STORAGE_KEY))[CAPTURE_WINDOW_STORAGE_KEY], current);
+  });
+});
+
 function fakeChrome() {
   const storage = {};
   const sessionStorage = {};
+  // Generated identities stay unique within this browser session. Tests that
+  // simulate a reused identity install it explicitly through addTab/storage.
+  let lastCreatedWindowId = 1;
+  let lastCreatedTabId = 11;
   const windows = new Map([[1, {
     id: 1,
     tabs: [{ id: 11, windowId: 1, active: true, url: "http://127.0.0.1:11122/" }],
@@ -1284,8 +1438,8 @@ function fakeChrome() {
         if (options.focused !== false) backgroundFocusViolations += 1;
         state.createdWindowOptions = options;
         state.createdWindowOptionsList.push({ ...options });
-        const windowId = Math.max(...windows.keys()) + 1;
-        const tabId = Math.max(...tabs.keys()) + 10;
+        const windowId = lastCreatedWindowId = Math.max(lastCreatedWindowId, ...windows.keys()) + 1;
+        const tabId = lastCreatedTabId = Math.max(lastCreatedTabId, ...tabs.keys()) + 10;
         const tab = { id: tabId, windowId, active: true, url: options.url };
         tabs.set(tab.id, tab);
         activeByWindow.set(windowId, tab.id);
@@ -1348,7 +1502,7 @@ function fakeChrome() {
       },
       async create(options) {
         state.createdTabOptions.push({ ...options });
-        const id = Math.max(...tabs.keys()) + 1;
+        const id = lastCreatedTabId = Math.max(lastCreatedTabId, ...tabs.keys()) + 1;
         const tab = state.addTab(options.windowId, options.url, id);
         if (options.active) activeByWindow.set(options.windowId, id);
         return { ...tab, active: options.active === true };

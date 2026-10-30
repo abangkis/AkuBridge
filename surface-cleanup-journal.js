@@ -84,6 +84,13 @@ export function createSurfaceCleanupJournal(chrome) {
     const tabs = await chrome.tabs.query({});
     return tabs.find(tab => tab.id === row.tabId) ?? null;
   }
+  function matches(row, tab) {
+    return (!Number.isInteger(row.windowId) || row.windowId === tab.windowId) &&
+      !(tab.pendingUrl && tab.pendingUrl !== tab.url) &&
+      (row.role === "lease_placeholder"
+        ? tab.url === chrome.runtime.getURL("capture-placeholder.html")
+        : isBridgeOwnedFeedUrl(tab.url, row.source));
+  }
   function receipt(rows, leaseId, source) {
     const selected = rows.filter(row => row.leaseId === leaseId && (source === null || row.source === source || row.retainedFor === source));
     const closed = selected.filter(row => row.status === "closed").length;
@@ -98,28 +105,49 @@ export function createSurfaceCleanupJournal(chrome) {
       const rows = await read();
       const state = await inventory(rows);
       await save(rows);
-      const selected = rows.filter(row => row.leaseId === leaseId && row.status !== "closed" && (source === null || row.source === source));
-      let unsafe = Boolean(state.leaseId && state.leaseId !== leaseId);
+      const selected = rows.filter(row => row.leaseId === leaseId && row.status !== "closed" &&
+        (source === null || row.source === source || row.retainedFor === source));
+      const differentCurrentLease = Boolean(state.leaseId && state.leaseId !== leaseId);
+      const claimedElsewhere = row => rows.some(other => other.tabId === row.tabId &&
+        other.leaseId !== leaseId && other.status !== "closed");
+      let unsafe = false;
       for (const row of selected) {
-        if (!ownerGeneration || row.ownerGeneration !== ownerGeneration) {
-          unsafe = true;
-          row.status = "pending";
-          continue;
-        }
         try {
           const tab = await observe(row);
+          // Successful absence proof does not require authority to close a tab.
           if (!tab) { row.status = "closed"; continue; }
-          const matches = (!Number.isInteger(row.windowId) || row.windowId === tab.windowId) &&
-            (row.role === "lease_placeholder"
-              ? tab.url === chrome.runtime.getURL("capture-placeholder.html")
-              : isBridgeOwnedFeedUrl(tab.url, row.source));
-          if (!matches || tab.pendingUrl && tab.pendingUrl !== tab.url) unsafe = true;
-          row.status = "pending";
+          if (!ownerGeneration || row.ownerGeneration !== ownerGeneration || !matches(row, tab) ||
+              claimedElsewhere(row)) {
+            unsafe = true;
+            row.status = "pending";
+          } else if (!(source !== null && row.status === "retained" && row.role === "lease_placeholder")) {
+            row.status = "pending";
+          }
         } catch { unsafe = true; row.status = "pending"; }
       }
       await save(rows);
       let outcome;
-      if (unsafe) outcome = { released: false, reason: state.leaseId && state.leaseId !== leaseId ? "lease_mismatch" : "cleanup_pending" };
+      if (unsafe) outcome = { released: false, reason: "cleanup_pending" };
+      else if (differentCurrentLease) {
+        // The legacy operation acts on the current singleton state. Retire an
+        // older lease only through its own journal records; never mutate that
+        // singleton, close a whole window, or touch a newer lease's binding.
+        let removed = false;
+        for (const row of selected.filter(row => row.status === "pending")) {
+          try {
+            const tab = await observe(row);
+            if (!tab) { row.status = "closed"; continue; }
+            if (!matches(row, tab) || claimedElsewhere(row)) continue;
+            await chrome.tabs.remove(row.tabId);
+            removed = true;
+          } catch { /* The journal retains the cleanup obligation. */ }
+        }
+        for (const row of selected.filter(row => row.status === "pending")) {
+          try { if (!await observe(row)) row.status = "closed"; }
+          catch { /* An inventory failure is never absence proof. */ }
+        }
+        outcome = { released: removed, reason: "surface_already_closed" };
+      }
       else {
         try { outcome = await operation(); }
         catch { outcome = { released: false, reason: "cleanup_pending" }; }
@@ -141,7 +169,11 @@ export function createSurfaceCleanupJournal(chrome) {
         }
         for (const row of selected) {
           if (row.status === "closed") continue;
-          try { row.status = await observe(row) ? "pending" : "closed"; }
+          try {
+            const tab = await observe(row);
+            if (!tab) row.status = "closed";
+            else if (!(source !== null && row.status === "retained" && matches(row, tab))) row.status = "pending";
+          }
           catch { row.status = "pending"; }
         }
         if (source !== null && outcome.windowRetained === true) {
@@ -181,16 +213,10 @@ export function createSurfaceCleanupJournal(chrome) {
       const rows = await read();
       await inventory(rows);
       for (const row of rows.filter(row => row.status !== "closed")) {
-        if (!ownerGeneration || row.ownerGeneration !== ownerGeneration) {
-          row.status = "pending";
-          continue;
-        }
         try {
           const tab = await observe(row);
           if (!tab) row.status = "closed";
-          else if ((Number.isInteger(row.windowId) && tab.windowId !== row.windowId) ||
-              (tab.pendingUrl && tab.pendingUrl !== tab.url) ||
-              (row.role === "lease_placeholder" ? tab.url !== chrome.runtime.getURL("capture-placeholder.html") : !isBridgeOwnedFeedUrl(tab.url, row.source))) row.status = "pending";
+          else if (!ownerGeneration || row.ownerGeneration !== ownerGeneration || !matches(row, tab)) row.status = "pending";
         } catch { row.status = "pending"; }
       }
       await save(rows);
