@@ -32,6 +32,7 @@ import { createReaderWindowRuntime } from "./reader-window-runtime.js";
 import { inspectCaptureSurface, focusPolicyEvidence } from "./capture-surface-telemetry.js";
 import {
   sourceCaptureSurfaceReleasable,
+  sessionUsesBrowserCapture,
 } from "./capture-surface-lifecycle-policy.js";
 import {
   managedSurfaceReleaseAllowsRecreate,
@@ -898,6 +899,12 @@ async function releaseTerminalBackgroundLease(config) {
     const next = { ...config, releasedSources: [...releasedSources] };
     await chrome.storage.local.set({ [BACKGROUND_DISPATCH_CONFIG_KEY]: next });
     return cleanupPending ? null : next;
+  }
+  if (session && !sessionUsesBrowserCapture(session)) {
+    const next = { ...config };
+    delete next.activeLeaseId; delete next.releasedSources;
+    await chrome.storage.local.set({ [BACKGROUND_DISPATCH_CONFIG_KEY]: next });
+    return next;
   }
   const terminalOutcome = await managedCaptureWindow.release(config.activeLeaseId).catch(() => null);
   await postCaptureSurfaceEvents(

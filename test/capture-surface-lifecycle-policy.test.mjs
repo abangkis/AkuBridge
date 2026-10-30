@@ -27,3 +27,11 @@ test("terminal source outcomes remain releasable fallbacks", () => {
     assert.equal(sourceCaptureSurfaceReleasable({ status, stage: status }), true);
   }
 });
+
+test("native X and IG runs do not own Browser capture surfaces", () => {
+ for (const source of ["x", "instagram"]) for (const status of ["failed", "completed", "cancelled", "reasoning"]) {
+  assert.equal(sourceCaptureSurfaceReleasable({source,status,stage:"candidate_evaluation",captureCollector:"headless"}),false);
+ }
+ assert.equal(sourceCaptureSurfaceReleasable({status:"completed",captureCollector:"bridge"}),true);
+ assert.equal(sourceCaptureSurfaceReleasable({status:"completed",captureCollector:"unknown"}),true);
+});
