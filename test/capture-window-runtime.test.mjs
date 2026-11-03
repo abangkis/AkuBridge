@@ -12,6 +12,8 @@ import { focusPolicyEvidence } from "../capture-surface-telemetry.js";
 import { createSurfaceCleanupJournal, CLEANUP_JOURNAL_KEY } from "../surface-cleanup-journal.js";
 import { isVerifiedSurfaceCleanupReceipt } from "../surface-cleanup-receipt.js";
 import { AkuBridgeError, serializeBridgeError } from "../bridge-runtime-policy.js";
+import { createCaptureSurfaceReporter } from "../capture-surface-reporting.js";
+import { captureSurfacePolicyIdentity } from "../capture-surface-policy.js";
 let backgroundFocusViolations = 0;
 test.afterEach(() => {
   const violations = backgroundFocusViolations;
@@ -1460,25 +1462,27 @@ test("release distinguishes a late runtime lease mismatch even with an empty com
   assert.equal(value.events.at(-1).outcome, "cleanup_pending");
 });
 
-test("prepare failure keeps admission diagnostics before separate cleanup events and serializes the original cause", async () => {
+test("prepare failure keeps admission diagnostics before separate cleanup events and serializes the original cause", async (t) => {
   const chrome = fakeChrome();
   const runtime = createManagedCaptureWindowRuntime(chrome);
   const tab = (await runtime.prepare("linkedin", { leaseId: "old" })).tab;
   await chrome.tabs.update(tab.id, { url: "https://www.linkedin.com/in/user-owned" });
   const worker = readFileSync(new URL("../service-worker.js", import.meta.url), "utf8");
   const find = worker.slice(worker.indexOf("async function findOrOpenSourceTab("), worker.indexOf("async function findReadyReusableSourceTab("));
-  const post = worker.slice(worker.indexOf("async function postCaptureSurfaceEvents("), worker.indexOf("function captureSurfaceEvent("));
   const posted = [];
+  const executingPolicy = await captureSurfacePolicyIdentity();
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    posted.push(JSON.parse(options.body));
+    return { ok: true };
+  });
+  const reporter = createCaptureSurfaceReporter({ bridgeHeaders: () => ({}), responseError: async () => "unused" });
   const realm = vm.createContext({ chrome, managedCaptureWindow: runtime, AkuBridgeError,
     planCaptureVisibility: () => ({ initialMode: "managed_window" }),
     captureRequiresVisualHydration: () => false, findReadyReusableSourceTab: async () => null,
     captureSurfaceEvent: (event, source, detail) => ({ event, source, detail }),
-    sourceIds: () => ["linkedin"], bridgeHeaders: () => ({}),
-    captureSurfacePolicyIdentity: async () => ({ schema: "aku.surface-policy.v1", fingerprint: "fixture" }),
-    createCaptureSurfaceEventId: () => `event-${posted.length}`,
-    fetch: async (_url, options) => { posted.push(JSON.parse(options.body)); return { ok: true }; },
+    postCaptureSurfaceEvents: reporter.postCaptureSurfaceEvents,
   });
-  vm.runInContext(find + post, realm);
+  vm.runInContext(find, realm);
   let original;
   await assert.rejects(vm.runInContext('findOrOpenSourceTab("linkedin", "catch_up", true, "quiet", "new")', realm), error => {
     original = error;
@@ -1499,7 +1503,7 @@ test("prepare failure keeps admission diagnostics before separate cleanup events
   assert.equal(wire[0].detail.cleanupDiagnostics.phase, "admission");
   assert.equal(wire.at(-1).detail.cleanupDiagnostics.phase, "release");
   assert.equal(wire[0].source, "linkedin");
-  assert.ok(wire.every(event => event.detail.captureSurfacePolicy.fingerprint === "fixture"));
+  assert.ok(wire.every(event => event.detail.captureSurfacePolicy.fingerprint === executingPolicy.fingerprint));
   assert.ok(Buffer.byteLength(JSON.stringify(wire[0].detail)) < 8192);
   assert.deepEqual(chrome.removedTabIds, []);
 });

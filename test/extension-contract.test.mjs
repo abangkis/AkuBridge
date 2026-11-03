@@ -73,6 +73,7 @@ test("AkuBridge has a narrow read-only permission contract", () => {
   const source = [
     "capture-primitives.js",
     "service-worker.js",
+    "capture-surface-reporting.js",
     "content-script.js",
     "linkedin-permalink-policy.js",
     "linkedin-timestamp-policy.js",
@@ -326,15 +327,19 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
 
 test("LinkedIn capture composes readiness with generic freshness recovery", () => {
   const contentScript = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
+  const capturePrimitives = fs.readFileSync(path.join(projectRoot, "capture-primitives.js"), "utf8");
   const worker = fs.readFileSync(path.join(projectRoot, "service-worker.js"), "utf8");
   const recovery = fs.readFileSync(path.join(projectRoot, "source-freshness-recovery.js"), "utf8");
   const captureWindowRuntime = fs.readFileSync(path.join(projectRoot, "capture-window-runtime.js"), "utf8");
+  const captureReporting = fs.readFileSync(path.join(projectRoot, "capture-surface-reporting.js"), "utf8");
 
   assert.match(contentScript, /AKU_BROWSER_PROBE_SOURCE_READY/);
   assert.match(contentScript, /selector_mismatch/);
   assert.match(contentScript, /feed_empty/);
   assert.match(worker, /readiness\.state === "feed_empty"/);
-  assert.match(contentScript, /login_required/);
+  assert.match(contentScript, /const loginRequired = adapter\.loginRequired\?\.\(\) === true/);
+  assert.match(contentScript, /capturePrimitives\.sourceReadinessState\(\{\s*availability, loginRequired,/);
+  assert.match(capturePrimitives, /return availability\?\.state \?\? \(loginRequired \? "login_required"/);
   assert.match(contentScript, /detectXAccessChallenge\(document, window\.location\)/);
   assert.match(contentScript, /function assertNoXAccessChallenge\(source\)/);
   assert.match(contentScript, /function challengeResponse\(error\)[\s\S]*?code: "challenge_required"[\s\S]*?challengeCategory:/);
@@ -356,7 +361,7 @@ test("LinkedIn capture composes readiness with generic freshness recovery", () =
   assert.ok(freshnessProbe.indexOf('"freshness"') < freshnessProbe.indexOf("chrome.scripting.executeScript"));
   assert.match(freshnessReveal, /throwAccessChallenge\(response, payload\.source, "freshness_reveal"\)/);
   assert.match(contentScript, /adapter\.availability/);
-  assert.match(contentScript, /availability\?\.state/);
+  assert.match(capturePrimitives, /availability\?\.state/);
   assert.match(worker, /waitForSourceReady/);
   assert.match(worker, /collectFromTabWithDeadline/);
   assert.match(worker, /bounded response deadline/);
@@ -371,7 +376,8 @@ test("LinkedIn capture composes readiness with generic freshness recovery", () =
     /managedCaptureWindow\.releaseSource\(\s*source,\s*captureLeaseId,\s*\{ retainWindow: false \},\s*\)/,
   );
   assert.match(worker, /BACKGROUND_RELEASE_PUMP_MS = 55_000/);
-  assert.match(worker, /\/api\/bridge\/capture-surfaces\/events/);
+  assert.match(worker, /from "\.\/capture-surface-reporting\.js"/);
+  assert.match(captureReporting, /\/api\/bridge\/capture-surfaces\/events/);
   assert.match(worker, /captureSurfaceEvent\("release_requested"/);
   assert.match(captureWindowRuntime, /lifecycleEvent\(opened \? "created" : "reused", source/);
   assert.match(worker, /captureSurfaceEvent\("reused", source/);

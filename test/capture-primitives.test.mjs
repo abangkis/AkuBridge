@@ -15,6 +15,14 @@ function primitives() {
   return context.AkuCapturePrimitives;
 }
 
+test("source readiness preserves login blocking and availability precedence", () => {
+  const api = primitives();
+  assert.equal(api.sourceReadinessState({ loginRequired: true }), "login_required");
+  assert.equal(api.sourceReadinessState({ loginRequired: true, visibleCandidateCount: 3, feedRootPresent: true }), "login_required");
+  assert.equal(api.sourceReadinessState({ loginRequired: true, availability: { state: "source_unavailable" } }), "source_unavailable");
+  assert.equal(api.sourceReadinessState({ loginRequired: false, visibleCandidateCount: 3 }), "feed_ready");
+});
+
 test("capture primitives are frozen and structured text keeps paragraphs and emoji alt text", () => {
   const api = primitives();
   const text = {
