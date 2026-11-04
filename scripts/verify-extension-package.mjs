@@ -55,7 +55,7 @@ while (pending.length > 0) {
   }
 }
 
-const forbidden = /(^|\/)(?:test|tests|native-host|node_modules|coverage|dist|build)(\/|$)|\.(?:exe|dll|pdb|map|pem|key|crx)$/i;
+const forbidden = /(^|\/)(?:test|tests|native-host|node_modules|coverage|dist|build)(\/|$)|\.test\.(?:mjs|cjs|js)$|\.(?:exe|dll|pdb|map|pem|key|crx)$/i;
 for (const file of referenced) {
   if (forbidden.test(file)) throw new Error(`forbidden packaged file: ${file}`);
 }
