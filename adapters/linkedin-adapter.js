@@ -18,20 +18,6 @@
     'a[href*="/showcase/"] img',
   ].join(", ");
 
-  function matchesLinkedInFreshnessFeedURL(value) {
-    if (typeof value !== "string" || value.length > 2048) return false;
-    const origin = "https://www.linkedin.com";
-    if (!value.startsWith(`${origin}/`)) return false;
-    const rawPath = value.slice(origin.length).split(/[?#]/, 1)[0];
-    if (rawPath !== "/feed/") return false;
-    try {
-      const url = new URL(value);
-      return url.protocol === "https:" && url.origin === origin &&
-        url.hostname === "www.linkedin.com" && !url.username && !url.password &&
-        !url.port && url.pathname === "/feed/";
-    } catch { return false; }
-  }
-
   function linkedinFreshnessPrimaryIdentity(post) {
     if (typeof post?.id !== "string" || typeof post?.permalink !== "string") return null;
     const idMatch = /^linkedin:(activity|ugcpost|share):(\d{5,30})$/.exec(post.id);
@@ -126,7 +112,7 @@
       headless: Object.freeze({
         enabled: true,
         version: "linkedin-headless-freshness-v1",
-        matchesFeedURL: matchesLinkedInFreshnessFeedURL,
+        matchesFeedURL: value => globalThis.AkuSourceFeedRoutes?.matchesHeadlessFeed("linkedin", value) === true,
         primaryIdentity: linkedinFreshnessPrimaryIdentity,
       }),
       wakeWhenBackground: true,
