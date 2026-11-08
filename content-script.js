@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v118";
+  const runtimeRevision = "source-adapters-v119";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -376,6 +376,19 @@
         snapshots,
         (candidateId) => structuredMediaRuntime.lookup?.(candidateId) ?? [],
       );
+    }
+
+    if (source === "x" && typeof structuredMediaRuntime?.lookupReplyTo === "function") {
+      const parents = new Map();
+      for (const { blocks } of snapshots) {
+        for (const [id, index] of capturePrimitives.xReplySnapshotOwners(blocks)) {
+          if (!parents.has(id)) {
+            try { parents.set(id, structuredMediaRuntime.lookupReplyTo(`x:status:${id}`)); }
+            catch { parents.set(id, null); }
+          }
+          blocks[index] = capturePrimitives.mergeXResponseReply(blocks[index], parents.get(id));
+        }
+      }
     }
 
     const candidateCount = uniqueCandidates.size;

@@ -45,3 +45,57 @@ test('windowed capture keeps independently extracted comment bodies', () => {
   assert.equal(block.directContext[0].target.text, 'Valid comment');
   assert.equal(block.presentation.directContextStatus, undefined);
 });
+
+test('windowed controller finalizes exact reply owners after capture without deferred media', async () => {
+  const block = id => ({platformId: 'x:status:' + id, permalink: 'https://x.com/owner/status/' + id,
+    text: 'Body', relationshipType: 'original', directContext: []});
+  const child = '12345', parent = '67890', throwing = '33445', duplicate = '11223';
+  const conflictingOwner = {...block('21212'), presentation: {primaryIdentity: {
+    status: 'conflicting', permalink: null}}};
+  const mismatched = {...block('31313'), permalink: 'https://x.com/owner/status/91919'};
+  const viewportBlocks = [
+    [block(child), block(throwing), block(duplicate), block(duplicate), conflictingOwner, mismatched],
+    [block(child), block(throwing)],
+  ];
+  const reads = [];
+  let scrollY = 0, next = 0, restored = false;
+  const passive = {lookupReplyTo(candidate) {
+    reads.push(candidate);
+    assert.ok(restored, 'reply arrived only after the last viewport was captured');
+    if (candidate.endsWith(throwing)) throw new Error('optional cache unavailable');
+    return parent;
+  }};
+  const adapter = {version: 'fixture', structuredMediaEvidence: {runtime: () => passive}};
+  const context = vm.createContext({
+    URL, performance, CAPTURE_DEADLINE_RESERVE_MS: 100,
+    sourceMatchesPage: () => true, assertNoXAccessChallenge: () => {},
+    sourceAdapters: {get: () => adapter, capabilities: () => ({})},
+    capturePolicy: {
+      normalizeCapturePlan: () => ({scrolls: 1, scrollFraction: 1, scrollSettleMs: 0, captureTimeoutMs: 10000, restoreScroll: true}),
+      countNewCandidates(blocks, seen) { const before = seen.size; for (const value of blocks) seen.add(value.platformId); return seen.size - before; },
+    },
+    captureVisibleSnapshot: async () => ({blocks: viewportBlocks[next++]}),
+    updateCaptureProgress: () => {}, getScrollContext: () => ({}), readScrollPosition: () => ({x: 0, y: scrollY}),
+    viewportHeight: () => 500, scrollByContext: (_, delta) => {scrollY += delta;}, delay: async () => {},
+    restoreScrollContext: async () => {scrollY = 0; restored = true; return true;},
+    summarizeFieldCoverage: () => ({}), qualityPolicy: {summarize: () => ({})},
+    mediaAcquisitionEngine: {summarize: () => ({outcomes: {recovered: 0}})}, blockIdentity: value => value.platformId,
+    window: {location: new URL('https://x.com/home')}, document: {title: ''},
+    sourceEvents: () => [], describeScrollContext: () => 'window',
+  });
+  vm.runInContext(fs.readFileSync(new URL('../capture-primitives.js', import.meta.url), 'utf8'), context);
+  context.capturePrimitives = context.AkuCapturePrimitives;
+  vm.runInContext(source.slice(source.indexOf('  async function collectBoundedObservation('),
+    source.indexOf('  async function hydratePersistentAvatarEvidence(')), context);
+  const output = await context.collectBoundedObservation({source: 'x', sourceFreshness: {}});
+  assert.equal(output.coverage.structuredMediaEvidence.deferred.requested, false);
+  assert.deepEqual(reads, ['x:status:' + child, 'x:status:' + throwing]);
+  for (const {blocks} of output.snapshots) {
+    assert.equal(blocks[0].relationshipType, 'reply');
+    assert.equal(blocks[0].parentPermalink, 'https://x.com/i/status/' + parent);
+    assert.equal(blocks[0].directContext.length, 1);
+    assert.equal(blocks[0].directContext[0].target.id, parent);
+    assert.equal(blocks[0].directContext[0].provenance, 'observed_response');
+    assert.ok(blocks.slice(1).every(value => value.directContext.length === 0 && value.text === 'Body'));
+  }
+});

@@ -143,6 +143,152 @@
     }
   }
 
+  function mergeXReplyDirectContext(post, incomingRelations) {
+    const incoming = (Array.isArray(incomingRelations) ? incomingRelations : [])
+      .filter(relation => relation?.kind === 'replies_to');
+    if (!incoming.length || post?.presentation?.directContextStatus === 'ambiguous') return post;
+    const ownerId = xReplyOwnerId(post);
+    if (!ownerId) return post;
+    const directContext = Array.isArray(post.directContext) ? post.directContext : [];
+    const existing = directContext.filter(relation => relation?.kind === 'replies_to');
+    const retained = directContext.filter(relation => relation?.kind !== 'replies_to');
+    if (incoming.length !== 1) {
+      const validIncomingIds = incoming.map(relation => exactReplyIdentity(relation, ownerId)).filter(Boolean);
+      const existingId = existing.length === 1 ? exactReplyIdentity(existing[0], ownerId) : null;
+      const hasMalformed = validIncomingIds.length < incoming.length;
+      if (existingId && (!validIncomingIds.length
+          || (hasMalformed && validIncomingIds.length === 1 && validIncomingIds[0] === existingId))) return post;
+      return markReplyContextAmbiguous(post, retained);
+    }
+    const incomingId = exactReplyIdentity(incoming[0], ownerId);
+    if (!incomingId) {
+      const existingId = existing.length === 1 ? exactReplyIdentity(existing[0], ownerId) : null;
+      return existingId ? post : markReplyContextAmbiguous(post, retained);
+    }
+    if (conflictingReplyParentPermalink(post, incomingId)) return markReplyContextAmbiguous(post, retained);
+    if (existing.length > 1) return markReplyContextAmbiguous(post, retained);
+    if (existing.length === 1) {
+      const existingId = exactReplyIdentity(existing[0], ownerId);
+      if (existingId === incomingId) return withResolvedReplySemantics(post, incoming[0]);
+      if (!existingId && isUnresolvedDomReply(existing[0])) {
+        const relation = {...incoming[0],
+          ...(typeof existing[0].observedText === 'string' && existing[0].observedText.length <= 500
+            ? {observedText: existing[0].observedText} : {}),
+        };
+        return withResolvedReplySemantics({...post, directContext: [...retained, relation]}, relation);
+      }
+      if (existingId) return markReplyContextAmbiguous(post, retained);
+      return withResolvedReplySemantics({...post, directContext: [...retained, incoming[0]]}, incoming[0]);
+    }
+    if (directContext.length >= 8) return post;
+    return withResolvedReplySemantics({...post, directContext: [...directContext, incoming[0]]}, incoming[0]);
+  }
+
+  function markXReplyContextAmbiguous(post) {
+    const directContext = Array.isArray(post?.directContext) ? post.directContext : [];
+    return markReplyContextAmbiguous(post, directContext.filter(relation => relation?.kind !== 'replies_to'));
+  }
+
+  function mergeXResponseReply(post, replyToId) {
+    const ownerId = xReplyOwnerId(post);
+    if (!ownerId || typeof replyToId !== 'string' || !/^\d{5,30}$/.test(replyToId) || replyToId === ownerId) return post;
+    const relation = {kind: 'replies_to', provenance: 'observed_response', capturedAt: new Date().toISOString(),
+      target: {kind: 'post', id: replyToId, permalink: 'https://x.com/i/status/' + replyToId,
+        text: '', author: '', availability: 'reference_only'}};
+    return mergeXReplyDirectContext(post, [relation]);
+  }
+
+  function markReplyContextAmbiguous(post, retained) {
+    const clearReplyParent = post?.relationshipType === 'reply' && !isQuotePost(post);
+    return {...post, directContext: retained,
+      presentation: {...(post.presentation && typeof post.presentation === 'object' ? post.presentation : {}),
+        directContextStatus: 'ambiguous'},
+      ...(clearReplyParent ? {parentPermalink: ''} : {})};
+  }
+
+  function withResolvedReplySemantics(post, relation) {
+    if (isQuotePost(post) || (post.relationshipType === 'reply' && post.parentPermalink === relation.target.permalink)) return post;
+    return {...post, relationshipType: 'reply', parentPermalink: relation.target.permalink};
+  }
+
+  function isQuotePost(post) {
+    return post?.relationshipType === 'quote' || post?.quotedPostObserved === true
+      || Boolean(post?.quotedPost) || (Array.isArray(post?.directContext)
+        && post.directContext.some(relation => relation?.kind === 'quotes'));
+  }
+
+  function xReplyPermalinkId(value) {
+    if (typeof value !== 'string' || value.length > 4096) return null;
+    const canonical = canonicalizeXPermalink(value.trim());
+    return canonical?.match(/\/status\/(\d{5,30})$/)?.[1] ?? null;
+  }
+
+  function xReplyOwnerId(post) {
+    const nativeId = post?.platformId ?? post?.id;
+    if (typeof nativeId !== 'string') return null;
+    const id = /^(?:x:status:)?(\d{5,30})$/.exec(nativeId)?.[1];
+    if (!id || id !== xReplyPermalinkId(post.permalink)) return null;
+    const primary = post.presentation?.primaryIdentity;
+    if (primary && (primary.status !== 'identified' || xReplyPermalinkId(primary.permalink) !== id)) return null;
+    if (post.platformId != null && post.id != null && post.id !== id && post.id !== 'x:status:' + id) return null;
+    return id;
+  }
+
+  // Duplicate owners within a viewport are ambiguous. A later viewport may
+  // independently contain the same post, so each snapshot has its own index.
+  function xReplySnapshotOwners(posts) {
+    const indices = new Map();
+    for (const [index, post] of posts.entries()) {
+      const id = xReplyOwnerId(post);
+      if (id) indices.set(id, indices.has(id) ? null : index);
+    }
+    for (const [id, index] of indices) if (index === null) indices.delete(id);
+    return indices;
+  }
+
+  function conflictingReplyParentPermalink(post, replyToId) {
+    if (post?.relationshipType !== 'reply' || !post.parentPermalink) return false;
+    return xReplyPermalinkId(post.parentPermalink) !== replyToId;
+  }
+
+  function exactReplyIdentity(relation, ownerId) {
+    if (!relation || relation.kind !== 'replies_to'
+        || !['observed_dom', 'observed_response'].includes(relation.provenance)
+        || !isCanonicalCaptureTime(relation.capturedAt)) return null;
+    const target = relation.target;
+    if (!target || target.kind !== 'post' || typeof target.id !== 'string'
+        || !/^\d{5,30}$/.test(target.id) || target.id === ownerId
+        || typeof target.permalink !== 'string') return null;
+    const permalinkId = xReplyPermalinkId(target.permalink);
+    if (!permalinkId || permalinkId !== target.id) return null;
+    if (!['captured', 'reference_only'].includes(target.availability)
+        || typeof target.text !== 'string' || target.text.length > 4000
+        || typeof target.author !== 'string' || target.author.length > 300) return null;
+    const hasMedia = target.hasMedia === true;
+    if (target.availability === 'reference_only' && (target.text || hasMedia)) return null;
+    // The adapter can know the exact reply edge from a response while getting the
+    // bounded parent body from the one matching DOM article. Response-created
+    // relations themselves stay reference-only with an empty body.
+    if (target.availability === 'captured' && (!target.text && !hasMedia)) return null;
+    if (typeof relation.observedText === 'string' && relation.observedText.length > 500) return null;
+    return target.id;
+  }
+
+  function isUnresolvedDomReply(relation) {
+    const target = relation?.target;
+    return relation?.kind === 'replies_to' && relation.provenance === 'observed_dom'
+      && isCanonicalCaptureTime(relation.capturedAt) && target?.kind === 'post'
+      && target.id === '' && target.permalink === '' && target.availability === 'reference_only'
+      && typeof target.text === 'string' && !target.text && typeof target.author === 'string' && !target.author
+      && (!relation.observedText || typeof relation.observedText === 'string' && relation.observedText.length <= 500);
+  }
+
+  function isCanonicalCaptureTime(value) {
+    if (typeof value !== 'string') return false;
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+  }
+
   function expansionLabel(value, direction) {
     const text = String(value ?? "")
       .replace(/^(?:(?:…|\.{3})\s*)+/, "")
@@ -452,6 +598,11 @@
     structuredText,
     detectXAccessChallenge,
     canonicalizeXPermalink,
+    xReplyOwnerId,
+    xReplySnapshotOwners,
+    mergeXReplyDirectContext,
+    markXReplyContextAmbiguous,
+    mergeXResponseReply,
     expansionLabel,
     expandContent,
     restoreContent,
