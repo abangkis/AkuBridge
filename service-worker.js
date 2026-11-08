@@ -1175,6 +1175,8 @@ async function dispatchMediaRecapture(message) {
 }
 
 async function captureWithSourceTabRecovery(command) {
+  const diagnoseNavigation = command.payload.source === "x" && !command.payload.targetUrl &&
+    (command.payload.acquisitionRound ?? 1) === 1;
   if (!await sourceAccessGranted(chrome, command.payload.source)) {
     throw new AkuBridgeError(
       "source_permission_required",
@@ -1198,6 +1200,11 @@ async function captureWithSourceTabRecovery(command) {
         command.payload.acquisitionRound,
       );
       const observation = await capturePreparedSource(command, prepared, attempt);
+      if (diagnoseNavigation) {
+        observation.coverage.windowedNavigation = windowedNavigationForTab(
+          prepared.readiness?.windowedNavigation, prepared.opened,
+        );
+      }
       if (observationEvidenceBlockCount(observation) === 0) {
         throw new AkuBridgeError(
           "capture_empty",
@@ -1236,6 +1243,15 @@ async function captureWithSourceTabRecovery(command) {
         emptyObservationRecovery: sourcePolicy?.captureRecovery?.emptyObservation ?? null,
       });
       if (!retry) {
+        if (diagnoseNavigation) {
+          error.details = {
+            ...error.details,
+            windowedNavigation: prepared
+              ? windowedNavigationForTab(prepared.readiness?.windowedNavigation, prepared.opened)
+              : error.details?.windowedNavigation ?? error.details?.causeDetails?.windowedNavigation ??
+                { state: "unavailable" },
+          };
+        }
         if (prepared?.lifecycleEvents?.length) {
           error.captureSurfaceLifecycle = prepared.lifecycleEvents;
         }
@@ -1255,6 +1271,13 @@ async function captureWithSourceTabRecovery(command) {
       }
     }
   }
+}
+
+function windowedNavigationForTab(navigation, opened) {
+  return {
+    ...(navigation ?? { state: "unavailable" }),
+    tabOpenedForCapture: opened === true,
+  };
 }
 
 async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) {
@@ -1908,12 +1931,16 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
   if (!captureReady && !structuredFeedFallback) {
     if (options.restoreFocus) await options.restoreFocus();
     else await restoreTabFocus(previousActiveTabId, tab.id);
+    const { windowedNavigation, ...readinessDetails } = readiness;
+    const details = source === "x"
+      ? { source, windowedNavigation: windowedNavigationForTab(windowedNavigation, opened) }
+      : { source };
     if (readiness.state === "source_unavailable") {
       throw new AkuBridgeError(
         "source_unavailable",
         "readiness",
         readiness.availability?.message ?? `${sourceLabel(source)} is temporarily unavailable.`,
-        { source, availability: readiness.availability ?? null },
+        { ...details, availability: readiness.availability ?? null },
       );
     }
     if (readiness.state === "challenge_required") {
@@ -1922,7 +1949,7 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
         "challenge_required",
         "readiness",
         accessChallengeMessage(challengeCategory),
-        { source, challengeCategory },
+        { ...details, challengeCategory },
       );
     }
     if (readiness.state === "login_required") {
@@ -1930,7 +1957,7 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
         "login_required",
         "readiness",
         `${sourceLabel(source)} requires a signed-in source session.`,
-        { source },
+        details,
       );
     }
     const rejections = readiness.candidateRejections;
@@ -1957,8 +1984,8 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
       `scroll=${readiness.scrollContext ?? "unknown"}, ` +
       `document=${readiness.documentReadyState ?? "unknown"}${rejectionSummary}).`,
       {
-        source,
-        readiness,
+        ...details,
+        readiness: readinessDetails,
         structuredFeedFallback: structuredFeedResult?.diagnostics ?? null,
       },
     );

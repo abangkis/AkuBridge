@@ -30,7 +30,12 @@
       return false;
     }
     if (message?.type === "AKU_BROWSER_PROBE_SOURCE_READY") {
-      sendResponse({ ok: true, readiness: probeSourceReadiness(message.source) });
+      const readiness = probeSourceReadiness(message.source);
+      if (message.source === "x") {
+        const navigation = readWindowedXNavigation();
+        if (navigation) readiness.windowedNavigation = navigation;
+      }
+      sendResponse({ ok: true, readiness });
       return false;
     }
     if (message?.type === "AKU_BROWSER_RECOVER_SOURCE_READINESS") {
@@ -88,6 +93,40 @@
   };
   globalThis.__akuBrowserSourceBridgeMessageHandler = messageHandler;
   chrome.runtime.onMessage.addListener(messageHandler);
+
+  function readWindowedXNavigation() {
+    const { location } = window;
+    if (window.top !== window || location.origin !== "https://x.com" || location.pathname !== "/home") return;
+    try {
+      const entries = performance.getEntriesByType("navigation");
+      if (entries.length !== 1) return { state: "not_observed" };
+      const entry = entries[0];
+      const url = new URL(entry.name);
+      // A reused tab may have reached /home through a same-document route change.
+      if (url.origin !== location.origin || url.pathname !== location.pathname || url.search !== location.search) {
+        return { state: "not_observed" };
+      }
+      const result = { state: "matched", httpStatusSource: "not_observed" };
+      const status = entry.responseStatus;
+      if (Number.isInteger(status) && status >= 200 && status <= 599) {
+        result.httpStatus = status;
+        result.httpStatusSource = "navigation_timing";
+      }
+      if (["http/1.1", "h2", "h3"].includes(entry.nextHopProtocol)) result.protocol = entry.nextHopProtocol;
+      if (["navigate", "reload", "back_forward", "prerender"].includes(entry.type)) result.navigationType = entry.type;
+      if (Number.isInteger(entry.redirectCount) && entry.redirectCount >= 0 && entry.redirectCount <= 20) {
+        result.redirectCount = entry.redirectCount;
+      }
+      if (["cache", "navigational-prefetch"].includes(entry.deliveryType)) result.deliveryType = entry.deliveryType;
+      if (Number.isFinite(entry.workerStart)) result.serviceWorkerInvolved = entry.workerStart > 0;
+      if (typeof navigator.userAgent === "string") result.userAgentHeadless = /\bHeadlessChrome\//i.test(navigator.userAgent);
+      const brands = navigator.userAgentData?.brands;
+      if (Array.isArray(brands)) result.clientHintsHeadless = brands.some(brand => brand?.brand === "HeadlessChrome");
+      return result;
+    } catch {
+      return { state: "unavailable" };
+    }
+  }
 
   function probeSourceReadiness(source) {
     if (!sourceMatchesPage(source)) {

@@ -56,7 +56,7 @@ class Article {
   }
 }
 
-function createProbe(articles) {
+function createProbe(articles, { entries = [], url = "https://x.com/home", subframe = false } = {}) {
   const document = {
     readyState: "complete",
     body: {},
@@ -66,11 +66,18 @@ function createProbe(articles) {
       return selector === "main article" ? articles : [];
     },
   };
+  const window = { location: new URL(url), innerWidth: 800, innerHeight: 600 };
+  window.top = subframe ? {} : window;
   let receive;
   const context = vm.createContext({
     URL,
     document,
-    window: { location: new URL("https://x.com/home"), innerWidth: 800, innerHeight: 600 },
+    window,
+    performance: { getEntriesByType: (type) => type === "navigation" ? entries : [] },
+    navigator: {
+      userAgent: "Private browser fields Chrome/157.0.0.0",
+      userAgentData: { brands: [{ brand: "Chromium", version: "157" }] },
+    },
     Element: Article,
     getComputedStyle: () => ({ opacity: "1", visibility: "visible", display: "block" }),
     chrome: { runtime: { onMessage: { addListener: (listener) => { receive = listener; } } } },
@@ -96,6 +103,57 @@ function createProbe(articles) {
   probe.extract = (article) => context.extractFixtureBlock(article, "x", 4_000, context.window);
   return probe;
 }
+
+test("Windowed X reports an allowlisted main-document response, including HTTP 403", () => {
+  const url = "https://x.com/home?private=query";
+  const entry = {
+    name: url,
+    responseStatus: 403,
+    nextHopProtocol: "h2",
+    type: "navigate",
+    redirectCount: 0,
+    workerStart: 0,
+    headers: { Cookie: "private-cookie" },
+  };
+  const result = createProbe([], { url, entries: [entry] })();
+  assert.deepEqual({ ...result.windowedNavigation }, {
+    state: "matched",
+    httpStatus: 403,
+    httpStatusSource: "navigation_timing",
+    protocol: "h2",
+    navigationType: "navigate",
+    redirectCount: 0,
+    serviceWorkerInvolved: false,
+    userAgentHeadless: false,
+    clientHintsHeadless: false,
+  });
+  assert.doesNotMatch(JSON.stringify(result.windowedNavigation), /private|cookie|x\.com/i);
+  assert.equal(result.state, createProbe([], { url })().state);
+});
+
+test("Windowed X does not infer a status or attribute a different navigation to /home", () => {
+  const url = "https://x.com/home";
+  const entry = {
+    name: url,
+    responseStatus: 0,
+    nextHopProtocol: "arbitrary",
+    redirectCount: 100,
+    deliveryType: "cache",
+  };
+  const unknown = createProbe([], { entries: [entry] })().windowedNavigation;
+  assert.deepEqual({ ...unknown }, {
+    state: "matched",
+    httpStatusSource: "not_observed",
+    deliveryType: "cache",
+    userAgentHeadless: false,
+    clientHintsHeadless: false,
+  });
+  const otherDocument = createProbe([], {
+    entries: [{ ...entry, name: "https://x.com/other", responseStatus: 200 }],
+  })().windowedNavigation;
+  assert.deepEqual({ ...otherDocument }, { state: "not_observed" });
+  assert.equal(createProbe([], { entries: [entry], subframe: true })().windowedNavigation, undefined);
+});
 
 test("visible X placeholders remain structural candidates and do not mark the feed ready", () => {
   const probe = createProbe([
@@ -185,12 +243,16 @@ test("a wrapper URL alone cannot admit a placeholder or let a quote stand in for
 
 test("X readiness timeout sends numeric rejection counts in the Bridge failure", async () => {
   const privateURL = "https://private.example/post?token=private";
-  const probe = createProbe([new Article({ author: "Private author", media: true, permalink: privateURL })]);
+  const probe = createProbe([new Article({ author: "Private author", media: true, permalink: privateURL })], {
+    entries: [{ name: "https://x.com/home", responseStatus: 403 }],
+  });
   const service = fs.readFileSync(new URL("../service-worker.js", import.meta.url), "utf8");
   const preparation = service.slice(service.indexOf("async function prepareSourceTab("),
     service.indexOf("async function collectStructuredFeedFallback("));
   const readyCheck = service.slice(service.indexOf("function isSourceCaptureReady("),
     service.indexOf("async function assertTabLease("));
+  const navigationProjection = service.slice(service.indexOf("function windowedNavigationForTab("),
+    service.indexOf("async function capturePreparedSource("));
   const context = vm.createContext({
     AkuBridgeError, createTabLease,
     sourceDefinition: () => ({}),
@@ -201,7 +263,7 @@ test("X readiness timeout sends numeric rejection counts in the Bridge failure",
     restoreTabFocus: async () => {},
     sourceLabel: () => "X",
   });
-  vm.runInContext(preparation + readyCheck, context);
+  vm.runInContext(navigationProjection + preparation + readyCheck, context);
   await assert.rejects(context.prepareSourceTab({ id: 1, windowId: 2, active: true, url: "https://x.com/home" }, "x", true), (error) => {
     const body = JSON.stringify(serializeBridgeError(error));
     const failure = JSON.parse(body);
@@ -211,7 +273,47 @@ test("X readiness timeout sends numeric rejection counts in the Bridge failure",
     assert.deepEqual(failure.details.readiness.candidateRejections, {
       visibleRejected: 1, missingAuthor: 0, missingText: 1, missingMediaOrQuote: 0, missingPermalink: 1,
     });
+    assert.equal(failure.details.windowedNavigation.httpStatus, 403);
+    assert.equal(failure.details.windowedNavigation.tabOpenedForCapture, true);
     assert.doesNotMatch(body, /private/i);
+    return true;
+  });
+});
+
+test("Windowed X carries navigation diagnostics through the capture result and failure", async () => {
+  const readiness = createProbe([], {
+    entries: [{ name: "https://x.com/home", responseStatus: 200, nextHopProtocol: "h3" }],
+  })();
+  let captureError;
+  const service = fs.readFileSync(new URL("../service-worker.js", import.meta.url), "utf8");
+  const capture = service.slice(service.indexOf("async function captureWithSourceTabRecovery("),
+    service.indexOf("async function capturePreparedSource("));
+  const context = vm.createContext({
+    chrome: {},
+    sourceAccessGranted: async () => true,
+    findOrOpenSourceTab: async () => ({ readiness, opened: false, restoreFocus: async () => ({}) }),
+    capturePreparedSource: async () => {
+      if (captureError) throw captureError;
+      return { coverage: {} };
+    },
+    observationEvidenceBlockCount: () => 1,
+    shouldCloseOpenedSourceTab: () => false,
+    shouldRetrySourceTab: () => false,
+    sourceDefinition: () => ({}),
+  });
+  vm.runInContext(capture, context);
+  const command = { payload: { source: "x" } };
+  const { coverage } = await context.captureWithSourceTabRecovery(command);
+  assert.equal(coverage.windowedNavigation.httpStatus, 200);
+  assert.equal(coverage.windowedNavigation.tabOpenedForCapture, false);
+  const followUp = await context.captureWithSourceTabRecovery({ payload: { source: "x", acquisitionRound: 2 } });
+  assert.equal(followUp.coverage.windowedNavigation, undefined);
+  captureError = new AkuBridgeError("freshness_unavailable", "source_freshness", "Fixture error", { existing: true });
+  await assert.rejects(context.captureWithSourceTabRecovery(command), (error) => {
+    const failure = serializeBridgeError(error);
+    assert.equal(failure.stage, "source_freshness");
+    assert.equal(failure.details.existing, true);
+    assert.equal(failure.details.windowedNavigation.httpStatus, 200);
     return true;
   });
 });
