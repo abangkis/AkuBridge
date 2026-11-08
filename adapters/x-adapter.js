@@ -10,7 +10,7 @@
   const xArticleRootSelector = '[data-testid="twitterArticleReadView"]';
   const legacyAuthorSelector = '[data-testid="User-Name"]';
   const legacyTextSelector = '[data-testid="tweetText"]';
-  const wrappedPostSelector = '[role="link"][data-href]';
+  const wrappedPostPermalink = capturePrimitives.xWrappedPostPermalink;
   const wrappedTextSelector = 'div[dir="auto"].whitespace-pre-wrap';
   const wrappedAuthorSelector = '.x-middot-group a[href]';
   const wrappedAvatarSelector = 'img[src^="https://pbs.twimg.com/profile_images/"]';
@@ -112,11 +112,12 @@
       foregroundAfterQuietExhaustion: true,
       allowTrustedUnknownGeometry: true,
       detectExpectedKinds: detectXExpectedMediaKinds,
-      extractStructuredCandidates: (container) => {
+      extractStructuredCandidates: (container, { candidateId, excludeRoot } = {}) => {
         const runtime = globalThis.AkuXMediaEvidenceRuntime;
-        const permalink = wrappedPostPermalink(container);
-        const candidates = permalink ? runtime?.lookup?.(`x:status:${statusID(permalink)}`)
-          : runtime?.lookupContainer?.(container);
+        const identity = resolveIdentity(container, excludeRoot);
+        const id = identity?.permalink ? `x:status:${statusID(identity.permalink)}` : null;
+        if (identity && (!id || candidateId && candidateId !== id)) return [];
+        const candidates = id ? runtime?.lookup?.(id) : runtime?.lookupContainer?.(container);
         return (candidates ?? []).filter((entry) => entry.kind !== "avatar").map((entry) => ({
           ...entry,
           trustedMediaRoot: true,
@@ -493,15 +494,6 @@ function imageUrls(image) {
       if (quoted && quoted !== container && container.contains(quoted)) return quoted;
     }
     return null;
-  }
-
-  function wrappedPostPermalink(container) {
-    if (container?.tagName !== "ARTICLE") return null;
-    const wrapper = container.parentElement;
-    if (!wrapper?.matches?.(wrappedPostSelector)) return null;
-    const value = wrapper.getAttribute("data-href") ?? "";
-    if (!/^(?:https:\/\/x\.com)?\/[\w]{1,15}\/status\/\d+\/?(?:[?#].*)?$/i.test(value)) return null;
-    return canonicalizeXPermalink(value.startsWith("/") ? `https://x.com${value}` : value);
   }
 
   function firstOwnElement(container, selector, quote = findQuotedPostContainer(container)) {

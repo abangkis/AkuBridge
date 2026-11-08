@@ -134,7 +134,7 @@
       const match = primary.find((primaryValue) => (
         unusedPrimary.has(primaryValue) && (
           samePoster(primaryValue, structuredValue, source) ||
-          primaryValue.kind === "video" && structuredValue.kind === "video" &&
+          source !== "x" && primaryValue.kind === "video" && structuredValue.kind === "video" &&
             primaryVideos.length === 1 && structuredVideos.length === 1
         )
       ));
@@ -142,12 +142,17 @@
         combined.push(structuredValue);
         continue;
       }
+      unusedPrimary.delete(match);
+      if (source === "x" && match.kind === "video" &&
+          (structuredValue.kind !== "video" || match.playbackUrl && !structuredValue.playbackUrl)) {
+        combined.push(match);
+        continue;
+      }
       const materiallyEnriched = match.kind !== structuredValue.kind ||
         match.playbackMode !== structuredValue.playbackMode ||
         match.playbackUrl !== structuredValue.playbackUrl ||
         (!match.width && Boolean(structuredValue.width)) ||
         (!match.height && Boolean(structuredValue.height));
-      unusedPrimary.delete(match);
       combined.push({
         ...match,
         ...structuredValue,
@@ -166,6 +171,39 @@
     }
     const media = capturePolicy.normalizeMediaCandidates(source, combined);
     return Object.freeze({ media, enrichedCount, structuredCount: structured.length });
+  }
+
+  function withPlaybackStatus(source, media, audit) {
+    if (source !== "x") return audit;
+    const videos = media.filter(entry => entry.kind === "video");
+    if (videos.some(entry => entry.playbackMode !== "inline" || !entry.playbackUrl)) {
+      const trace = (audit.trace ?? []).filter(stage => stage !== "primary_complete");
+      return {
+        ...audit,
+        outcome: "unresolved",
+        limitation: "video_stream_not_resolved",
+        trace: [...new Set([...trace, "video_stream_not_resolved"])],
+      };
+    }
+    if (audit.outcome === "unresolved" && videos.length > 0) {
+      return {
+        ...audit,
+        outcome: "recovered",
+        recoveredCount: Math.max(audit.recoveredCount ?? 0, videos.length),
+        method: "primary_hydration",
+        acquisitionStage: "hydrated_dom",
+        limitation: "",
+        trace: [...(audit.trace ?? []).filter(stage => stage !== "video_stream_not_resolved"), "primary_hydration_complete"],
+      };
+    }
+    if (audit.outcome !== "unresolved" && audit.limitation === "video_stream_not_resolved") {
+      return {
+        ...audit,
+        limitation: "",
+        trace: (audit.trace ?? []).filter(stage => stage !== "video_stream_not_resolved"),
+      };
+    }
+    return audit;
   }
 
   function processSnapshots(source, snapshots, lookupStructured) {
@@ -192,7 +230,7 @@
         const previousAudit = block.mediaRecovery && typeof block.mediaRecovery === "object"
           ? block.mediaRecovery
           : {};
-        block.mediaRecovery = {
+        block.mediaRecovery = withPlaybackStatus(source, block.media, {
           ...previousAudit,
           postProcessorVersion: runtimeRevision,
           outcome: recoveredCount > 0 ? "recovered" : previousAudit.outcome,
@@ -205,7 +243,7 @@
             ...(Array.isArray(previousAudit.trace) ? previousAudit.trace : []),
             "structured_deferred_complete",
           ])],
-        };
+        });
       }
     }
     return Object.freeze({
@@ -353,5 +391,6 @@
     createDeferredInbox,
     process,
     processSnapshots,
+    withPlaybackStatus,
   });
 })();

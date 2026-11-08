@@ -227,6 +227,12 @@ test("response evidence bridge publishes avatars separately from post media", ()
   }]);
   assert.deepEqual(JSON.parse(JSON.stringify(runtime.responseDiagnostics())), {
     runtimeRevision: "x-response-evidence-v2",
+    observerReady: false,
+    fetchHookActive: false,
+    xhrHookActive: false,
+    graphqlResponseCount: 0,
+    filteredOperationCount: 0,
+    unsuccessfulResponseCount: 0,
     messagesReceived: 1,
     messagesRejected: 0,
     acceptedCandidateCount: 1,
@@ -267,6 +273,12 @@ test("response evidence bridge publishes avatars separately from post media", ()
   assert.deepEqual(JSON.parse(JSON.stringify(runtime.responseDiagnostics())), {
     runtimeRevision: "x-response-evidence-v2",
     messagesReceived: 2,
+    observerReady: false,
+    fetchHookActive: false,
+    xhrHookActive: false,
+    graphqlResponseCount: 0,
+    filteredOperationCount: 0,
+    unsuccessfulResponseCount: 0,
     messagesRejected: 1,
     acceptedCandidateCount: 1,
     acceptedAvatarCandidateCount: 1,

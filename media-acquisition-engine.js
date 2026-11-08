@@ -186,7 +186,7 @@
       recoveredMediaCount: 0,
       foregroundRequiredCount: 0,
       expectedKindCounts: {},
-      outcomes: { primary_complete: 0, recovered: 0, unavailable: 0, not_applicable: 0 },
+      outcomes: { primary_complete: 0, recovered: 0, unresolved: 0, unavailable: 0, not_applicable: 0 },
       methods: [],
       stageCounts: {},
     };
@@ -312,7 +312,10 @@
   }
 
   function result(media, audit) {
-    return Object.freeze({ media: Object.freeze([...media]), audit: Object.freeze(audit) });
+    return Object.freeze({
+      media: Object.freeze([...media]),
+      audit: Object.freeze(mediaPostProcessor.withPlaybackStatus(audit.source, media, audit)),
+    });
   }
 
   function clampInteger(value, minimum, maximum, fallback) {

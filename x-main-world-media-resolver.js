@@ -81,21 +81,14 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
   }
 
   function candidateIdFromContainer(container) {
-    const values = [];
-    for (const time of container?.querySelectorAll?.("time") ?? []) {
-      if (insideQuote(time, container)) continue;
-      values.push(time.closest?.('a[href*="/status/"]')?.href);
-    }
-    for (const anchor of container?.querySelectorAll?.('a[href*="/status/"]') ?? []) {
-      if (insideQuote(anchor, container)) continue;
-      values.push(anchor.href, anchor.getAttribute?.("href"));
-    }
-    return values.map(normalizeCandidateId).find(Boolean) ?? null;
-  }
-
-  function insideQuote(element, container) {
-    const quoted = element?.closest?.('[data-testid="quoteTweet"]');
-    return Boolean(quoted && quoted !== container);
+    const claims = globalThis.AkuCapturePrimitives?.xPostIdentityClaims?.(container, {
+      isExcluded: (element) => {
+        const quoted = element.closest?.('[data-testid="quoteTweet"], article');
+        return Boolean(quoted && quoted !== container);
+      },
+    });
+    const identity = globalThis.AkuSharedDOMEngine?.resolveDOMIdentity?.(claims);
+    return normalizeCandidateId(identity?.key);
   }
 
   function normalizeCandidateId(value) {

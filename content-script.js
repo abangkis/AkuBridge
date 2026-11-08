@@ -882,8 +882,12 @@
             extractPrimary: () => block.media,
             delay,
           });
+          if (source === "x" && mediaRecovery.media.length > 0) {
+            block.media = mediaRecovery.media;
+            if (block.media.some((entry) => entry.kind === "video")) block.contentKind = "video";
+          }
         }
-        block.mediaRecovery = mediaRecovery.audit;
+        block.mediaRecovery = mediaPostProcessor.withPlaybackStatus(source, block.media, mediaRecovery.audit);
         block.captureQuality = captureQuality;
       } finally {
         await restoreSourceContent(expansion);

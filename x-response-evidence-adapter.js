@@ -56,6 +56,9 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
   const xhrMetadata = new WeakMap();
   const cache = new Map();
   const counters = {
+    graphqlResponseCount: 0,
+    filteredOperationCount: 0,
+    unsuccessfulResponseCount: 0,
     observedResponseCount: 0,
     parsedResponseCount: 0,
     rejectedResponseCount: 0,
@@ -72,6 +75,13 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
       runtimeRevision: RUNTIME_REVISION,
       candidates: safeCandidates,
       diagnostics: Object.freeze({
+        observerReady: true,
+        fetchHookActive: Boolean(originalFetch && globalThis.fetch === wrappedFetch),
+        xhrHookActive: Boolean(originalXHROpen && originalXHRSend && originalXHRAddEventListener &&
+          xhrPrototype.open === wrappedXHROpen && xhrPrototype.send === wrappedXHRSend),
+        graphqlResponseCount: clamp(counters.graphqlResponseCount, 0, 100_000, 0),
+        filteredOperationCount: clamp(counters.filteredOperationCount, 0, 100_000, 0),
+        unsuccessfulResponseCount: clamp(counters.unsuccessfulResponseCount, 0, 100_000, 0),
         observedResponseCount: clamp(counters.observedResponseCount, 0, 100_000, 0),
         parsedResponseCount: clamp(counters.parsedResponseCount, 0, 100_000, 0),
         rejectedResponseCount: clamp(counters.rejectedResponseCount, 0, 100_000, 0),
@@ -116,6 +126,7 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
 
   function replay() {
     const values = [...cache.values()];
+    if (!values.length) emit([]);
     for (let offset = 0; offset < values.length; offset += maxCandidatesPerResponse) {
       emit(values.slice(offset, offset + maxCandidatesPerResponse));
     }
@@ -137,8 +148,7 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
     try {
       const url = responseURLGetter?.call(response) || dataProperty(response, "url");
       const status = responseStatusGetter?.call(response);
-      if (!allowedOperationURL(url) || !successfulStatus(status)) return;
-      counters.observedResponseCount += 1;
+      if (!observeGraphQLResponse(url, status)) return;
       const headers = responseHeadersGetter?.call(response);
       const contentType = typeof originalHeadersGet === "function"
         ? originalHeadersGet.call(headers, "content-type")
@@ -224,7 +234,7 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
 
   function wrappedXHROpen(...args) {
     try {
-      xhrMetadata.set(this, { allowed: allowedOperationURL(args[1]) });
+      xhrMetadata.set(this, Boolean(graphqlPath(args[1])));
     } catch {
       // Metadata is optional and must not change native open behavior.
     }
@@ -233,12 +243,11 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
 
   function wrappedXHRSend(...args) {
     const xhr = this;
-    if (xhrMetadata.get(xhr)?.allowed && typeof originalXHRAddEventListener === "function") {
+    if (xhrMetadata.get(xhr) && typeof originalXHRAddEventListener === "function") {
       try {
         originalXHRAddEventListener.call(xhr, "loadend", () => {
           try {
-            if (!successfulStatus(Number(xhr.status)) || !allowedOperationURL(xhr.responseURL)) return;
-            counters.observedResponseCount += 1;
+            if (!observeGraphQLResponse(xhr.responseURL, Number(xhr.status))) return;
             const responseType = String(xhr.responseType ?? "");
             if (responseType === "json") {
               inspectPayload(xhr.response);
@@ -470,15 +479,33 @@ function installXResponseEvidenceAdapterInMainWorld(configuration = {}) {
     return numericIdentifier(dataProperty(value, "rest_id") ?? dataProperty(value, "id_str"));
   }
 
-  function allowedOperationURL(value) {
-    if (typeof value !== "string" && !(value instanceof URL)) return false;
+  function graphqlPath(value) {
+    if (typeof value !== "string" && !(value instanceof URL)) return null;
     try {
       const url = new URL(value, pageHref);
-      if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "x.com" || url.username || url.password) return false;
-      return /^\/(?:i\/)?api\/graphql\/[^/]+\/(?:HomeTimeline|HomeLatestTimeline|TweetDetail)$/.test(url.pathname);
+      if (url.origin !== "https://x.com" || url.username || url.password) return null;
+      return /^\/(?:i\/)?api\/graphql\/[^/]+\/[^/]+$/.test(url.pathname) ? url.pathname : null;
     } catch {
+      return null;
+    }
+  }
+
+  function observeGraphQLResponse(url, status) {
+    const path = graphqlPath(url);
+    if (!path) return false;
+    counters.graphqlResponseCount += 1;
+    if (!/\/(?:HomeTimeline|HomeLatestTimeline|TweetDetail)$/.test(path)) {
+      counters.filteredOperationCount += 1;
+      emit([]);
       return false;
     }
+    if (!successfulStatus(status)) {
+      counters.unsuccessfulResponseCount += 1;
+      emit([]);
+      return false;
+    }
+    counters.observedResponseCount += 1;
+    return true;
   }
 
   function isExactXPage(locationValue) {

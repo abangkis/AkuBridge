@@ -33,8 +33,9 @@ test("fetch observation emits only sanitized owning and quoted Tweet evidence wi
     assert.equal(detail.candidates[1].media[0].url, "https://pbs.twimg.com/media/quoted.jpg?format=jpg&name=large");
     assert.equal(JSON.stringify(detail).includes("Private"), false);
     assert.deepEqual(Object.keys(detail.diagnostics).sort(), [
-      "avatarCount", "bounded", "candidateCount", "mediaCount", "observedResponseCount",
-      "parsedResponseCount", "rejectedResponseCount", "traversedNodeCount",
+      "avatarCount", "bounded", "candidateCount", "fetchHookActive", "filteredOperationCount", "graphqlResponseCount",
+      "mediaCount", "observedResponseCount", "observerReady", "parsedResponseCount", "rejectedResponseCount",
+      "traversedNodeCount", "unsuccessfulResponseCount", "xhrHookActive",
     ]);
   } finally {
     harness.restore();
@@ -161,14 +162,40 @@ test("only exact X GraphQL timeline operations are observed", async () => {
   try {
     for (const url of urls) await globalThis.fetch(url);
     await settle();
-    assert.equal(harness.messages.length, 0);
+    assert.equal(harness.messages.length, 1);
+    assert.deepEqual(harness.messages[0].candidates, []);
+    assert.equal(harness.messages[0].diagnostics.filteredOperationCount, 1);
+    assert.equal(harness.messages[0].diagnostics.observedResponseCount, 0);
 
     for (const operation of ["HomeTimeline", "HomeLatestTimeline", "TweetDetail"]) {
       const url = `https://x.com/i/api/graphql/query/${operation}`;
       await globalThis.fetch(url);
     }
     await settle();
-    assert.equal(harness.messages.length, 3);
+    assert.equal(harness.messages.length, 4);
+    assert.equal(harness.messages.at(-1).diagnostics.graphqlResponseCount, 4);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("READY distinguishes an installed observer with no responses from a blocked GraphQL response", async () => {
+  const harness = installHarness(() => {
+    const response = new Response(null, { status: 403 });
+    Object.defineProperty(response, "url", { value: HOME_URL });
+    return Promise.resolve(response);
+  });
+  try {
+    harness.ready();
+    assert.equal(harness.messages[0].diagnostics.observerReady, true);
+    assert.equal(harness.messages[0].diagnostics.fetchHookActive, true);
+    assert.equal(harness.messages[0].diagnostics.graphqlResponseCount, 0);
+    await globalThis.fetch(HOME_URL);
+    await settle();
+    const blocked = harness.messages.at(-1);
+    assert.deepEqual(blocked.candidates, []);
+    assert.equal(blocked.diagnostics.unsuccessfulResponseCount, 1);
+    assert.equal(blocked.diagnostics.parsedResponseCount, 0);
   } finally {
     harness.restore();
   }

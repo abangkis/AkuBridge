@@ -153,6 +153,7 @@
         continue;
       }
       const playbackUrl = kind === "video" ? safeMediaUrl(source, value.playbackUrl) : null;
+      const inlineUrl = source === "x" && playbackUrl && !isXMP4(playbackUrl) ? null : playbackUrl;
       const width = clampInteger(Math.round(value.width), 0, 8_192, 0);
       const height = clampInteger(Math.round(value.height), 0, 8_192, 0);
       const unknownGeometry = width === 0 && height === 0;
@@ -166,15 +167,17 @@
       if (trustedUnknownGeometry) diagnostics.trustedUnknownGeometryAcceptedCount += 1;
       const identity = mediaIdentity(source, url);
       const previous = seen.get(identity);
+      const candidate = createMediaCandidate(value, kind, url, inlineUrl, width, height);
       if (previous) {
         diagnostics.duplicateCount += 1;
-        if (preferMediaCandidate(value, previous.input, url, previous.url)) {
-          media[previous.index] = createMediaCandidate(value, kind, url, playbackUrl, width, height);
+        const prior = media[previous.index];
+        const playbackDiffers = source === "x" && (candidate.playbackMode === "inline") !== (prior.playbackMode === "inline");
+        if (playbackDiffers ? candidate.playbackMode === "inline" : preferMediaCandidate(value, previous.input, url, previous.url)) {
+          media[previous.index] = candidate;
           seen.set(identity, { ...previous, input: value, url });
         }
         continue;
       }
-      const candidate = createMediaCandidate(value, kind, url, playbackUrl, width, height);
       seen.set(identity, { index: media.length, input: value, url });
       media.push(candidate);
       if (media.length >= limits.maxMediaPerBlock) break;
@@ -188,6 +191,12 @@
       writable: false,
     });
     return Object.freeze(media);
+  }
+
+  function isXMP4(value) {
+    const url = new URL(value);
+    return url.origin === "https://video.twimg.com" && !url.username && !url.password &&
+      /^\/(?:amplify_video|ext_tw_video|tweet_video)\/.+\.mp4$/i.test(url.pathname);
   }
 
   function createMediaCandidate(value, kind, url, playbackUrl, width, height) {

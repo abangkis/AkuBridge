@@ -143,6 +143,40 @@
     }
   }
 
+  function xWrappedPostPermalink(root) {
+    if (root?.tagName !== "ARTICLE") return null;
+    const wrapper = root.parentElement;
+    if (!wrapper?.matches?.('[role="link"][data-href]')) return null;
+    const value = wrapper.getAttribute("data-href") ?? "";
+    if (!/^(?:https:\/\/x\.com)?\/[\w]{1,15}\/status\/\d+\/?(?:[?#].*)?$/i.test(value)) return null;
+    return canonicalizeXPermalink(value.startsWith("/") ? `https://x.com${value}` : value);
+  }
+
+  function xPostIdentityClaims(root, { owner = "primary", isExcluded, quoteContentRoot, allowQuoteAnchors = false } = {}) {
+    const claims = new Map();
+    const add = (value, provenance) => {
+      const locator = canonicalizeXPermalink(value);
+      const id = locator?.match(/\/status\/(\d+)$/)?.[1];
+      if (!id || id.length > 32) return;
+      claims.set(`${locator}:${provenance}`, { key: `x:status:${id}`, owner, provenance, locator });
+    };
+    add(xWrappedPostPermalink(root), "post-wrapper");
+    for (const time of root.querySelectorAll("time")) {
+      if (isExcluded?.(time)) continue;
+      add(time.closest("a[href]")?.href, "time-anchor");
+      if (claims.size > 8) break;
+    }
+    if (allowQuoteAnchors && !claims.size) {
+      const contentRoot = quoteContentRoot?.();
+      for (const anchor of root.querySelectorAll('a[href*="/status/"]')) {
+        if (isExcluded?.(anchor) || contentRoot?.contains(anchor)) continue;
+        add(anchor.href, "quote-anchor");
+        if (claims.size > 8) break;
+      }
+    }
+    return [...claims.values()];
+  }
+
   function mergeXReplyDirectContext(post, incomingRelations) {
     const incoming = (Array.isArray(incomingRelations) ? incomingRelations : [])
       .filter(relation => relation?.kind === 'replies_to');
@@ -598,6 +632,8 @@
     structuredText,
     detectXAccessChallenge,
     canonicalizeXPermalink,
+    xWrappedPostPermalink,
+    xPostIdentityClaims,
     xReplyOwnerId,
     xReplySnapshotOwners,
     mergeXReplyDirectContext,

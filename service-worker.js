@@ -1364,8 +1364,14 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
 
 async function collectXStructuredMediaEvidence(tabId) {
   try {
+    const target = { tabId };
+    await chrome.scripting.executeScript({
+      target,
+      world: "MAIN",
+      files: ["capture-primitives.js", "shared-dom-engine/browser-runtime.js"],
+    });
     const results = await chrome.scripting.executeScript({
-      target: { tabId },
+      target,
       world: "MAIN",
       func: resolveXStructuredMediaInMainWorld,
       args: [{
@@ -1373,6 +1379,7 @@ async function collectXStructuredMediaEvidence(tabId) {
         maxMediaPerCandidate: 4,
         maxTraversalNodes: 1_500,
         maxDepth: 9,
+        playbackFormat: "mp4",
       }],
     });
     return results?.[0]?.result ?? null;

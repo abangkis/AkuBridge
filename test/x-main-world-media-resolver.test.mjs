@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import "../capture-primitives.js";
+import "../shared-dom-engine/browser-runtime.js";
 import { resolveXStructuredMediaInMainWorld } from "../x-main-world-media-resolver.js";
 
 test("MAIN-world resolver returns only structured media for the owning X candidate", () => {
@@ -96,6 +98,30 @@ test("MAIN-world resolver honors candidate filtering and rejects non-X media hos
   assert.deepEqual(result.candidates.map((candidate) => candidate.candidateId), ["x:status:34567"]);
   assert.equal(JSON.stringify(result).includes("collector.example"), false);
   assert.equal(JSON.stringify(result).includes("filtered.jpg"), false);
+});
+
+test("MAIN-world MP4 resolver accepts wrapper-only identity and rejects a conflicting owner", () => {
+  const id = "23456";
+  const poster = "https://pbs.twimg.com/ext_tw_video_thumb/23456/pu/img/poster.jpg";
+  const playback = "https://video.twimg.com/ext_tw_video/23456/pu/vid/avc1/clip.mp4";
+  const article = syntheticArticle(id, { result: { rest_id: id, legacy: { extended_entities: {
+    media: [{ type: "video", media_url_https: poster, video_info: { variants: [{ url: playback }] } }],
+  } } } });
+  article.tagName = "ARTICLE";
+  article.parentElement = {
+    matches: selector => selector === '[role="link"][data-href]',
+    getAttribute: name => name === "data-href" ? `/author/status/${id}` : null,
+  };
+  article.querySelectorAll = () => [];
+  const request = { playbackFormat: "mp4", maxDepth: 9 };
+  const resolved = withDocument([article], () => resolveXStructuredMediaInMainWorld(request));
+  assert.equal(resolved.candidates[0].media[0].playbackUrl, playback);
+
+  const conflicting = { href: "https://x.com/author/status/99999" };
+  article.querySelectorAll = selector => selector === "time"
+    ? [{ closest: target => target === "a[href]" ? conflicting : null }]
+    : [];
+  assert.equal(withDocument([article], () => resolveXStructuredMediaInMainWorld(request)).candidates.length, 0);
 });
 
 test("MAIN-world resolver does not attribute quoted Tweet media to the owning candidate", () => {
@@ -547,7 +573,7 @@ function syntheticArticle(candidateId, structuredState) {
     closest: (selector) => selector.includes("quoteTweet") ? null : null,
   };
   const time = {
-    closest: (selector) => selector.includes('a[href*="/status/"]') ? anchor : null,
+    closest: (selector) => selector === "a[href]" ? anchor : null,
   };
   const article = {
     querySelectorAll(selector) {

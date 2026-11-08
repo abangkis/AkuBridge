@@ -1,6 +1,8 @@
 (() => {
   const runtimeRevision = "x-media-evidence-runtime-v3";
   const responseEvidenceRevision = "x-response-evidence-v2";
+  const observerFlags = ["observerReady", "fetchHookActive", "xhrHookActive"];
+  const observerCounts = ["graphqlResponseCount", "filteredOperationCount", "unsuccessfulResponseCount"];
   if (
     globalThis.AkuXMediaEvidence?.runtimeRevision === runtimeRevision &&
     globalThis.AkuXMediaEvidenceRuntime?.runtimeRevision === runtimeRevision
@@ -201,6 +203,12 @@
     let observer = null;
     let flushPending = false;
     const responseEvidence = {
+      observerReady: false,
+      fetchHookActive: false,
+      xhrHookActive: false,
+      graphqlResponseCount: 0,
+      filteredOperationCount: 0,
+      unsuccessfulResponseCount: 0,
       messagesReceived: 0,
       messagesRejected: 0,
       acceptedCandidateCount: 0,
@@ -328,6 +336,9 @@
         return 0;
       }
       const diagnostics = payload.diagnostics ?? {};
+      for (const key of [...observerFlags, ...observerCounts]) {
+        if (Object.hasOwn(diagnostics, key)) responseEvidence[key] = diagnostics[key];
+      }
       responseEvidence.observedResponseCount = diagnostics.observedResponseCount ?? 0;
       responseEvidence.parsedResponseCount = diagnostics.parsedResponseCount ?? 0;
       responseEvidence.rejectedResponseCount = diagnostics.rejectedResponseCount ?? 0;
@@ -489,11 +500,12 @@
     if (value === undefined || value === null) return true;
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
     if (!hasOnlyKeys(value, [
+      ...observerFlags, ...observerCounts,
       "observedResponseCount", "parsedResponseCount", "rejectedResponseCount",
       "candidateCount", "mediaCount", "avatarCount", "traversedNodeCount", "bounded",
     ])) return false;
     return Object.entries(value).every(([key, entry]) => (
-      key === "bounded"
+      key === "bounded" || observerFlags.includes(key)
         ? typeof entry === "boolean"
         : Number.isInteger(entry) && entry >= 0 && entry <= 100_000
     ));

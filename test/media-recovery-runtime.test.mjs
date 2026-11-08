@@ -27,6 +27,31 @@ test("media acquisition accepts already complete primary media without retry", a
   assert.deepEqual([...result.audit.trace], ["primary_complete"]);
 });
 
+test("X keeps poster-only and HLS unresolved until deferred owned MP4 arrives", async () => {
+  const context = runtimeContext(() => [], { expectedKinds: ["video"], useRealPolicy: true });
+  const poster = media("https://pbs.twimg.com/ext_tw_video_thumb/23456/pu/img/poster.jpg", "video");
+  const base = "https://video.twimg.com/ext_tw_video/23456/pu/vid/avc1/";
+  const acquire = initialMedia => context.AkuMediaAcquisitionEngine.acquire({ source: "x", container: {}, initialMedia });
+  for (const candidate of [poster, { ...poster, playbackUrl: base + "clip.m3u8" }]) {
+    const result = await acquire([candidate]);
+    assert.equal(result.audit.outcome, "unresolved");
+    assert.equal(result.audit.limitation, "video_stream_not_resolved");
+    assert.equal(result.media[0].posterUrl, poster.url);
+    assert.equal(result.media[0].playbackUrl, null);
+    assert.equal(context.AkuMediaAcquisitionEngine.summarize([result.audit]).outcomes.unresolved, 1);
+
+    const block = { platformId: "x:status:23456", media: result.media, mediaRecovery: result.audit };
+    const snapshots = [{ blocks: [block] }];
+    const processor = context.AkuMediaPostProcessor;
+    processor.processSnapshots("x", snapshots, () => [{ ...poster, kind: "image" }]);
+    assert.equal(block.mediaRecovery.outcome, "unresolved");
+    processor.processSnapshots("x", snapshots, () => [{ ...poster, playbackUrl: base + "clip.mp4" }]);
+    assert.equal(block.mediaRecovery.outcome, "recovered");
+    assert.equal(block.mediaRecovery.limitation, "");
+    assert.equal(block.media[0].playbackUrl, base + "clip.mp4");
+  }
+});
+
 test("media acquisition awaits one source-specific structured media lookup", async () => {
   let resolved = false;
   const context = runtimeContext(() => [], {
@@ -272,6 +297,7 @@ test("X adapter fallback covers the captured regression shapes", () => {
 
 function runtimeContext(extractCandidates, options = {}) {
   const adapter = {
+    mediaHosts: ["pbs.twimg.com", "video.twimg.com"],
     mediaAcquisition: {
       version: "fixture-media-v1",
       maxAttempts: 1,
@@ -284,6 +310,7 @@ function runtimeContext(extractCandidates, options = {}) {
     },
   };
   const context = {
+    URL,
     AkuSourceAdapters: { get: () => adapter },
     AkuBoundedCapturePolicy: {
       normalizeMediaCandidates: (_source, values) => values.filter((entry) => entry?.url),
@@ -293,6 +320,10 @@ function runtimeContext(extractCandidates, options = {}) {
   };
   context.globalThis = context;
   const sandbox = vm.createContext(context);
+  if (options.useRealPolicy) {
+    delete context.AkuBoundedCapturePolicy;
+    runScript(sandbox, "bounded-capture-policy.js");
+  }
   runScript(sandbox, "media-post-processor.js");
   runScript(sandbox, "media-acquisition-engine.js");
   return sandbox;

@@ -24,29 +24,12 @@
   const maxClaims = 8;
 
   function identityClaims(root, adapter, owner, excludeRoot, allowQuoteAnchors = owner === "quote") {
-    const claims = new Map();
-    const add = (value, provenance) => {
-      const locator = primitives.canonicalizeXPermalink(value);
-      const id = locator?.match(/\/status\/(\d+)$/)?.[1];
-      if (!id || id.length > 32) return;
-      const key = `x:status:${id}`;
-      claims.set(`${locator}:${provenance}`, { key, owner, provenance, locator });
-    };
-    add(adapter.findPermalinkDetails(root)?.url, "post-wrapper");
-    for (const time of root.querySelectorAll("time")) {
-      if (excludeRoot?.contains(time)) continue;
-      add(time.closest("a[href]")?.href, "time-anchor");
-      if (claims.size > maxClaims) break;
-    }
-    if (allowQuoteAnchors && !claims.size) {
-      const contentRoot = adapter.resolveContentRoot(root);
-      for (const anchor of root.querySelectorAll('a[href*="/status/"]')) {
-        if (excludeRoot?.contains(anchor) || contentRoot?.contains(anchor)) continue;
-        add(anchor.href, "quote-anchor");
-        if (claims.size > maxClaims) break;
-      }
-    }
-    return [...claims.values()];
+    return primitives.xPostIdentityClaims(root, {
+      owner,
+      isExcluded: node => excludeRoot?.contains(node),
+      quoteContentRoot: () => adapter.resolveContentRoot(root),
+      allowQuoteAnchors,
+    });
   }
 
   function resolveIdentity(root, adapter, excludeRoot, allowQuoteAnchors) {
