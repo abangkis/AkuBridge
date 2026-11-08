@@ -67,10 +67,29 @@ X, LinkedIn, Facebook, and Instagram DOM knowledge is separated behind one revis
 registry. The adapters are source-specific parsers, but they do not construct
 or validate the complete bridge observation by themselves.
 
+### X feed markup recovery, 8 November 2026
+
+DevTools on the Windowed capture profile showed rendered X posts under `main article`
+with an immediate `role="link"` wrapper whose `data-href` held the status route.
+The legacy `tweet`, `User-Name`, and `tweetText` markers were absent. Adapter
+`x-dom-v24` retains the legacy selectors and recognizes the wrapped format using
+a validated X status route, a matching author, and authored text or media/quote
+evidence. Nested quoted posts retain their own identity and content. An empty
+wrapper remains a rejected readiness candidate.
+
+Offline validation covered both formats, nested quotes, media-only posts, and
+placeholders. One live Windowed batch used `x-dom-v24`, reached `feed_ready`,
+evaluated four X candidates, and stored one timeline item with smart dedup
+enabled. Native X and Native Instagram were disabled. This receipt covers one
+Windowed batch. Headless still needs to consume the wrapper identity evidence
+through its own admission path and validate it separately. Sidecar accepted the
+development heartbeat and reported a version warning because its release
+reference still listed `x-dom-v23`.
+
 ```mermaid
 flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
-    DOM --> XA["X adapter<br/>x-dom-v23<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
+    DOM --> XA["X adapter<br/>x-dom-v24<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
     DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v22<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v2"]
     DOM --> FA["Facebook adapter<br/>facebook-dom-v19<br/>facebook-media-acquisition-v2"]
     DOM --> IA["Instagram adapter<br/>instagram-dom-v6<br/>instagram-media-acquisition-v2"]

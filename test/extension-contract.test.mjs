@@ -583,7 +583,7 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.equal("updateCapabilities" in legacyCapabilities, false);
   assert.equal("focusPolicyRevision" in legacyCapabilities, false);
   assert.equal(legacyCapabilities.contractVersion, "aku-browser.bridge.v2");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v23", linkedin: "linkedin-dom-v22", facebook: "facebook-dom-v19", instagram: "instagram-dom-v6" });
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v24", linkedin: "linkedin-dom-v22", facebook: "facebook-dom-v19", instagram: "instagram-dom-v6" });
   assert.deepEqual(capabilities.mediaEvidenceAdapterVersions, {
     x: "x-response-evidence-v2",
     linkedin: "linkedin-main-world-video-v1",

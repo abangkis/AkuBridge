@@ -1016,7 +1016,10 @@
       adapter.extractText?.(container, { compactText, structuredText }) ?? container,
     );
     const text = rawText.slice(0, maxCharacters);
-    const time = container.querySelector("time");
+    const quotedRoot = adapter.findQuotedRoot?.(container) ?? null;
+    const time = source === "x" && quotedRoot
+      ? [...container.querySelectorAll("time")].find((node) => !quotedRoot.contains(node))
+      : container.querySelector("time");
     const directPermalink = findPermalinkDetails(container, source, time);
     const permalink = directPermalink?.url ?? recoveredPermalink?.url ?? null;
     const semantics = adapter.extractSemantics(container, {
@@ -1046,7 +1049,6 @@
     presentation.timestampEstimated = Boolean(relativeTimestamp);
     presentation.timestampPrecision = relativeTimestamp?.precision
       ?? (nativePublishedAt ? "exact" : "unknown");
-    const quotedRoot = adapter.findQuotedRoot?.(container) ?? null;
     const quotedPost = normalizeQuotedPost(adapter.extractQuotedPost?.(container, {
       compactText,
       normalizeHttpUrl,
@@ -1063,9 +1065,8 @@
       expansionState: contentExpansion?.state ?? "unknown",
     });
     if (source === "x") {
-      const quotedRootForIdentity = adapter.findQuotedRoot?.(container) ?? null;
       const primaryPermalinks = [...container.querySelectorAll("time")]
-        .filter((candidate) => !quotedRootForIdentity?.contains?.(candidate))
+        .filter((candidate) => !quotedRoot?.contains?.(candidate))
         .map((candidate) => candidate.closest?.("a[href]")?.href)
         .filter(Boolean);
       if (directPermalink?.url) primaryPermalinks.push(directPermalink.url);
@@ -1125,7 +1126,7 @@
       presentation,
       attachments,
       media,
-      links: [...contentRoot.querySelectorAll("a[href]")]
+      links: [...(contentRoot?.querySelectorAll("a[href]") ?? [])]
         .map((anchor) => ({
           text: compactText(anchor.innerText).slice(0, 300),
           href: normalizeHttpUrl(anchor.href),
@@ -1192,6 +1193,7 @@
 
   function findContentRoot(container, source) {
     const adapter = sourceAdapters.get(source);
+    if (adapter.resolveContentRoot) return adapter.resolveContentRoot(container);
     const quotedRoot = adapter.findQuotedRoot?.(container) ?? null;
     const selector = adapter.contentRootSelector;
     const root = selector
@@ -1244,7 +1246,7 @@
       const avatarRoot = container.querySelector(visualHydration.avatarRootSelector);
       if (avatarRoot) {
         primaryAvatarContainerCount += 1;
-        const imageUrl = readImageUrl(avatarRoot.querySelector("img"));
+        const imageUrl = readImageUrl(avatarRoot.matches?.("img") ? avatarRoot : avatarRoot.querySelector("img"));
         if (imageUrl || renderedBackgroundUrl(avatarRoot)) {
           hydratedPrimaryAvatarCount += 1;
         }
@@ -1358,9 +1360,10 @@
   function findPermalinkDetails(container, source, time) {
     const adapter = sourceAdapters.get(source);
     const normalizePermalink = (value) => adapter.canonicalizePermalink?.(value) ?? normalizeHttpUrl(value);
+    const specialized = adapter.findPermalinkDetails?.(container, { normalizeHttpUrl, time });
+    if (source === "x" && specialized?.url) return specialized;
     const timedLink = time?.closest("a[href]")?.href;
     if (normalizePermalink(timedLink)) return { url: normalizePermalink(timedLink), source: "time_anchor" };
-    const specialized = adapter.findPermalinkDetails?.(container, { normalizeHttpUrl, time });
     if (specialized?.url) return specialized;
     const anchors = [...container.querySelectorAll("a[href]")];
     const match = anchors.find((anchor) => (adapter.permalinkPatterns ?? []).some(

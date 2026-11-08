@@ -8,6 +8,16 @@
   // Tweet photos and link cards. Keep the selectors narrow so article covers
   // are admitted without promoting profile or unrelated link images.
   const xArticleRootSelector = '[data-testid="twitterArticleReadView"]';
+  const legacyAuthorSelector = '[data-testid="User-Name"]';
+  const legacyTextSelector = '[data-testid="tweetText"]';
+  const wrappedPostSelector = '[role="link"][data-href]';
+  const wrappedTextSelector = 'div[dir="auto"].whitespace-pre-wrap';
+  const wrappedAuthorSelector = '.x-middot-group a[href]';
+  const wrappedAvatarSelector = 'img[src^="https://pbs.twimg.com/profile_images/"]';
+  const wrappedPhotoSelector = 'img[src^="https://pbs.twimg.com/media/"]';
+  const wrappedVideoPosterSelector = ["ext_tw_video_thumb", "amplify_video_thumb", "tweet_video_thumb"]
+    .map((path) => `img[src^="https://pbs.twimg.com/${path}/"]`).join(", ");
+  const xContentRootSelector = [legacyTextSelector, xArticleRootSelector, wrappedTextSelector].join(", ");
   const xArticleMediaSelector = [
     `${xArticleRootSelector} img[src*="pbs.twimg.com/"], ${xArticleRootSelector} img[srcset*="pbs.twimg.com/"], ${xArticleRootSelector} img[data-src*="pbs.twimg.com/"]`,
     'a[href*="/article/"][href*="/media/"] img[src*="pbs.twimg.com/"], a[href*="/article/"][href*="/media/"] img[srcset*="pbs.twimg.com/"], a[href*="/article/"][href*="/media/"] img[data-src*="pbs.twimg.com/"]',
@@ -42,7 +52,7 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v23",
+    version: "x-dom-v24",
     mediaHosts: Object.freeze(["pbs.twimg.com", "video.twimg.com"]),
     structuredMediaEvidence: Object.freeze({
       payloadField: "xStructuredMediaEvidence",
@@ -65,15 +75,15 @@
       modalities: Object.freeze(["text", "image", "video", "attachment", "quoted_post"]),
     }),
     qualitySelectors: Object.freeze({
-      author: '[data-testid="User-Name"]',
-      avatar: '[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"]',
-      content: '[data-testid="tweetText"], ' + xArticleRootSelector,
+      author: [legacyAuthorSelector, wrappedAuthorSelector].join(", "),
+      avatar: '[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"], ' + wrappedAvatarSelector,
+      content: xContentRootSelector,
       media: '[data-testid="tweetPhoto"], [data-testid="previewInterstitial"], '
         + '[data-testid="videoPlayer"], [data-testid="videoComponent"], '
         + 'a[href*="/status/"][href*="/photo/"], '
         + '[aria-label*="Video" i], a[aria-label][href] img[src*="/card_img/"], '
         + 'a[aria-label][href] [style*="/card_img/"], '
-        + xArticleMediaSelector,
+        + [xArticleMediaSelector, wrappedPhotoSelector, wrappedVideoPosterSelector, "video"].join(", "),
       timestamp: "time",
     }),
     freshness: Object.freeze({
@@ -101,13 +111,17 @@
       foregroundAfterQuietExhaustion: true,
       allowTrustedUnknownGeometry: true,
       detectExpectedKinds: detectXExpectedMediaKinds,
-      extractStructuredCandidates: (container) => (
-        globalThis.AkuXMediaEvidenceRuntime?.lookupContainer?.(container) ?? []
-      ).filter((entry) => entry.kind !== "avatar").map((entry) => ({
-        ...entry,
-        trustedMediaRoot: true,
-        urlSource: entry.provenance ?? "x_structured_state",
-      })),
+      extractStructuredCandidates: (container) => {
+        const runtime = globalThis.AkuXMediaEvidenceRuntime;
+        const permalink = wrappedPostPermalink(container);
+        const candidates = permalink ? runtime?.lookup?.(`x:status:${statusID(permalink)}`)
+          : runtime?.lookupContainer?.(container);
+        return (candidates ?? []).filter((entry) => entry.kind !== "avatar").map((entry) => ({
+          ...entry,
+          trustedMediaRoot: true,
+          urlSource: entry.provenance ?? "x_structured_state",
+        }));
+      },
       extractCandidates: extractXRecoveryCandidates,
     }),
     matchesPage: () => window.location.hostname === "x.com",
@@ -123,7 +137,8 @@
     discoverCandidates: ({ uniqueElements }) => {
       const primary = [...document.querySelectorAll('article[data-testid="tweet"]')];
       const fallback = [...document.querySelectorAll("main article")];
-      const candidates = uniqueElements([...primary, ...fallback]);
+      const candidates = uniqueElements([...primary, ...fallback]).filter((article) =>
+        !wrappedPostPermalink(article) || !article.parentElement?.closest?.("article"));
       return {
         candidates,
         semanticCandidateCount: candidates.length,
@@ -132,21 +147,28 @@
         selectorCounts: { tweet_testid: primary.length, main_article: fallback.length },
       };
     },
-    findAuthor: (container, { compactText }) =>
-      compactText(container.querySelector('[data-testid="User-Name"]')?.innerText).slice(0, 300),
+    findAuthor: findXAuthor,
+    findPermalinkDetails: (container) => {
+      const url = wrappedPostPermalink(container);
+      return url ? { url, source: "post_wrapper" } : null;
+    },
     findAvatar: (container, { normalizeHttpUrl }) => {
+      const wrapped = wrappedPostPermalink(container);
       const selectors = [
         '[data-testid="Tweet-User-Avatar"] img',
         '[data-testid^="UserAvatar-Container-"] img',
       ];
       for (const selector of selectors) {
-        const image = container.querySelector(selector);
+        const image = wrapped ? firstOwnElement(container, selector) : container.querySelector(selector);
         const url = imageUrls(image).map(normalizeHttpUrl).find(Boolean);
         if (url) return url;
       }
-      return normalizeHttpUrl(
-        globalThis.AkuXMediaEvidenceRuntime?.lookupAvatarContainer?.(container),
-      );
+      const avatar = wrapped && firstOwnElement(container, wrappedAvatarSelector);
+      const avatarUrl = imageUrls(avatar).map(normalizeHttpUrl).find(Boolean);
+      if (avatarUrl) return avatarUrl;
+      const runtime = globalThis.AkuXMediaEvidenceRuntime;
+      return normalizeHttpUrl(wrapped ? runtime?.lookupAvatar?.(`x:status:${statusID(wrapped)}`)
+        : runtime?.lookupAvatarContainer?.(container));
     },
     findQuotedRoot: findQuotedPostContainer,
     contentExpansion: Object.freeze({
@@ -164,11 +186,11 @@
       '[data-testid^="UserAvatar-Container-"]',
     ]),
     visualHydration: Object.freeze({
-      avatarRootSelector: '[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"]',
+      avatarRootSelector: '[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"], ' + wrappedAvatarSelector,
     }),
     mediaRendering: Object.freeze({
-      trustedRootSelector: '[data-testid="tweetPhoto"], [data-testid="previewInterstitial"], [data-testid="videoPlayer"], [data-testid="videoComponent"], a[href*="/status/"][href*="/photo/"], [aria-label*="Video" i], a[aria-label][href] img[src*="/card_img/"], ' + xArticleMediaRootSelector,
-      videoRootSelector: '[data-testid="previewInterstitial"], [data-testid="videoPlayer"], [data-testid="videoComponent"], [aria-label*="Video" i]',
+      trustedRootSelector: '[data-testid="tweetPhoto"], [data-testid="previewInterstitial"], [data-testid="videoPlayer"], [data-testid="videoComponent"], a[href*="/status/"][href*="/photo/"], [aria-label*="Video" i], a[aria-label][href] img[src*="/card_img/"], ' + [xArticleMediaRootSelector, wrappedPhotoSelector, wrappedVideoPosterSelector].join(", "),
+      videoRootSelector: '[data-testid="previewInterstitial"], [data-testid="videoPlayer"], [data-testid="videoComponent"], [aria-label*="Video" i], ' + wrappedVideoPosterSelector,
       embeddedVideoPattern: /embedded video/i,
       trustedVideo: true,
       backgroundGroups: Object.freeze([
@@ -178,7 +200,8 @@
       ]),
     }),
     permalinkPatterns: Object.freeze([/\/status\/\d+/]),
-    contentRootSelector: '[data-testid="tweetText"], ' + xArticleRootSelector,
+    contentRootSelector: xContentRootSelector,
+    resolveContentRoot: findXTextRoot,
     extractText: (container, { compactText, structuredText }) => {
       const read = (node) => typeof structuredText === "function"
         ? structuredText(node)
@@ -186,14 +209,8 @@
       if (!container) return "";
       if (isXTextRoot(container)) return read(container);
 
-      const quoted = findQuotedPostContainer(container);
-      const authoredText = [...container.querySelectorAll('[data-testid="tweetText"]')]
-        .find((root) => !quoted?.contains?.(root));
-      if (authoredText) return read(authoredText);
-
-      const article = container.querySelector(xArticleRootSelector);
-      if (article && !quoted?.contains?.(article)) return read(article);
-      return "";
+      const root = findXTextRoot(container);
+      return root ? read(root) : "";
     },
     extractSemantics: (container, { compactText, normalizeHttpUrl }) => {
       const socialContext = compactText(
@@ -233,18 +250,21 @@
     }) => {
       const quoted = findQuotedPostContainer(container);
       if (!quoted) return null;
-      const textRoot = quoted.querySelector('[data-testid="tweetText"]');
+      const wrapped = wrappedPostPermalink(quoted);
+      const textRoot = wrapped ? findXTextRoot(quoted) : quoted.querySelector(legacyTextSelector);
       const text = typeof structuredText === "function"
         ? structuredText(textRoot)
         : compactText(textRoot?.innerText);
       const time = quoted.querySelector("time");
-      const permalink = canonicalizeXPermalink(
+      const permalink = wrapped ?? canonicalizeXPermalink(
         time?.closest?.("a[href]")?.href ||
         [...quoted.querySelectorAll('a[href*="/status/"]')][0]?.href,
       );
-      const avatar = quoted.querySelector('[data-testid^="UserAvatar-Container-"] img');
+      const avatar = quoted.querySelector('[data-testid^="UserAvatar-Container-"] img') ??
+        (wrapped ? firstOwnElement(quoted, wrappedAvatarSelector) : null);
       return {
-        author: compactText(quoted.querySelector('[data-testid="User-Name"]')?.innerText),
+        author: wrapped ? findXAuthor(quoted, { compactText })
+          : compactText(quoted.querySelector(legacyAuthorSelector)?.innerText),
         avatarUrl: imageUrls(avatar).map(normalizeHttpUrl).find(Boolean) ?? null,
         text,
         permalink,
@@ -267,20 +287,23 @@
       '[data-testid="videoComponent"] img',
       'a[aria-label][href] img[src*="/card_img/"]',
       xArticleMediaSelector,
+      wrappedPhotoSelector,
+      wrappedVideoPosterSelector,
     ].join(","),
   });
 
   function xCaptureReadinessRejections(container, { compactText, uniqueElements }) {
     const quote = findQuotedPostContainer(container);
-    const hasOwnText = (selector) => [...container.querySelectorAll(selector)].some((element) =>
-      !quote?.contains(element) && Boolean(compactText(element.innerText)),
-    );
-    const hasAuthor = hasOwnText('[data-testid="User-Name"]');
-    if (hasOwnText('[data-testid="tweetText"], ' + xArticleRootSelector)) {
+    const hasAuthor = Boolean(findXAuthor(container, { compactText }, quote));
+    if (compactText(findXTextRoot(container, quote)?.innerText)) {
       return hasAuthor ? null : { missingAuthor: true };
     }
     const hasPermalink = Boolean(ownPostURL(container, quote));
-    const hasMediaOrQuote = Boolean(quote) ||
+    const hasQuote = Boolean(quote && (!wrappedPostPermalink(container) ||
+      (ownPostURL(quote) && findXAuthor(quote, { compactText }) &&
+        (compactText(findXTextRoot(quote)?.innerText) ||
+          detectXExpectedMediaKinds(quote, { uniqueElements }).length > 0))));
+    const hasMediaOrQuote = hasQuote ||
       detectXExpectedMediaKinds(container, { excludeRoot: quote, uniqueElements }).length > 0;
     if (hasPermalink && hasMediaOrQuote) return hasAuthor ? null : { missingAuthor: true };
     return {
@@ -348,6 +371,7 @@
       '[data-testid="videoPlayer"]',
       '[data-testid="videoComponent"]',
       '[aria-label*="Video" i]',
+      ...(wrappedPostPermalink(container) ? ["video", wrappedVideoPosterSelector] : []),
     ].join(",");
     const roots = uniqueElements([
       ...container.querySelectorAll('[data-testid="tweetPhoto"]'),
@@ -355,6 +379,7 @@
       ...container.querySelectorAll(videoSelector),
       ...container.querySelectorAll('a[aria-label][href] img, a[aria-label][href] [style*="/card_img/"]'),
       ...container.querySelectorAll(xArticleMediaSelector),
+      ...(wrappedPostPermalink(container) ? container.querySelectorAll(wrappedPhotoSelector) : []),
     ]).filter((root) => !excludeRoot?.contains?.(root));
     return roots.map((root) => {
       const videoRoot = root.matches?.(videoSelector) || root.closest?.(videoSelector);
@@ -378,6 +403,8 @@ function imageUrls(image) {
 
 
   function ownPostURL(container, quote = findQuotedPostContainer(container)) {
+    const wrapped = wrappedPostPermalink(container);
+    if (wrapped) return wrapped;
     const times = [...(container.querySelectorAll?.("time") ?? [])];
     const urls = times.filter((time) => !quote?.contains?.(time))
       .map((time) => canonicalizeXPermalink(time.closest?.("a[href]")?.href)).filter(Boolean);
@@ -437,6 +464,9 @@ function imageUrls(image) {
   function findQuotedPostContainer(container) {
     const explicit = container.querySelector('[data-testid="quoteTweet"]');
     if (explicit) return explicit;
+    const nestedPost = [...(container.querySelectorAll?.("article") ?? [])]
+      .find((article) => wrappedPostPermalink(article));
+    if (nestedPost) return nestedPost;
     const textRoots = [...container.querySelectorAll('[data-testid="tweetText"]')];
     for (const textRoot of textRoots) {
       const quoted = textRoot.closest?.('[role="link"]');
@@ -445,9 +475,45 @@ function imageUrls(image) {
     return null;
   }
 
+  function wrappedPostPermalink(container) {
+    if (container?.tagName !== "ARTICLE") return null;
+    const wrapper = container.parentElement;
+    if (!wrapper?.matches?.(wrappedPostSelector)) return null;
+    const value = wrapper.getAttribute("data-href") ?? "";
+    if (!/^(?:https:\/\/x\.com)?\/[\w]{1,15}\/status\/\d+\/?(?:[?#].*)?$/i.test(value)) return null;
+    return canonicalizeXPermalink(value.startsWith("/") ? `https://x.com${value}` : value);
+  }
+
+  function firstOwnElement(container, selector, quote = findQuotedPostContainer(container)) {
+    return [...container.querySelectorAll(selector)].find((element) => !quote?.contains?.(element));
+  }
+
+  function findXTextRoot(container, quote = findQuotedPostContainer(container)) {
+    return firstOwnElement(container, legacyTextSelector, quote) ??
+      firstOwnElement(container, xArticleRootSelector, quote) ??
+      (wrappedPostPermalink(container) ? firstOwnElement(container, wrappedTextSelector, quote) : null);
+  }
+
+  function findXAuthor(container, { compactText }, quote = findQuotedPostContainer(container)) {
+    const legacy = compactText(firstOwnElement(container, legacyAuthorSelector, quote)?.innerText);
+    if (legacy) return legacy.slice(0, 300);
+    const permalink = wrappedPostPermalink(container);
+    const handle = permalink && new URL(permalink).pathname.split("/")[1].toLowerCase();
+    if (!handle || handle === "i") return "";
+    const profile = `https://x.com/${handle}`;
+    const body = findXTextRoot(container, quote);
+    const profileNames = (selector) => [...container.querySelectorAll(selector)]
+      .filter((anchor) => !quote?.contains?.(anchor) && !body?.contains?.(anchor) &&
+        anchor.href?.replace(/\/$/, "").toLowerCase() === profile)
+      .map((anchor) => compactText(anchor.innerText)).filter(Boolean);
+    const headerNames = profileNames(wrappedAuthorSelector);
+    const names = headerNames.length ? headerNames : profileNames("a[href]");
+    return (names.find((name) => !name.startsWith("@")) ?? names[0] ?? "").slice(0, 300);
+  }
+
   function isXTextRoot(element) {
     const testId = element.getAttribute?.("data-testid");
     return testId === "tweetText" || testId === "twitterArticleReadView" ||
-      Boolean(element.matches?.('[data-testid="tweetText"], ' + xArticleRootSelector));
+      Boolean(element.matches?.(xContentRootSelector));
   }
 })();

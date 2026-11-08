@@ -5,7 +5,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "x",
     displayName: "X",
-    adapterVersion: "x-dom-v23",
+    adapterVersion: "x-dom-v24",
     adapterScript: "adapters/x-adapter.js",
     supportScripts: Object.freeze(["x-media-evidence-runtime.js"]),
     ...feedRoutes.x,

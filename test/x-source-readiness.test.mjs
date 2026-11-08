@@ -5,8 +5,20 @@ import vm from "node:vm";
 import { AkuBridgeError, createTabLease, serializeBridgeError } from "../bridge-runtime-policy.js";
 
 class Article {
-  constructor({ primary = false, author = "", text = "", permalink = "", media = false, visible = true } = {}) {
-    Object.assign(this, { primary, author, text, permalink, media, visible });
+  constructor({ primary = false, author = "", text = "", permalink = "", media = false, visible = true,
+    wrapperHref = "", profileHref = "", quote = null } = {}) {
+    Object.assign(this, { primary, author, text, permalink, media, visible, wrapperHref, profileHref, quote });
+    this.tagName = "ARTICLE";
+    if (wrapperHref) {
+      this.parentElement = {
+        matches: (selector) => selector === '[role="link"][data-href]',
+        getAttribute: (name) => name === "data-href" ? wrapperHref : null,
+        closest: (selector) => selector === "article" ? this.outerArticle ?? null : null,
+      };
+      this.authorAnchor = { innerText: author, href: profileHref };
+      this.body = { innerText: text, querySelectorAll: () => [] };
+    }
+    if (quote) quote.outerArticle = this;
   }
 
   getBoundingClientRect() {
@@ -16,6 +28,16 @@ class Article {
 
   querySelectorAll(selector) {
     if (selector === "time" && this.permalink) return [{ closest: () => ({ href: this.permalink }) }];
+    if (selector === "article") return this.quote ? [this.quote] : [];
+    if (this.wrapperHref) {
+      if (selector === '.x-middot-group a[href]') {
+        return [this.authorAnchor, this.quote?.authorAnchor].filter(Boolean);
+      }
+      if (selector.includes('div[dir="auto"].whitespace-pre-wrap')) {
+        return [this.body, this.quote?.body].filter((body) => body?.innerText);
+      }
+      return [];
+    }
     if (selector === '[data-testid="User-Name"]' && this.author) return [{ innerText: this.author }];
     if (selector.includes('[data-testid="tweetText"]') && this.text) return [{ innerText: this.text }];
     if (selector === '[data-testid="tweetPhoto"]' && this.media) return [{}];
@@ -24,6 +46,13 @@ class Article {
 
   querySelector(selector) {
     return this.querySelectorAll(selector)[0] ?? null;
+  }
+
+  getAttribute() { return null; }
+
+  contains(element) {
+    return element === this || element === this.body || element === this.authorAnchor ||
+      Boolean(this.quote?.contains(element));
   }
 }
 
@@ -45,21 +74,27 @@ function createProbe(articles) {
     Element: Article,
     getComputedStyle: () => ({ opacity: "1", visibility: "visible", display: "block" }),
     chrome: { runtime: { onMessage: { addListener: (listener) => { receive = listener; } } } },
-    AkuBoundedCapturePolicy: {},
     AkuCaptureQualityPolicy: {},
     AkuSourceFreshnessRuntime: {},
     AkuMediaAcquisitionEngine: {},
     AkuMediaPostProcessor: { createDeferredInbox: () => ({}) },
   });
-  for (const file of ["capture-primitives.js", "source-adapter-runtime.js", "adapters/x-adapter.js", "content-script.js"]) {
-    vm.runInContext(fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8"), context, { filename: file });
+  for (const file of ["capture-primitives.js", "source-adapter-runtime.js", "adapters/x-adapter.js",
+    "bounded-capture-policy.js", "content-script.js"]) {
+    const source = fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+    const fixtureSource = file === "content-script.js"
+      ? source.replace(/\}\)\(\);\s*$/, "  globalThis.extractFixtureBlock = extractBlock;\n})();")
+      : source;
+    vm.runInContext(fixtureSource, context, { filename: file });
   }
-  return () => {
+  const probe = () => {
     let result;
     receive({ type: "AKU_BROWSER_PROBE_SOURCE_READY", source: "x" }, null, (value) => { result = value; });
     assert.equal(result.ok, true);
     return result.readiness;
   };
+  probe.extract = (article) => context.extractFixtureBlock(article, "x", 4_000, context.window);
+  return probe;
 }
 
 test("visible X placeholders remain structural candidates and do not mark the feed ready", () => {
@@ -106,6 +141,46 @@ test("X readiness preserves real alternative markup and media-only posts", () =>
   assert.deepEqual({ ...readiness.candidateRejections }, {
     visibleRejected: 1, missingAuthor: 1, missingText: 1, missingMediaOrQuote: 1, missingPermalink: 1,
   });
+});
+
+test("Windowed X extracts a wrapped post and quote as separate identities and text", () => {
+  const quote = new Article({ wrapperHref: "https://x.com/quoted/status/456", profileHref: "https://x.com/quoted",
+    author: "Quoted author", text: "Quoted words" });
+  const owner = new Article({ wrapperHref: "/owner/status/123", profileHref: "https://x.com/owner",
+    author: "Owner name", text: "Owner words", quote });
+  const probe = createProbe([owner, quote]);
+  const readiness = probe();
+  assert.equal(readiness.state, "feed_ready");
+  assert.equal(readiness.structuralCandidateCount, 1);
+  assert.equal(readiness.visibleSelectorCandidateCount, 1);
+  const block = probe.extract(owner);
+  assert.equal(block.author, "Owner name");
+  assert.equal(block.text, "Owner words");
+  assert.equal(block.permalink, "https://x.com/owner/status/123");
+  assert.equal(block.platformId, "x:status:123");
+  assert.equal(block.presentation.primaryIdentity.status, "identified");
+  assert.equal(block.publishedAt, null);
+  assert.equal(block.relationshipType, "quote");
+  assert.equal(block.quotedPost.author, "Quoted author");
+  assert.equal(block.quotedPost.text, "Quoted words");
+  assert.equal(block.quotedPost.permalink, "https://x.com/quoted/status/456");
+  assert.equal(block.directContext[0].target.id, "456");
+});
+
+test("a wrapper URL alone cannot admit a placeholder or let a quote stand in for its author", () => {
+  const quote = new Article({ wrapperHref: "/quoted/status/456", profileHref: "https://x.com/quoted",
+    author: "Quoted author", text: "Quoted words" });
+  const articles = [
+    new Article({ wrapperHref: "/empty/status/111", profileHref: "https://x.com/empty", author: "Empty author" }),
+    new Article({ wrapperHref: "/owner/status/123", quote }),
+    quote,
+    new Article({ wrapperHref: "https://x.com.evil.test/fake/status/789", profileHref: "https://x.com/fake",
+      author: "Fake author", text: "Fake body" }),
+  ];
+  const readiness = createProbe(articles)();
+  assert.equal(readiness.state, "feed_hydrating");
+  assert.equal(readiness.visibleSelectorCandidateCount, 0);
+  assert.equal(readiness.candidateRejections.visibleRejected, 3);
 });
 
 test("X readiness timeout sends numeric rejection counts in the Bridge failure", async () => {
