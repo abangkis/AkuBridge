@@ -88,6 +88,12 @@ function resolvePrimary(claims, expectedKey) {
     provenance: [...new Set(primary.map(claim => claim.provenance))].sort() };
 }
 
+function resolveDOMIdentity(claims) {
+  return validList(claims, limits.claims, validClaim)
+    ? resolvePrimary(claims)
+    : { reason: 'invalid_evidence' };
+}
+
 function evaluateCandidate(candidate, policy, expectedKey) {
   const { ref } = candidate;
   const reject = reason => ({ ref, decision: 'rejected', reason });
@@ -210,4 +216,4 @@ function assessDOM(input) {
     diagnostic: { code: rendering, counts, rejections } };
 }
 
-export { assessDOM, SCHEMA_VERSION };
+export { assessDOM, resolveDOMIdentity, SCHEMA_VERSION };

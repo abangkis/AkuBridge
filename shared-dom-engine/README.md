@@ -53,9 +53,13 @@ Identity claims can carry a canonical `locator`. Fields can carry an
 explicit binding to a quote claim. Candidate decisions contain identity keys
 for the caller. Persist or transmit only `result.diagnostic` as engine
 telemetry, since it contains closed codes and counts without raw identities.
+Use `resolveDOMIdentity(claims)` for an identity decision when the caller
+already owns content and visibility checks. It accepts the same bounded
+claims and applies the same primary identity rules as `assessDOM`.
 
 Windowed and Headless X load the generated `browser-runtime.js` from this
 directory. Run `npm run build -- --stage-browser` after changing the core to
 refresh that packaged artifact. The test suite verifies its SHA-256 against the
 standalone build. The X evidence binding lives in `adapters/x-dom-shadow.js`
-at the AkuBridge root and emits the bounded diagnostic for both controllers.
+at the AkuBridge root. It gathers identity claims and emits the bounded
+diagnostic for both controllers.

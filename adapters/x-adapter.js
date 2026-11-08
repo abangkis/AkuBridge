@@ -52,7 +52,7 @@
 
   registry.register({
     source: "x",
-    version: "x-dom-v24",
+    version: "x-dom-v25",
     mediaHosts: Object.freeze(["pbs.twimg.com", "video.twimg.com"]),
     structuredMediaEvidence: Object.freeze({
       payloadField: "xStructuredMediaEvidence",
@@ -148,6 +148,7 @@
       };
     },
     findAuthor: findXAuthor,
+    resolveIdentity,
     findPermalinkDetails: (container) => {
       const url = wrappedPostPermalink(container);
       return url ? { url, source: "post_wrapper" } : null;
@@ -256,7 +257,12 @@
         ? structuredText(textRoot)
         : compactText(textRoot?.innerText);
       const time = quoted.querySelector("time");
-      const permalink = wrapped ?? canonicalizeXPermalink(
+      const quoteIdentity = resolveIdentity(quoted, undefined, true);
+      const primaryIdentity = quoteIdentity?.permalink ? resolveIdentity(container, quoted) : null;
+      const identityConflictReason = quoteIdentity?.status === "conflicting" ? "dom_identity_conflict"
+        : quoteIdentity?.permalink && statusID(quoteIdentity.permalink) === statusID(primaryIdentity?.permalink)
+          ? "primary_self_reference" : null;
+      const permalink = quoteIdentity ? (identityConflictReason ? null : quoteIdentity.permalink) : wrapped ?? canonicalizeXPermalink(
         time?.closest?.("a[href]")?.href ||
         [...quoted.querySelectorAll('a[href*="/status/"]')][0]?.href,
       );
@@ -268,6 +274,7 @@
         avatarUrl: imageUrls(avatar).map(normalizeHttpUrl).find(Boolean) ?? null,
         text,
         permalink,
+        ...(identityConflictReason ? { identityConflictReason } : {}),
         publishedAt: time?.getAttribute?.("datetime") || null,
         links: [...(textRoot?.querySelectorAll("a[href]") ?? [])]
           .map((anchor) => ({
@@ -295,12 +302,18 @@
   function xCaptureReadinessRejections(container, { compactText, uniqueElements }) {
     const quote = findQuotedPostContainer(container);
     const hasAuthor = Boolean(findXAuthor(container, { compactText }, quote));
+    const identity = resolveIdentity(container, quote);
     if (compactText(findXTextRoot(container, quote)?.innerText)) {
+      if (identity && identity.status !== "identified") {
+        return { missingAuthor: !hasAuthor, missingPermalink: true };
+      }
       return hasAuthor ? null : { missingAuthor: true };
     }
-    const hasPermalink = Boolean(ownPostURL(container, quote));
-    const hasQuote = Boolean(quote && (!wrappedPostPermalink(container) ||
-      (ownPostURL(quote) && findXAuthor(quote, { compactText }) &&
+    const hasPermalink = Boolean(identity ? identity.permalink : ownPostURL(container, quote));
+    const quoteIdentity = quote && resolveIdentity(quote, undefined, true);
+    const quotePermalink = quoteIdentity ? quoteIdentity.permalink : quote && ownPostURL(quote);
+    const hasQuote = Boolean(quote && ((!identity && !wrappedPostPermalink(container)) ||
+      (quotePermalink && statusID(quotePermalink) !== statusID(identity?.permalink) && findXAuthor(quote, { compactText }) &&
         (compactText(findXTextRoot(quote)?.innerText) ||
           detectXExpectedMediaKinds(quote, { uniqueElements }).length > 0))));
     const hasMediaOrQuote = hasQuote ||
@@ -402,7 +415,13 @@ function imageUrls(image) {
 }
 
 
+  function resolveIdentity(container, excludeRoot = findQuotedPostContainer(container), allowQuoteAnchors = false) {
+    return globalThis.AkuXDOMShadow?.resolveIdentity?.(container, registry.get("x"), excludeRoot, allowQuoteAnchors);
+  }
+
   function ownPostURL(container, quote = findQuotedPostContainer(container)) {
+    const shared = resolveIdentity(container, quote);
+    if (shared) return shared.permalink;
     const wrapped = wrappedPostPermalink(container);
     if (wrapped) return wrapped;
     const times = [...(container.querySelectorAll?.("time") ?? [])];

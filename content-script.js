@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v120";
+  const runtimeRevision = "source-adapters-v121";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -744,6 +744,7 @@
           expansion,
           capturedAt,
         );
+        if (!block) continue;
         candidateKey = provisionalCandidateKey(source, block, containerIndex, capturedAt);
         let qualityAttempt = 0;
         captureQuality = evaluateBlockQuality(
@@ -797,6 +798,7 @@
             expansion,
             capturedAt,
           );
+          if (!block) break;
           if (mediaRecovery?.media?.length > 0) {
             block.media = capturePolicy.normalizeMediaCandidates(
               source,
@@ -815,6 +817,7 @@
             payload.qualityRetryBudget - qualityAttempt,
           );
         }
+        if (!block) continue;
         if (captureQuality.verdict === "retryable") {
           captureQuality = evaluateBlockQuality(
             container,
@@ -1037,11 +1040,17 @@
     );
     const text = rawText.slice(0, maxCharacters);
     const quotedRoot = adapter.findQuotedRoot?.(container) ?? null;
-    const time = source === "x" && quotedRoot
-      ? [...container.querySelectorAll("time")].find((node) => !quotedRoot.contains(node))
-      : container.querySelector("time");
-    const directPermalink = findPermalinkDetails(container, source, time);
-    const permalink = directPermalink?.url ?? recoveredPermalink?.url ?? null;
+    const sharedIdentity = adapter.resolveIdentity?.(container, quotedRoot);
+    if (sharedIdentity && sharedIdentity.status !== "identified") return null;
+    const ownTimes = source === "x"
+      ? [...container.querySelectorAll("time")].filter((node) => !quotedRoot?.contains(node))
+      : [];
+    const legacyTime = source === "x" && quotedRoot ? ownTimes[0] : container.querySelector("time");
+    const time = sharedIdentity ? ownTimes.find((node) =>
+      capturePrimitives.canonicalizeXPermalink(node.closest("a[href]")?.href) === sharedIdentity.permalink) : legacyTime;
+    const directPermalink = findPermalinkDetails(container, source, legacyTime);
+    const legacyPermalink = directPermalink?.url ?? recoveredPermalink?.url ?? null;
+    const permalink = sharedIdentity ? sharedIdentity.permalink : legacyPermalink;
     const semantics = adapter.extractSemantics(container, {
       compactText,
       normalizeHttpUrl,
@@ -1069,13 +1078,14 @@
     presentation.timestampEstimated = Boolean(relativeTimestamp);
     presentation.timestampPrecision = relativeTimestamp?.precision
       ?? (nativePublishedAt ? "exact" : "unknown");
-    const quotedPost = normalizeQuotedPost(adapter.extractQuotedPost?.(container, {
+    const quoteEvidence = adapter.extractQuotedPost?.(container, {
       compactText,
       normalizeHttpUrl,
       structuredText,
       findMedia: (root) => findMedia(root, source),
-    }));
-    presentation.permalinkSource = directPermalink?.source ?? recoveredPermalink?.source ?? "unavailable";
+    });
+    const quotedPost = normalizeQuotedPost(quoteEvidence);
+    presentation.permalinkSource = sharedIdentity?.source ?? directPermalink?.source ?? recoveredPermalink?.source ?? "unavailable";
     presentation.permalinkReason = permalink
       ? ""
       : recoveredPermalink?.reason ?? "No stable native post permalink was exposed by this source.";
@@ -1085,28 +1095,32 @@
       expansionState: contentExpansion?.state ?? "unknown",
     });
     if (source === "x") {
-      const primaryPermalinks = [...container.querySelectorAll("time")]
-        .filter((candidate) => !quotedRoot?.contains?.(candidate))
+      const primaryPermalinks = ownTimes
         .map((candidate) => candidate.closest?.("a[href]")?.href)
         .filter(Boolean);
       if (directPermalink?.url) primaryPermalinks.push(directPermalink.url);
-      presentation.primaryIdentity = capturePrimitives.resolvePrimaryIdentity({
+      presentation.primaryIdentity = sharedIdentity ?? capturePrimitives.resolvePrimaryIdentity({
         permalinks: primaryPermalinks,
         expectedPermalink: recoveredPermalink?.url ?? directPermalink?.url ?? null,
       });
       const sharedPermalink = presentation.primaryIdentity.permalink;
       presentation.identityComparison = {
-        legacyDecision: permalink ? "identified" : "missing",
-        legacyPermalink: permalink ?? null,
+        legacyDecision: legacyPermalink ? "identified" : "missing",
+        legacyPermalink,
         sharedDecision: presentation.primaryIdentity.status,
         sharedPermalink,
         agrees: Boolean(
-          permalink && presentation.primaryIdentity.status === "identified" &&
-          sharedPermalink === capturePrimitives.canonicalizeXPermalink(permalink) ||
-          !permalink && presentation.primaryIdentity.status === "missing",
+          legacyPermalink && presentation.primaryIdentity.status === "identified" &&
+          sharedPermalink === capturePrimitives.canonicalizeXPermalink(legacyPermalink) ||
+          !legacyPermalink && presentation.primaryIdentity.status === "missing",
         ),
       };
-      if (quotedPost) {
+      if (quoteEvidence?.identityConflictReason) {
+        presentation.quoteIdentity = {
+          status: "conflicting_identity", id: null, permalink: null, source: null,
+          conflictReason: quoteEvidence.identityConflictReason,
+        };
+      } else if (quotedPost) {
         presentation.quoteIdentity = capturePrimitives.resolveQuoteIdentity({
           primaryId: permalink?.match(/\/status\/(\d+)/)?.[1] ?? null,
           domPermalink: quotedPost.permalink,
@@ -1134,12 +1148,13 @@
       avatarUrl: findAvatar(container, source),
       publishedAt: nativePublishedAt ?? relativeTimestamp?.publishedAt ?? null,
       permalink,
-      platformId: findPlatformId(container, source, permalink),
+      platformId: sharedIdentity ? capturePolicy.platformIdFromCandidates(source, [permalink])
+        : findPlatformId(container, source, permalink),
       contentKind: media.some((entry) => entry.kind === "video")
         ? "video"
         : semantics.contentKind ?? "post",
       relationshipType: semantics.relationshipType ?? "original",
-      parentPermalink: normalizeHttpUrl(semantics.parentPermalink),
+      parentPermalink: normalizeHttpUrl(sharedIdentity && quotedRoot ? quotedPost?.permalink : semantics.parentPermalink),
       quotedPost,
       directContext,
       engagement: semantics.engagement ?? {},
@@ -1184,6 +1199,8 @@
   async function expandSourceContent(container, source, deadlineAt) {
     const adapter = sourceAdapters.get(source);
     if (!adapter.contentExpansion) return { state: "not_applicable", expanded: false };
+    const identity = adapter.resolveIdentity?.(container);
+    if (identity && identity.status !== "identified") return { state: "not_applicable", expanded: false };
     return capturePrimitives.expandContent({
       container,
       adapter,

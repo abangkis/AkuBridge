@@ -23,13 +23,14 @@
   const maxCandidates = 64;
   const maxClaims = 8;
 
-  function identityClaims(root, adapter, owner, excludeRoot) {
+  function identityClaims(root, adapter, owner, excludeRoot, allowQuoteAnchors = owner === "quote") {
     const claims = new Map();
     const add = (value, provenance) => {
-      const id = primitives.canonicalizeXPermalink(value)?.match(/\/status\/(\d+)$/)?.[1];
+      const locator = primitives.canonicalizeXPermalink(value);
+      const id = locator?.match(/\/status\/(\d+)$/)?.[1];
       if (!id || id.length > 32) return;
       const key = `x:status:${id}`;
-      claims.set(`${key}:${provenance}`, { key, owner, provenance });
+      claims.set(`${locator}:${provenance}`, { key, owner, provenance, locator });
     };
     add(adapter.findPermalinkDetails(root)?.url, "post-wrapper");
     for (const time of root.querySelectorAll("time")) {
@@ -37,7 +38,29 @@
       add(time.closest("a[href]")?.href, "time-anchor");
       if (claims.size > maxClaims) break;
     }
+    if (allowQuoteAnchors && !claims.size) {
+      const contentRoot = adapter.resolveContentRoot(root);
+      for (const anchor of root.querySelectorAll('a[href*="/status/"]')) {
+        if (excludeRoot?.contains(anchor) || contentRoot?.contains(anchor)) continue;
+        add(anchor.href, "quote-anchor");
+        if (claims.size > maxClaims) break;
+      }
+    }
     return [...claims.values()];
+  }
+
+  function resolveIdentity(root, adapter, excludeRoot, allowQuoteAnchors) {
+    const claims = identityClaims(root, adapter, "primary", excludeRoot, allowQuoteAnchors);
+    const decision = engine.resolveDOMIdentity(claims);
+    return {
+      status: !decision.reason ? "identified" : decision.reason === "missing_identity" ? "missing" : "conflicting",
+      permalink: decision.locator ?? null,
+      candidates: [...new Set(claims.map(claim => claim.locator))],
+      expectedPermalink: null,
+      source: decision.provenance?.includes("post-wrapper") ? "post_wrapper"
+        : decision.provenance?.includes("time-anchor") ? "time_anchor"
+          : decision.locator ? "quote_anchor" : null,
+    };
   }
 
   function candidateEvidence(root, index, visible, adapter) {
@@ -47,7 +70,7 @@
     try {
       const quote = adapter.findQuotedRoot(root);
       const primary = identityClaims(root, adapter, "primary", quote);
-      const quoted = quote ? identityClaims(quote, adapter, "quote") : [];
+      const quoted = quote ? identityClaims(quote, adapter, "quote", adapter.findQuotedRoot(quote)) : [];
       if (primary.length + quoted.length > maxClaims) return { ...empty, probeFailed: true };
       const fields = [];
       const present = (name, owner, identityKey) =>
@@ -110,5 +133,5 @@
     }
   }
 
-  globalThis.AkuXDOMShadow = Object.freeze({ assess });
+  globalThis.AkuXDOMShadow = Object.freeze({ assess, resolveIdentity });
 })();
