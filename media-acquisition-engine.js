@@ -8,6 +8,23 @@
   if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
   if (!mediaPostProcessor) throw new Error("AkuBridge media-post processor was not loaded.");
 
+  function observe({ source, container, candidateId, excludeRoot, initialMedia }) {
+    const strategy = sourceAdapters.get(source).mediaAcquisition;
+    if (!strategy.observeEvidence) return null;
+    const evidence = strategy.observeEvidence(container, {
+      candidateId, excludeRoot, collectRootCandidates, uniqueElements,
+    });
+    const expectedKinds = Object.freeze(normalizeKinds(evidence.expectedKinds));
+    return Object.freeze({
+      candidateId,
+      initialMedia,
+      expectedKinds,
+      signal: expectedKinds.length || initialMedia?.length ? "owned" : evidence.ambiguous ? "ambiguous" : "absent",
+      matchesOwner: evidence.matchesOwner,
+      readAvailableCandidates: evidence.readAvailableCandidates,
+    });
+  }
+
   async function acquire({
     source,
     container,
@@ -15,6 +32,8 @@
     excludeRoot = null,
     initialMedia = [],
     mediaRootDetected = false,
+    mediaEvidence = null,
+    skipMediaWait = false,
     attemptsAvailable = 0,
     settleMs = null,
     deadlineAtMs = Number.POSITIVE_INFINITY,
@@ -25,8 +44,9 @@
     const adapter = sourceAdapters.get(source);
     const strategy = adapter.mediaAcquisition;
     const candidateDiagnostics = [];
+    initialMedia = mediaEvidence?.initialMedia ?? initialMedia;
     recordDiagnostics(candidateDiagnostics, "initial_dom", initialMedia);
-    const expectedKinds = normalizeKinds(strategy.detectExpectedKinds(container, {
+    const expectedKinds = mediaEvidence?.expectedKinds ?? normalizeKinds(strategy.detectExpectedKinds(container, {
       excludeRoot,
       uniqueElements,
     }));
@@ -37,6 +57,7 @@
       strategyVersion: strategy?.version ?? "unsupported",
       source,
       expectedKinds,
+      ...(mediaEvidence ? { evidenceSignal: mediaEvidence.signal } : {}),
       attempts: 0,
       recoveredCount: 0,
       method: "none",
@@ -51,7 +72,7 @@
     const structured = normalizeMedia(
       source,
       await strategy.extractStructuredCandidates?.(container, {
-        candidateId,
+        candidateId: mediaEvidence?.candidateId ?? candidateId,
         excludeRoot,
         collectRootCandidates,
         uniqueElements,
@@ -79,11 +100,35 @@
             : ["primary_complete"],
       });
     }
-    if (!mediaRootDetected && expectedKinds.length === 0) {
+    const rootDetected = mediaEvidence ? mediaEvidence.signal === "owned" : mediaRootDetected;
+    if (!rootDetected && expectedKinds.length === 0) {
       return result([], {
         ...base,
         outcome: "not_applicable",
-        trace: ["primary_missing", "media_root_absent"],
+        trace: ["primary_missing", mediaEvidence?.signal === "ambiguous" ? "media_signal_ambiguous" : "media_root_absent"],
+      });
+    }
+
+    if (mediaEvidence && Date.now() < deadlineAtMs) {
+      const available = normalizeMedia(source, mediaEvidence.readAvailableCandidates());
+      recordDiagnostics(candidateDiagnostics, "alternate_dom_immediate", available);
+      if (available.length > 0) {
+        return result(available, {
+          ...base,
+          outcome: "recovered",
+          recoveredCount: available.length,
+          method: "alternate_dom_immediate",
+          acquisitionStage: "alternate_dom",
+          trace: ["primary_missing", "alternate_dom_immediate_complete"],
+        });
+      }
+    }
+    if (mediaEvidence && skipMediaWait) {
+      return result([], {
+        ...base,
+        outcome: "unavailable",
+        limitation: "The post was usable without media and no media URL was available during capture.",
+        trace: ["primary_missing", "media_root_detected", "optional_media_wait_skipped"],
       });
     }
 
@@ -106,11 +151,13 @@
       });
     }
 
+    const settle = clampInteger(settleMs ?? strategy?.settleMs, 100, 2_000, 700);
     if (
       !strategy ||
       typeof strategy.extractCandidates !== "function" ||
       attemptsAvailable < 1 ||
-      Date.now() >= deadlineAtMs
+      Date.now() >= deadlineAtMs ||
+      mediaEvidence && Date.now() + settle >= deadlineAtMs
     ) {
       return result([], {
         ...base,
@@ -128,7 +175,16 @@
     let attempts = 0;
     const trace = ["primary_missing", "media_root_detected", "structured_state_empty"];
     for (; attempts < maximumAttempts && Date.now() < deadlineAtMs; attempts += 1) {
-      await delay(clampInteger(settleMs ?? strategy.settleMs, 100, 2_000, 700));
+      await delay(settle);
+      if (mediaEvidence && Date.now() >= deadlineAtMs) {
+        attempts += 1;
+        break;
+      }
+      if (mediaEvidence && !mediaEvidence.matchesOwner()) {
+        attempts += 1;
+        trace.push("media_owner_changed");
+        break;
+      }
       const hydrated = normalizeMedia(source, extractPrimary?.() ?? []);
       recordDiagnostics(candidateDiagnostics, "primary_hydration", hydrated);
       if (hydrated.length > 0) {
@@ -143,14 +199,15 @@
         });
       }
       trace.push("primary_hydration_empty");
-      const alternate = normalizeMedia(
-        source,
-        strategy.extractCandidates(container, {
+      const alternateCandidates = mediaEvidence
+        ? observe({ source, container, candidateId, excludeRoot: adapter.findQuotedRoot?.(container) ?? null })
+          .readAvailableCandidates()
+        : strategy.extractCandidates(container, {
           excludeRoot,
           collectRootCandidates,
           uniqueElements,
-        }),
-      );
+        });
+      const alternate = normalizeMedia(source, alternateCandidates);
       recordDiagnostics(candidateDiagnostics, "alternate_dom", alternate);
       if (alternate.length > 0) {
         return result(alternate, {
@@ -208,15 +265,17 @@
     return summary;
   }
 
-  function collectRootCandidates(root, { kind = "image", alt = "" } = {}) {
+  function collectRootCandidates(root, { kind = "image", alt = "", excludeRoot = null } = {}) {
     const values = [];
     for (const image of root.matches?.("img") ? [root] : root.querySelectorAll?.("img") ?? []) {
+      if (excludeRoot?.contains?.(image)) continue;
       const rect = image.getBoundingClientRect?.() ?? {};
       for (const url of imageUrls(image)) {
         values.push({ kind, url, posterUrl: kind === "video" ? url : null, alt: image.alt || alt, width: rect.width, height: rect.height });
       }
     }
     for (const video of root.matches?.("video") ? [root] : root.querySelectorAll?.("video") ?? []) {
+      if (excludeRoot?.contains?.(video)) continue;
       const rect = video.getBoundingClientRect?.() ?? {};
       const playbackUrl = [
         video.currentSrc,
@@ -236,6 +295,7 @@
       });
     }
     for (const element of uniqueElements([root, ...(root.querySelectorAll?.("*") ?? [])])) {
+      if (excludeRoot?.contains?.(element)) continue;
       const backgroundUrl = renderedBackgroundUrl(element);
       if (!backgroundUrl) continue;
       const rect = element.getBoundingClientRect?.() ?? root.getBoundingClientRect?.() ?? {};
@@ -327,6 +387,7 @@
   globalThis.AkuMediaAcquisitionEngine = Object.freeze({
     runtimeRevision,
     policyVersion,
+    observe,
     acquire,
     summarize,
   });

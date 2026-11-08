@@ -101,7 +101,8 @@
         code: "pending_hydration",
         observedState: "pending_hydration",
         severity: expectation.severity ?? "high",
-        recoverable: expectation.recoverable !== false,
+        recoverable: expectation.recoverable !== false &&
+          (expectation.field !== "media" || !facts.mediaEvidence || evidenceModalities.length === 0),
         impact: expectation.impact ?? "evidence",
         attempt,
       }));

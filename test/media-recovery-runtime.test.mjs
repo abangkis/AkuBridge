@@ -52,6 +52,93 @@ test("X keeps poster-only and HLS unresolved until deferred owned MP4 arrives", 
   }
 });
 
+test("Windowed X uses shared media evidence and only waits for a post that needs media", async () => {
+  const postUrl = "https://pbs.twimg.com/media/owned.jpg";
+  for (const fixture of [
+    { name: "ready text and DOM media", text: "Text ready", primary: true, verdict: "complete", outcome: "primary_complete", saved: true },
+    { name: "ready text and missing owned media", text: "Text ready", verdict: "usable_degraded", outcome: "unavailable" },
+    { name: "ready text and already-readable alternate media", text: "Text ready", alternate: true, verdict: "complete", outcome: "recovered", saved: true },
+    { name: "media-only with delayed image", hydrate: true, verdict: "complete", outcome: "recovered", saved: true, waits: 1 },
+    { name: "media-only with no URL after retry", verdict: "invalid", waits: 1 },
+    { name: "media-only without retry quota", verdict: "invalid", retryBudget: 0 },
+    { name: "media-only without enough time to settle", verdict: "invalid", timeLeft: 500 },
+    { name: "virtualized post changes owner during retry", hydrate: true, replaceOwner: true, verdict: "invalid", waits: 1 },
+    { name: "ambiguous media on ready text", text: "Text ready", ambiguous: true, verdict: "complete", outcome: "not_applicable" },
+    { name: "ambiguous media without text", ambiguous: true, verdict: "invalid" },
+    { name: "foreign photo link", text: "Text ready", foreign: true, verdict: "complete", outcome: "not_applicable" },
+    { name: "quote is excluded from the primary observation", text: "Text ready", quote: true, alternate: true, verdict: "complete", outcome: "not_applicable" },
+  ]) {
+    const { snapshot, delays } = await captureXMediaFixture(fixture, postUrl);
+    assert.deepEqual(delays, fixture.waits ? [700] : [], fixture.name);
+    assert.equal(snapshot.qualityReports[0].verdict, fixture.verdict, fixture.name);
+    const block = snapshot.blocks[0];
+    if (fixture.verdict === "invalid") {
+      assert.equal(block, undefined, fixture.name);
+      continue;
+    }
+    assert.equal(block.mediaRecovery.outcome, fixture.outcome, fixture.name);
+    assert.equal(block.mediaRecovery.attempts, fixture.waits ?? 0, fixture.name);
+    assert.equal(block.media[0]?.url, fixture.saved ? postUrl : undefined, fixture.name);
+    if (fixture.ambiguous || fixture.foreign) {
+      assert.equal(block.mediaRecovery.evidenceSignal, "ambiguous", fixture.name);
+    }
+  }
+});
+
+async function captureXMediaFixture(fixture, url) {
+  const delays = [];
+  const owner = () => fixture.replaceOwner && delays.length ? "54321" : "23456";
+  const image = { src: url, getBoundingClientRect: () => ({ width: 640, height: 360 }) };
+  const foreign = { href: "https://x.com/other/status/99999/photo/1" };
+  const root = {
+    matches: selector => fixture.foreign ? selector.includes('/photo/') :
+      !fixture.ambiguous && selector.includes("tweetPhoto"),
+    closest: selector => fixture.foreign && selector.includes('/photo/') ? foreign : null,
+    querySelectorAll: selector => selector === "img" && fixture.alternate ? [image] : [],
+  };
+  const article = {
+    tagName: "ARTICLE",
+    parentElement: { matches: () => true, getAttribute: () => `/owner/status/${owner()}` },
+    querySelector: selector => fixture.quote && selector.includes("quoteTweet") ? { contains: node => node === root } : null,
+    querySelectorAll(selector) {
+      if (fixture.foreign) return selector.includes('/photo/') ? [root] : [];
+      if (fixture.ambiguous) return selector.includes('a[aria-label][href] img,') ? [root] : [];
+      return selector.includes("tweetPhoto") ? [root] : [];
+    },
+  };
+  const findMedia = () => fixture.primary || fixture.hydrate && delays.length && !fixture.replaceOwner ? [media(url)] : [];
+  const context = vm.createContext({
+    URL, assertNoXAccessChallenge: () => {},
+    discoverSourceCandidates: () => ({ candidates: [article] }),
+    isVisibleInViewport: () => true, updateCaptureProgress: () => {},
+    findPermalinkDetails: () => null, waitForValue: () => null,
+    expandSourceContent: () => null, restoreSourceContent: () => {},
+    extractBlock: () => ({ text: fixture.text ?? "", author: "Owner", platformId: `x:status:${owner()}`, media: findMedia() }),
+    findMedia, delay: async milliseconds => { delays.push(milliseconds); },
+    compactText: value => String(value ?? "").trim(),
+    normalizeCandidateDiagnostics: () => null,
+    readScrollPosition: () => ({ y: 0 }), viewportHeight: () => 900,
+  });
+  for (const file of ["capture-primitives.js", "source-adapter-runtime.js", "adapters/x-adapter.js",
+    "bounded-capture-policy.js", "capture-quality-policy.js", "media-post-processor.js", "media-acquisition-engine.js"]) {
+    runScript(context, file);
+  }
+  Object.assign(context, {
+    sourceAdapters: context.AkuSourceAdapters, capturePolicy: context.AkuBoundedCapturePolicy,
+    qualityPolicy: context.AkuCaptureQualityPolicy, mediaPostProcessor: context.AkuMediaPostProcessor,
+    mediaAcquisitionEngine: context.AkuMediaAcquisitionEngine,
+  });
+  const source = fs.readFileSync(path.join(projectRoot, "content-script.js"), "utf8");
+  vm.runInContext(source.slice(source.indexOf("  async function captureVisibleSnapshot("),
+    source.indexOf("  function assertNoXAccessChallenge(")), context);
+  vm.runInContext(source.slice(source.indexOf("  function evaluateBlockQuality("),
+    source.indexOf("  function extractBlock(")), context);
+  const snapshot = await context.captureVisibleSnapshot("x",
+    { maxBlocksPerSnapshot: 3, qualityRetryBudget: fixture.retryBudget ?? 1, qualityRetrySettleMs: 700 },
+    null, Date.now() + (fixture.timeLeft ?? 5_000), "same_window", null);
+  return { snapshot, delays };
+}
+
 test("media acquisition awaits one source-specific structured media lookup", async () => {
   let resolved = false;
   const context = runtimeContext(() => [], {

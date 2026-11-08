@@ -773,6 +773,13 @@
       let captureQuality;
       let mediaRecovery;
       let candidateKey;
+      const observeMedia = () => mediaAcquisitionEngine.observe({
+        source,
+        container,
+        candidateId: block.platformId,
+        excludeRoot: sourceAdapters.get(source).findQuotedRoot?.(container) ?? null,
+        initialMedia: block.media,
+      });
       try {
         block = extractBlock(
           container,
@@ -785,6 +792,7 @@
         );
         if (!block) continue;
         candidateKey = provisionalCandidateKey(source, block, containerIndex, capturedAt);
+        let mediaEvidence = observeMedia();
         let qualityAttempt = 0;
         captureQuality = evaluateBlockQuality(
           container,
@@ -793,6 +801,7 @@
           candidateKey,
           qualityAttempt,
           payload.qualityRetryBudget - qualityAttempt,
+          mediaEvidence,
         );
         while (
           captureQuality.verdict === "retryable" &&
@@ -818,11 +827,16 @@
               excludeRoot: quotedRoot,
               initialMedia: block.media,
               mediaRootDetected: true,
+              mediaEvidence,
               attemptsAvailable,
               settleMs: payload.qualityRetrySettleMs,
               deadlineAtMs: operationDeadlineAtMs,
               captureVisibilityMode,
-              extractPrimary: () => findMedia(container, source, { excludeRoot: quotedRoot }),
+              extractPrimary: () => findMedia(container, source, {
+                excludeRoot: mediaEvidence
+                  ? sourceAdapters.get(source).findQuotedRoot?.(container) ?? null
+                  : quotedRoot,
+              }),
               delay,
             });
           } else {
@@ -838,6 +852,10 @@
             capturedAt,
           );
           if (!block) break;
+          if (mediaEvidence && block.platformId !== mediaEvidence.candidateId) {
+            mediaRecovery = null;
+            candidateKey = provisionalCandidateKey(source, block, containerIndex, capturedAt);
+          }
           if (mediaRecovery?.media?.length > 0) {
             block.media = capturePolicy.normalizeMediaCandidates(
               source,
@@ -847,6 +865,7 @@
               block.contentKind = "video";
             }
           }
+          mediaEvidence = observeMedia();
           captureQuality = evaluateBlockQuality(
             container,
             source,
@@ -854,6 +873,7 @@
             candidateKey,
             qualityAttempt,
             payload.qualityRetryBudget - qualityAttempt,
+            mediaEvidence,
           );
         }
         if (!block) continue;
@@ -865,6 +885,7 @@
             candidateKey,
             captureQuality.attempt,
             0,
+            mediaEvidence,
           );
         }
         if (!mediaRecovery) {
@@ -875,6 +896,8 @@
             excludeRoot: sourceAdapters.get(source).findQuotedRoot?.(container) ?? null,
             initialMedia: block.media,
             mediaRootDetected: captureQuality.issues.some((issue) => issue.field === "media"),
+            mediaEvidence,
+            skipMediaWait: captureQuality.evidenceModalities.length > 0,
             attemptsAvailable: 0,
             settleMs: payload.qualityRetrySettleMs,
             deadlineAtMs: operationDeadlineAtMs,
@@ -882,9 +905,11 @@
             extractPrimary: () => block.media,
             delay,
           });
-          if (source === "x" && mediaRecovery.media.length > 0) {
+          if (mediaEvidence && mediaRecovery.media.length > 0) {
             block.media = mediaRecovery.media;
             if (block.media.some((entry) => entry.kind === "video")) block.contentKind = "video";
+            captureQuality = evaluateBlockQuality(container, source, block, candidateKey,
+              qualityAttempt, 0, mediaEvidence);
           }
         }
         block.mediaRecovery = mediaPostProcessor.withPlaybackStatus(source, block.media, mediaRecovery.audit);
@@ -985,6 +1010,7 @@
     candidateKey,
     attempt,
     retriesRemaining,
+    mediaEvidence = null,
   ) {
     const adapter = sourceAdapters.get(source);
     const selectors = adapter.qualitySelectors ?? {};
@@ -993,7 +1019,10 @@
       contentRootDetected: selectorDetectedOutside(container, selectors.content, quotedRoot),
       authorRootDetected: selectorDetectedOutside(container, selectors.author, quotedRoot),
       primaryAvatarRootDetected: selectorDetectedOutside(container, selectors.avatar, quotedRoot),
-      mediaRootDetected: hasPotentialMediaRoot(container, source, quotedRoot),
+      mediaRootDetected: mediaEvidence
+        ? mediaEvidence.signal === "owned"
+        : hasPotentialMediaRoot(container, source, quotedRoot),
+      mediaEvidence,
       timestampSignalDetected:
         selectorDetectedOutside(container, selectors.timestamp, quotedRoot) ||
         Boolean(block.presentation?.timestampText),

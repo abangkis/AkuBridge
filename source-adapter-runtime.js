@@ -88,6 +88,10 @@
     if (typeof adapter.mediaAcquisition.detectExpectedKinds !== "function") {
       throw new Error(`AkuBridge ${adapter.source} adapter requires media-kind detection.`);
     }
+    if (adapter.mediaAcquisition.observeEvidence !== undefined &&
+        typeof adapter.mediaAcquisition.observeEvidence !== "function") {
+      throw new Error(`AkuBridge ${adapter.source} adapter has an invalid media evidence observer.`);
+    }
     if (typeof adapter.mediaAcquisition.extractCandidates !== "function") {
       throw new Error(`AkuBridge ${adapter.source} adapter requires media acquisition extraction.`);
     }

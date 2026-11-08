@@ -17,6 +17,9 @@
   const wrappedPhotoSelector = 'img[src^="https://pbs.twimg.com/media/"]';
   const wrappedVideoPosterSelector = ["ext_tw_video_thumb", "amplify_video_thumb", "tweet_video_thumb"]
     .map((path) => `img[src^="https://pbs.twimg.com/${path}/"]`).join(", ");
+  const photoPermalinkSelector = 'a[href*="/status/"][href*="/photo/"]';
+  const explicitVideoSelector = '[data-testid="previewInterstitial"], [data-testid="videoPlayer"], [data-testid="videoComponent"], video';
+  const linkCardMediaSelector = 'a[aria-label][href] img[src*="/card_img/"], a[aria-label][href] [style*="/card_img/"]';
   const xContentRootSelector = [legacyTextSelector, xArticleRootSelector, wrappedTextSelector].join(", ");
   const xArticleMediaSelector = [
     `${xArticleRootSelector} img[src*="pbs.twimg.com/"], ${xArticleRootSelector} img[srcset*="pbs.twimg.com/"], ${xArticleRootSelector} img[data-src*="pbs.twimg.com/"]`,
@@ -112,6 +115,7 @@
       foregroundAfterQuietExhaustion: true,
       allowTrustedUnknownGeometry: true,
       detectExpectedKinds: detectXExpectedMediaKinds,
+      observeEvidence: observeXMediaEvidence,
       extractStructuredCandidates: (container, { candidateId, excludeRoot } = {}) => {
         const runtime = globalThis.AkuXMediaEvidenceRuntime;
         const identity = resolveIdentity(container, excludeRoot);
@@ -380,17 +384,50 @@
     return xMediaRoots(container, { excludeRoot, uniqueElements }).map(({ kind }) => kind);
   }
 
-  function xMediaRoots(container, { excludeRoot, uniqueElements }) {
+  function observeXMediaEvidence(container, { candidateId, excludeRoot, uniqueElements, collectRootCandidates }) {
+    const roots = xMediaRoots(container, { excludeRoot, uniqueElements, includeNativeVideo: true });
+    const ownerId = /^x:status:(\d+)$/.exec(candidateId ?? "")?.[1];
+    const matchesOwner = () => Boolean(ownerId && statusID(ownPostURL(container)) === ownerId);
+    const confirmed = matchesOwner() ? roots.filter(({ root }) => {
+      const photoLink = root.closest?.(photoPermalinkSelector);
+      if (photoLink && statusID(canonicalizeXPermalink(photoLink.href)) !== ownerId) return false;
+      return root.matches?.([
+        '[data-testid="tweetPhoto"]', photoPermalinkSelector, explicitVideoSelector,
+        linkCardMediaSelector, xArticleMediaSelector, wrappedPhotoSelector, wrappedVideoPosterSelector,
+      ].join(","));
+    }) : [];
+    return {
+      expectedKinds: confirmed.map(({ kind }) => kind),
+      ambiguous: roots.length > confirmed.length,
+      matchesOwner,
+      readAvailableCandidates: () => confirmed.length && matchesOwner()
+        ? confirmed.slice(0, 20).flatMap(({ root, kind }) =>
+          collectRootCandidates(root, { kind, excludeRoot }).filter((item) => isXPostMedia(item.url)))
+        : [],
+    };
+  }
+
+  function isXPostMedia(value) {
+    try {
+      const url = new URL(value);
+      return url.origin === "https://pbs.twimg.com" && !url.username && !url.password &&
+        /^\/(?:media|card_img|ext_tw_video_thumb|amplify_video_thumb|tweet_video_thumb)\//.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+
+  function xMediaRoots(container, { excludeRoot, uniqueElements, includeNativeVideo = false }) {
     const videoSelector = [
       '[data-testid="previewInterstitial"]',
       '[data-testid="videoPlayer"]',
       '[data-testid="videoComponent"]',
       '[aria-label*="Video" i]',
-      ...(wrappedPostPermalink(container) ? ["video", wrappedVideoPosterSelector] : []),
+      ...(includeNativeVideo || wrappedPostPermalink(container) ? ["video", wrappedVideoPosterSelector] : []),
     ].join(",");
     const roots = uniqueElements([
       ...container.querySelectorAll('[data-testid="tweetPhoto"]'),
-      ...container.querySelectorAll('a[href*="/status/"][href*="/photo/"]'),
+      ...container.querySelectorAll(photoPermalinkSelector),
       ...container.querySelectorAll(videoSelector),
       ...container.querySelectorAll('a[aria-label][href] img, a[aria-label][href] [style*="/card_img/"]'),
       ...container.querySelectorAll(xArticleMediaSelector),
