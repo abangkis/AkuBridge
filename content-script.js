@@ -106,13 +106,16 @@
     const availability = adapter.availability?.() ?? null;
     const loginRequired = adapter.loginRequired?.() === true;
     const discovery = discoverSourceCandidates(source);
-    const candidates = discovery.candidates;
-    const readinessCandidates = discovery.readinessCandidates ?? candidates;
+    const readinessCandidates = discovery.readinessCandidates ?? discovery.candidates;
+    const hasReadinessFilter = typeof adapter.isCaptureReadyCandidate === "function";
+    const candidates = hasReadinessFilter
+      ? discovery.candidates.filter((element) => adapter.isCaptureReadyCandidate(element, { compactText, uniqueElements }))
+      : discovery.candidates;
     const loading = Boolean(document.querySelector(
       '[aria-busy="true"], .artdeco-loader, [data-test-id*="loading" i]',
     ));
     const feedRoot = adapter.feedRootPresent?.() === true;
-    const scrollContext = getScrollContext(source, candidates);
+    const scrollContext = getScrollContext(source, discovery.candidates);
     const visibleCandidates = candidates.filter((element) =>
       isVisibleInViewport(element, scrollContext),
     );
@@ -150,7 +153,7 @@
       feedRoot,
       describeScrollContext(scrollContext),
       windowVisibleCandidates.length,
-      discovery.semanticCandidateCount,
+      hasReadinessFilter ? candidates.length : discovery.semanticCandidateCount,
       discovery.actionAnchoredCandidateCount,
       visualHydration,
       availability,

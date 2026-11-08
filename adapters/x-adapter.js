@@ -119,6 +119,7 @@
     ),
     feedRootPresent: () => Boolean(document.querySelector("main")),
     assessReadiness: assessXReadiness,
+    isCaptureReadyCandidate: isXCaptureReadyCandidate,
     discoverCandidates: ({ uniqueElements }) => {
       const primary = [...document.querySelectorAll('article[data-testid="tweet"]')];
       const fallback = [...document.querySelectorAll("main article")];
@@ -269,7 +270,22 @@
     ].join(","),
   });
 
+  function isXCaptureReadyCandidate(container, { compactText, uniqueElements }) {
+    const quote = findQuotedPostContainer(container);
+    const hasOwnText = (selector) => [...container.querySelectorAll(selector)].some((element) =>
+      !quote?.contains(element) && Boolean(compactText(element.innerText)),
+    );
+    if (!hasOwnText('[data-testid="User-Name"]')) return false;
+    if (hasOwnText('[data-testid="tweetText"], ' + xArticleRootSelector)) return true;
+    return Boolean(ownPostURL(container, quote) && (
+      quote || detectXExpectedMediaKinds(container, { excludeRoot: quote, uniqueElements }).length > 0
+    ));
+  }
+
   function assessXReadiness(context) {
+    if (context.state === "feed_empty" && context.visibleStructuralCandidateCount > 0) {
+      return { state: "feed_hydrating", diagnosis: "post_evidence_unhydrated" };
+    }
     if (context.state === "selector_mismatch" &&
         context.feedRootPresent === true &&
         context.documentReadyState === "complete" &&
@@ -352,8 +368,7 @@ function imageUrls(image) {
 }
 
 
-  function ownPostURL(container) {
-    const quote = findQuotedPostContainer(container);
+  function ownPostURL(container, quote = findQuotedPostContainer(container)) {
     const times = [...(container.querySelectorAll?.("time") ?? [])];
     const urls = times.filter((time) => !quote?.contains?.(time))
       .map((time) => canonicalizeXPermalink(time.closest?.("a[href]")?.href)).filter(Boolean);
