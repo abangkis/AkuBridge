@@ -95,7 +95,8 @@
       revealSupported: true,
       revealObservationMs: 5_000,
       rejectInsideFeedCandidate: true,
-      pendingContentPattern: /^(?:new posts?|show(?: \d+)? posts?)$/i,
+      // X also labels its composer "New Post". Match feed controls only.
+      pendingContentPattern: /^(?:new posts|show(?: \d+)? posts?)$/i,
       headless: Object.freeze({
         enabled: true,
         version: "x-headless-freshness-v1",
