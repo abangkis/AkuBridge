@@ -1933,6 +1933,12 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
         { source },
       );
     }
+    const rejections = readiness.candidateRejections;
+    const rejectionSummary = source === "x" && rejections
+      ? `, rejected=${rejections.visibleRejected}, missing-author=${rejections.missingAuthor}, ` +
+        `missing-text=${rejections.missingText}, missing-media-or-quote=${rejections.missingMediaOrQuote}, ` +
+        `missing-permalink=${rejections.missingPermalink}`
+      : "";
     throw new AkuBridgeError(
       "source_readiness_failed",
       "readiness",
@@ -1949,7 +1955,7 @@ async function prepareSourceTab(tab, source, opened, options = {}) {
       `media=${readiness.hydratedMediaContainerCount ?? 0}/${readiness.mediaContainerCount ?? 0}, ` +
       `loading=${readiness.loadingIndicator}, feedRoot=${readiness.feedRootPresent}, ` +
       `scroll=${readiness.scrollContext ?? "unknown"}, ` +
-      `document=${readiness.documentReadyState ?? "unknown"}).`,
+      `document=${readiness.documentReadyState ?? "unknown"}${rejectionSummary}).`,
       {
         source,
         readiness,

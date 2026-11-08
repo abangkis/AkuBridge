@@ -119,7 +119,7 @@
     ),
     feedRootPresent: () => Boolean(document.querySelector("main")),
     assessReadiness: assessXReadiness,
-    isCaptureReadyCandidate: isXCaptureReadyCandidate,
+    captureReadinessRejections: xCaptureReadinessRejections,
     discoverCandidates: ({ uniqueElements }) => {
       const primary = [...document.querySelectorAll('article[data-testid="tweet"]')];
       const fallback = [...document.querySelectorAll("main article")];
@@ -270,16 +270,25 @@
     ].join(","),
   });
 
-  function isXCaptureReadyCandidate(container, { compactText, uniqueElements }) {
+  function xCaptureReadinessRejections(container, { compactText, uniqueElements }) {
     const quote = findQuotedPostContainer(container);
     const hasOwnText = (selector) => [...container.querySelectorAll(selector)].some((element) =>
       !quote?.contains(element) && Boolean(compactText(element.innerText)),
     );
-    if (!hasOwnText('[data-testid="User-Name"]')) return false;
-    if (hasOwnText('[data-testid="tweetText"], ' + xArticleRootSelector)) return true;
-    return Boolean(ownPostURL(container, quote) && (
-      quote || detectXExpectedMediaKinds(container, { excludeRoot: quote, uniqueElements }).length > 0
-    ));
+    const hasAuthor = hasOwnText('[data-testid="User-Name"]');
+    if (hasOwnText('[data-testid="tweetText"], ' + xArticleRootSelector)) {
+      return hasAuthor ? null : { missingAuthor: true };
+    }
+    const hasPermalink = Boolean(ownPostURL(container, quote));
+    const hasMediaOrQuote = Boolean(quote) ||
+      detectXExpectedMediaKinds(container, { excludeRoot: quote, uniqueElements }).length > 0;
+    if (hasPermalink && hasMediaOrQuote) return hasAuthor ? null : { missingAuthor: true };
+    return {
+      missingAuthor: !hasAuthor,
+      missingText: true,
+      missingMediaOrQuote: !hasMediaOrQuote,
+      missingPermalink: !hasPermalink,
+    };
   }
 
   function assessXReadiness(context) {

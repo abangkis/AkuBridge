@@ -107,9 +107,15 @@
     const loginRequired = adapter.loginRequired?.() === true;
     const discovery = discoverSourceCandidates(source);
     const readinessCandidates = discovery.readinessCandidates ?? discovery.candidates;
-    const hasReadinessFilter = typeof adapter.isCaptureReadyCandidate === "function";
+    const hasReadinessFilter = typeof adapter.captureReadinessRejections === "function";
+    const rejections = new Map();
     const candidates = hasReadinessFilter
-      ? discovery.candidates.filter((element) => adapter.isCaptureReadyCandidate(element, { compactText, uniqueElements }))
+      ? discovery.candidates.filter((element) => {
+        const reasons = adapter.captureReadinessRejections(element, { compactText, uniqueElements });
+        if (!reasons) return true;
+        rejections.set(element, reasons);
+        return false;
+      })
       : discovery.candidates;
     const loading = Boolean(document.querySelector(
       '[aria-busy="true"], .artdeco-loader, [data-test-id*="loading" i]',
@@ -144,7 +150,7 @@
       documentReadyState: document.readyState,
       ...visualHydration,
     });
-    return readiness(
+    const result = readiness(
       assessment?.state ?? baseState,
       source,
       candidates.length,
@@ -161,6 +167,17 @@
       visibleReadinessCandidates.length,
       assessment,
     );
+    if (hasReadinessFilter) {
+      const visibleRejections = visibleReadinessCandidates.map((element) => rejections.get(element)).filter(Boolean);
+      result.candidateRejections = {
+        visibleRejected: visibleRejections.length,
+        missingAuthor: visibleRejections.filter((rejection) => rejection.missingAuthor).length,
+        missingText: visibleRejections.filter((rejection) => rejection.missingText).length,
+        missingMediaOrQuote: visibleRejections.filter((rejection) => rejection.missingMediaOrQuote).length,
+        missingPermalink: visibleRejections.filter((rejection) => rejection.missingPermalink).length,
+      };
+    }
+    return result;
   }
 
   function readiness(
