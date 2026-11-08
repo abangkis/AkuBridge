@@ -2,6 +2,10 @@ export const SOURCE_ACCESS_STATE_KEY = "akuBrowserSourceAccess";
 export const SOURCE_ACCESS_SELECTION_KEY = "akuBrowserSourceAccessSelection";
 export const SOURCE_ACCESS_SELECTION_SCHEMA_VERSION = 2;
 export const SOURCE_DISCLOSURE_VERSION = 1;
+export const X_DOM_SHADOW_SCRIPTS = Object.freeze([
+  "shared-dom-engine/browser-runtime.js",
+  "adapters/x-dom-shadow.js",
+]);
 
 const SOURCE_ACCESS = Object.freeze({
   x: Object.freeze({
@@ -32,6 +36,7 @@ const SOURCE_ACCESS = Object.freeze({
           "source-adapter-runtime.js",
           "media-post-processor.js",
           "adapters/x-adapter.js",
+          ...X_DOM_SHADOW_SCRIPTS,
           "source-freshness-runtime.js",
           "media-acquisition-engine.js",
           "content-script.js",

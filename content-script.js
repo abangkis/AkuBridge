@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v119";
+  const runtimeRevision = "source-adapters-v120";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -91,16 +91,22 @@
 
   function probeSourceReadiness(source) {
     if (!sourceMatchesPage(source)) {
-      return readiness("wrong_page", source, 0, 0, false, false);
+      return {
+        ...readiness("wrong_page", source, 0, 0, false, false),
+        ...xDOMShadow(source, { access: "wrong_route" }),
+      };
     }
     const challenge = source === "x"
       ? capturePrimitives.detectXAccessChallenge(document, window.location)
       : null;
     if (challenge) {
-      return readiness(
-        "challenge_required", source, 0, 0, false, false, "window", 0, 0, 0,
-        {}, null, 0, 0, { diagnosis: "access_challenge" }, challenge,
-      );
+      return {
+        ...readiness(
+          "challenge_required", source, 0, 0, false, false, "window", 0, 0, 0,
+          {}, null, 0, 0, { diagnosis: "access_challenge" }, challenge,
+        ),
+        ...xDOMShadow(source, { access: "challenge_required" }),
+      };
     }
     const adapter = sourceAdapters.get(source);
     const availability = adapter.availability?.() ?? null;
@@ -177,9 +183,21 @@
         missingPermalink: visibleRejections.filter((rejection) => rejection.missingPermalink).length,
       };
     }
-    return result;
+    return {
+      ...result,
+      ...xDOMShadow(source, {
+        adapter, candidates: readinessCandidates, loading, feedRoot,
+        visible: element => isVisibleInViewport(element, scrollContext),
+        access: loginRequired ? "login_required"
+          : result.state === "source_unavailable" ? "unavailable" : "available",
+      }),
+    };
   }
 
+  function xDOMShadow(source, sample) {
+    const diagnostic = source === "x" ? globalThis.AkuXDOMShadow?.assess(sample) : null;
+    return diagnostic ? { sharedDOMShadow: diagnostic } : {};
+  }
   function readiness(
     state,
     source,
@@ -438,6 +456,8 @@
         observedBlockCount,
         browserAdapter: "aku-bridge",
         captureMethod: "native_dom",
+        ...(source === "x" && payload.sourceReadiness?.sharedDOMShadow
+          ? { sharedDOMShadow: payload.sourceReadiness.sharedDOMShadow } : {}),
         adapterVersion: sourceAdapters.get(source).version,
         adapterCapabilities: sourceAdapters.capabilities(),
         adapterHealth: {

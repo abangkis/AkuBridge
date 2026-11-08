@@ -1,4 +1,5 @@
 import "./source-feed-routes.js";
+import { X_DOM_SHADOW_SCRIPTS } from "./source-access-policy.js";
 
 const { routes: feedRoutes } = globalThis.AkuSourceFeedRoutes;
 const SOURCE_DEFINITIONS = Object.freeze([
@@ -7,7 +8,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
     displayName: "X",
     adapterVersion: "x-dom-v24",
     adapterScript: "adapters/x-adapter.js",
-    supportScripts: Object.freeze(["x-media-evidence-runtime.js"]),
+    supportScripts: Object.freeze(["x-media-evidence-runtime.js", ...X_DOM_SHADOW_SCRIPTS]),
     ...feedRoutes.x,
     matchPatterns: Object.freeze(["https://x.com/*"]),
     nativePostPath: /\/status\//,

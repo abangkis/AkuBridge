@@ -360,6 +360,8 @@ test("the policy is loaded before the source content script", () => {
     "source-adapter-runtime.js",
     "media-post-processor.js",
     "adapters/x-adapter.js",
+    "shared-dom-engine/browser-runtime.js",
+    "adapters/x-dom-shadow.js",
     "source-freshness-runtime.js",
     "media-acquisition-engine.js",
     "content-script.js",
