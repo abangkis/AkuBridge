@@ -1177,6 +1177,8 @@ async function dispatchMediaRecapture(message) {
 async function captureWithSourceTabRecovery(command) {
   const diagnoseNavigation = command.payload.source === "x" && !command.payload.targetUrl &&
     (command.payload.acquisitionRound ?? 1) === 1;
+  const diagnoseRecaptureRoute = command.type === "recapture_media" &&
+    command.payload.source === "x" && Boolean(command.payload.targetUrl);
   if (!await sourceAccessGranted(chrome, command.payload.source)) {
     throw new AkuBridgeError(
       "source_permission_required",
@@ -1205,12 +1207,19 @@ async function captureWithSourceTabRecovery(command) {
           prepared.readiness?.windowedNavigation, prepared.opened,
         );
       }
+      const recaptureRoute = diagnoseRecaptureRoute
+        ? await observeXRecaptureRoute(prepared.tab.id, observation.pageUrl, command.payload.targetUrl)
+        : null;
+      if (recaptureRoute) observation.coverage.xRecaptureRoute = recaptureRoute;
       if (observationEvidenceBlockCount(observation) === 0) {
         throw new AkuBridgeError(
           "capture_empty",
           "capture",
           `AkuBridge found no usable ${command.payload.source} evidence after the bounded capture.`,
-          emptyCaptureDiagnostics(observation),
+          {
+            ...emptyCaptureDiagnostics(observation),
+            ...(recaptureRoute ? { xRecaptureRoute: recaptureRoute } : {}),
+          },
         );
       }
       if (shouldCloseOpenedSourceTab({
@@ -1278,6 +1287,33 @@ function windowedNavigationForTab(navigation, opened) {
     ...(navigation ?? { state: "unavailable" }),
     tabOpenedForCapture: opened === true,
   };
+}
+
+async function observeXRecaptureRoute(tabId, observedUrl, targetUrl) {
+  let tabUrl;
+  try {
+    tabUrl = (await chrome.tabs.get(tabId)).url;
+  } catch {
+    // The tab may already be gone. The observation is a lower-confidence fallback.
+  }
+  const source = tabUrl ? "tab" : observedUrl ? "observation" : "unavailable";
+  return { source, kind: xRecaptureRouteKind(tabUrl || observedUrl, targetUrl) };
+}
+
+function xRecaptureRouteKind(value, targetUrl) {
+  try {
+    const url = new URL(value);
+    if (url.origin !== "https://x.com" || url.username || url.password) return "outside_x";
+    const statusId = path => /^\/(?:[\w]{1,15}|i\/web)\/status\/(\d+)(?:\/|$)/i.exec(path)?.[1];
+    const id = statusId(url.pathname);
+    if (id) return id === statusId(new URL(targetUrl).pathname) ? "target_status" : "other_status";
+    if (/^\/home\/?$/i.test(url.pathname)) return "feed";
+    if (/^\/(?:login|i\/flow\/(?:login|signup))(?:\/|$)/i.test(url.pathname)) return "login";
+    if (/^\/(?:account\/access|i\/flow\/challenge)(?:\/|$)/i.test(url.pathname)) return "challenge";
+    return "other_x";
+  } catch {
+    return "unavailable";
+  }
 }
 
 async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) {

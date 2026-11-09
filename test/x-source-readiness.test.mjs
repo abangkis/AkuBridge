@@ -317,3 +317,55 @@ test("Windowed X carries navigation diagnostics through the capture result and f
     return true;
   });
 });
+
+test("Windowed X recapture records only the final tab route category before closing the tab", async () => {
+  const service = fs.readFileSync(new URL("../service-worker.js", import.meta.url), "utf8");
+  const capture = service.slice(service.indexOf("async function captureWithSourceTabRecovery("),
+    service.indexOf("async function capturePreparedSource("));
+  const targetUrl = "https://x.com/owner/status/12345";
+  let tabUrl, closed, empty;
+  const context = vm.createContext({
+    URL, AkuBridgeError,
+    chrome: { tabs: {
+      get: async () => {
+        assert.equal(closed, false);
+        if (!tabUrl) throw new Error("tab closed");
+        return { url: tabUrl };
+      },
+      remove: async () => { closed = true; },
+    } },
+    sourceAccessGranted: async () => true,
+    findOrOpenSourceTab: async () => ({ tab: { id: 17 }, opened: true, restoreFocus: async () => ({}) }),
+    capturePreparedSource: async () => ({ pageUrl: targetUrl + "?private_query=1", coverage: {} }),
+    observationEvidenceBlockCount: () => empty ? 0 : 1,
+    emptyCaptureDiagnostics: () => ({ fixture: true }),
+    shouldCloseOpenedSourceTab: () => true,
+    shouldRetrySourceTab: () => false,
+    sourceDefinition: () => ({}),
+  });
+  vm.runInContext(capture, context);
+  const command = { type: "recapture_media", payload: { source: "x", targetUrl } };
+  for (const [url, expected, from = "tab"] of [
+    ["https://x.com/i/web/status/12345?private_query=1#fragment", "target_status"],
+    ["https://x.com/other/status/67890", "other_status"],
+    ["https://x.com/home?private_query=1", "feed"],
+    ["https://x.com/i/flow/login?private_query=1", "login"],
+    ["https://x.com/account/access", "challenge"],
+    ["https://x.com.evil.example/home", "outside_x"],
+    [null, "target_status", "observation"],
+  ]) {
+    tabUrl = url;
+    closed = false;
+    const result = await context.captureWithSourceTabRecovery(command);
+    assert.equal(JSON.stringify(result.coverage.xRecaptureRoute), JSON.stringify({ source: from, kind: expected }));
+    assert.equal(closed, true);
+  }
+  tabUrl = "https://x.com/home";
+  empty = true;
+  closed = false;
+  await assert.rejects(context.captureWithSourceTabRecovery(command), error => {
+    assert.equal(error.code, "capture_empty");
+    assert.equal(error.details.xRecaptureRoute.kind, "feed");
+    return true;
+  });
+});
