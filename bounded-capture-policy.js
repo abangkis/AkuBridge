@@ -153,7 +153,9 @@
         continue;
       }
       const playbackUrl = kind === "video" ? safeMediaUrl(source, value.playbackUrl) : null;
-      const inlineUrl = source === "x" && playbackUrl && !isXMP4(playbackUrl) ? null : playbackUrl;
+      const inlineUrl = source === "x" && playbackUrl && !isXMP4(playbackUrl)
+        ? xHlsMasterUrl(url, playbackUrl)
+        : playbackUrl;
       const width = clampInteger(Math.round(value.width), 0, 8_192, 0);
       const height = clampInteger(Math.round(value.height), 0, 8_192, 0);
       const unknownGeometry = width === 0 && height === 0;
@@ -171,8 +173,8 @@
       if (previous) {
         diagnostics.duplicateCount += 1;
         const prior = media[previous.index];
-        const playbackDiffers = source === "x" && (candidate.playbackMode === "inline") !== (prior.playbackMode === "inline");
-        if (playbackDiffers ? candidate.playbackMode === "inline" : preferMediaCandidate(value, previous.input, url, previous.url)) {
+        const playbackPriority = source === "x" ? xPlaybackRank(candidate) - xPlaybackRank(prior) : 0;
+        if (playbackPriority ? playbackPriority > 0 : preferMediaCandidate(value, previous.input, url, previous.url)) {
           media[previous.index] = candidate;
           seen.set(identity, { ...previous, input: value, url });
         }
@@ -197,6 +199,45 @@
     const url = new URL(value);
     return url.origin === "https://video.twimg.com" && !url.username && !url.password &&
       /^\/(?:amplify_video|ext_tw_video|tweet_video)\/.+\.mp4$/i.test(url.pathname);
+  }
+
+  function xHlsMasterUrl(poster, playback) {
+    const posterURL = xVideoCDNUrl(poster, "https://pbs.twimg.com");
+    const playlist = xVideoCDNUrl(playback, "https://video.twimg.com");
+    const owner = /^\/(amplify_video|ext_tw_video|tweet_video)_thumb\/(\d{1,30})\//.exec(posterURL?.pathname ?? "");
+    const master = /^\/(amplify_video|ext_tw_video|tweet_video)\/(\d{1,30})\/(?:pu\/)?pl\/[\w.-]+\.m3u8$/.exec(playlist?.pathname ?? "");
+    return owner && master && owner[1] === master[1] && owner[2] === master[2] ? playlist.href : null;
+  }
+
+  function xVideoCDNUrl(value, origin) {
+    if (typeof value !== "string" || value.length > 2048) return null;
+    try {
+      const url = new URL(value);
+      if (url.origin !== origin || url.username || url.password || /%2f|%5c/i.test(url.pathname)) return null;
+      url.hash = "";
+      return url;
+    } catch {
+      return null;
+    }
+  }
+
+  function findXHlsMasterUrl(poster, entries) {
+    for (let index = entries.length - 1; index >= Math.max(0, entries.length - 250); index--) {
+      const { name, responseStatus } = entries[index];
+      if (!name?.startsWith("https://video.twimg.com/") || !/\.m3u8(?:[?#]|$)/.test(name) ||
+          responseStatus > 0 && responseStatus !== 304 && (responseStatus < 200 || responseStatus >= 300)) continue;
+      const playlist = xHlsMasterUrl(poster, name);
+      if (playlist) return playlist;
+    }
+    return null;
+  }
+
+  function xPlaybackRank(media) {
+    if (media.kind !== "video" || media.playbackMode !== "inline") return 0;
+    const playback = safeMediaUrl("x", media.playbackUrl);
+    if (!playback) return 0;
+    if (isXMP4(playback)) return 2;
+    return xHlsMasterUrl(media.posterUrl || media.url, playback) ? 1 : 0;
   }
 
   function createMediaCandidate(value, kind, url, playbackUrl, width, height) {
@@ -363,6 +404,8 @@
     hasChangedVisibleFeed,
     platformIdFromCandidates,
     normalizeMediaCandidates,
+    findXHlsMasterUrl,
+    xPlaybackRank,
     mediaUrlFromCssBackground,
   });
 })();

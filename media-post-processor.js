@@ -144,7 +144,7 @@
       }
       unusedPrimary.delete(match);
       if (source === "x" && match.kind === "video" &&
-          (structuredValue.kind !== "video" || match.playbackUrl && !structuredValue.playbackUrl)) {
+          (structuredValue.kind !== "video" || capturePolicy.xPlaybackRank(match) > capturePolicy.xPlaybackRank(structuredValue))) {
         combined.push(match);
         continue;
       }

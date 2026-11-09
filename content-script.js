@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v121";
+  const runtimeRevision = "source-adapters-v122";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -1553,6 +1553,18 @@
           trustedMediaRoot: true,
           urlSource: "css_background",
         });
+      }
+    }
+    if (source === "x") {
+      // X can render a blob URL while its player loads the playlist separately.
+      let entries;
+      for (const candidate of candidates) {
+        if (candidate.kind !== "video" || !candidate.posterUrl || capturePolicy.xPlaybackRank(candidate)) continue;
+        entries ??= performance.getEntriesByType("resource");
+        const playlist = capturePolicy.findXHlsMasterUrl(candidate.posterUrl, entries);
+        if (!playlist) continue;
+        candidate.playbackUrl = playlist;
+        candidate.playbackMode = "inline";
       }
     }
     return capturePolicy.normalizeMediaCandidates(source, candidates);
