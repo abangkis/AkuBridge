@@ -347,6 +347,7 @@
     }
     const captureStartPosition = readScrollPosition(scrollContext);
     const snapshots = [];
+    let xRecaptureSelection = null;
     const uniqueCandidates = new Set();
     const scrollDeltas = [];
     let performedScrolls = 0;
@@ -362,7 +363,7 @@
         }
         assertNoXAccessChallenge(source);
         updateCaptureProgress("snapshot_started", { source, snapshotIndex: index });
-        const snapshot = await captureVisibleSnapshot(
+        const { xRecaptureSelection: selection, ...snapshot } = await captureVisibleSnapshot(
           source,
           snapshotPlan,
           scrollContext,
@@ -370,6 +371,7 @@
           captureVisibilityMode,
           structuredMediaRuntime,
         );
+        if (selection) xRecaptureSelection = selection;
         snapshot.index = index;
         if (index === 0 && plan.continuation) {
           continuationAnchorMatched = snapshotMatchesContinuation(
@@ -498,6 +500,7 @@
         observedBlockCount,
         browserAdapter: "aku-bridge",
         captureMethod: "native_dom",
+        ...(xRecaptureSelection ? { xRecaptureSelection } : {}),
         ...(source === "x" && payload.sourceReadiness?.sharedDOMShadow
           ? { sharedDOMShadow: payload.sourceReadiness.sharedDOMShadow } : {}),
         adapterVersion: sourceAdapters.get(source).version,

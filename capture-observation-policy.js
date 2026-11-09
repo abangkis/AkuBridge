@@ -35,7 +35,7 @@ export function emptyCaptureDiagnostics(observation) {
           ? "candidates_not_visible_or_not_observed"
           : "no_capture_candidates",
     candidateDiagnostics: latestSnapshot.candidateDiagnostics ?? null,
-    ...(latestSnapshot.xRecaptureSelection ? { xRecaptureSelection: latestSnapshot.xRecaptureSelection } : {}),
+    ...(coverage.xRecaptureSelection ? { xRecaptureSelection: coverage.xRecaptureSelection } : {}),
     captureQuality: coverage.captureQuality ?? null,
     structuredFeedFallback: coverage.structuredFeedFallback ?? null,
   };

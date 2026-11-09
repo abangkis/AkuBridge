@@ -147,9 +147,33 @@
     if (root?.tagName !== "ARTICLE") return null;
     const wrapper = root.parentElement;
     if (!wrapper?.matches?.('[role="link"][data-href]')) return null;
-    const value = wrapper.getAttribute("data-href") ?? "";
+    return xExactStatusPermalink(wrapper.getAttribute("data-href"));
+  }
+
+  function xExactStatusPermalink(value) {
+    if (typeof value !== "string") return null;
     if (!/^(?:https:\/\/x\.com)?\/[\w]{1,15}\/status\/\d+\/?(?:[?#].*)?$/i.test(value)) return null;
     return canonicalizeXPermalink(value.startsWith("/") ? `https://x.com${value}` : value);
+  }
+
+  function xDetailDatePermalink(root, isExcluded) {
+    const parent = root.parentElement;
+    const postBoundary = 'article, [data-testid="quoteTweet"], [role="link"]';
+    if (root.tagName !== "ARTICLE" ||
+        !parent?.matches?.('div[data-navigation-stop]:not([role="link"]):not([data-href])') ||
+        parent.closest(postBoundary)) return null;
+    const route = xExactStatusPermalink(typeof window === "undefined" ? null : window.location?.href);
+    if (!route) return null;
+    // The focused post exposes a text-only date link outside the authored body.
+    // Route equality corroborates this link. The route alone cannot identify an article.
+    const linkBoundary = postBoundary +
+      ', [data-testid="tweetText"], [data-testid="twitterArticleReadView"], div[dir="auto"].whitespace-pre-wrap';
+    for (const anchor of root.querySelectorAll('a[href*="/status/"]')) {
+      if (isExcluded?.(anchor) || anchor.closest(linkBoundary) !== root ||
+          anchor.childElementCount !== 0 || !anchor.textContent?.trim()) continue;
+      if (xExactStatusPermalink(anchor.getAttribute("href")) === route) return route;
+    }
+    return null;
   }
 
   function xPostIdentityClaims(root, { owner = "primary", isExcluded, quoteContentRoot, allowQuoteAnchors = false } = {}) {
@@ -165,6 +189,9 @@
       if (isExcluded?.(time)) continue;
       add(time.closest("a[href]")?.href, "time-anchor");
       if (claims.size > 8) break;
+    }
+    if (!claims.size && owner === "primary" && !allowQuoteAnchors) {
+      add(xDetailDatePermalink(root, isExcluded), "detail-date-anchor");
     }
     if (allowQuoteAnchors && !claims.size) {
       const contentRoot = quoteContentRoot?.();

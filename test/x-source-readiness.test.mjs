@@ -5,6 +5,7 @@ import vm from "node:vm";
 import { AkuBridgeError, createTabLease, serializeBridgeError } from "../bridge-runtime-policy.js";
 import { emptyCaptureDiagnostics } from "../capture-observation-policy.js";
 
+
 class Article {
   constructor({ primary = false, author = "", text = "", permalink = "", media = false, visible = true,
     wrapperHref = "", profileHref = "", quote = null } = {}) {
@@ -57,7 +58,39 @@ class Article {
   }
 }
 
-function createProbe(articles, { entries = [], url = "https://x.com/home", subframe = false } = {}) {
+const detailURL = "https://x.com/owner/status/12345";
+const detailPath = new URL(detailURL).pathname;
+
+class DetailArticle extends Article {
+  constructor({ links = [[detailPath]], text = "Detail post body", wrapperHref = "", outerArticle = null } = {}) {
+    super({ wrapperHref });
+    this.parentElement ??= {
+      matches: selector => selector === 'div[data-navigation-stop]:not([role="link"]):not([data-href])',
+      closest: () => outerArticle,
+    };
+    this.body = { innerText: text, querySelectorAll: () => [] };
+    this.authorAnchor = { innerText: "Owner name", href: "https://x.com/owner" };
+    this.links = links.map(([href, scope]) => ({
+      getAttribute: name => name === "href" ? href : null,
+      textContent: "3:05 AM · Nov 9, 2026",
+      childElementCount: 0,
+      closest: () => scope === "body" ? this.body : scope === "quote" ? this.quote : this,
+    }));
+    if (links.some(([, scope]) => scope === "quote")) {
+      this.quote = { contains: node => this.links.some(link => link === node && link.closest() === this.quote) };
+    }
+  }
+
+  querySelectorAll(selector) {
+    if (selector === 'a[href*="/status/"]') return this.links;
+    if (selector === ".x-middot-group a[href]" || selector === "a[href]") return [this.authorAnchor];
+    if (selector === 'div[dir="auto"].whitespace-pre-wrap') return [this.body];
+    if (selector === '[data-testid="quoteTweet"]') return this.quote ? [this.quote] : [];
+    return super.querySelectorAll(selector);
+  }
+}
+
+function createProbe(articles, { entries = [], url = "https://x.com/home", subframe = false, sharedDOM = false } = {}) {
   const document = {
     readyState: "complete",
     body: {},
@@ -88,6 +121,7 @@ function createProbe(articles, { entries = [], url = "https://x.com/home", subfr
     AkuMediaPostProcessor: { createDeferredInbox: () => ({}) },
   });
   for (const file of ["capture-primitives.js", "source-adapter-runtime.js", "adapters/x-adapter.js",
+    ...(sharedDOM ? ["shared-dom-engine/browser-runtime.js", "adapters/x-dom-shadow.js"] : []),
     "bounded-capture-policy.js", "content-script.js"]) {
     const source = fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
     const fixtureSource = file === "content-script.js"
@@ -339,8 +373,8 @@ test("Windowed X recapture records only the final tab route category before clos
     findOrOpenSourceTab: async () => ({ tab: { id: 17 }, opened: true, restoreFocus: async () => ({}) }),
     capturePreparedSource: async () => ({
       pageUrl: targetUrl + "?private_query=1",
-      coverage: {},
-      snapshots: selection ? [{ xRecaptureSelection: selection }] : [],
+      coverage: selection ? { xRecaptureSelection: selection } : {},
+      snapshots: [],
     }),
     observationEvidenceBlockCount: () => empty ? 0 : 1,
     emptyCaptureDiagnostics,
@@ -388,12 +422,54 @@ test("Windowed X recapture selects the exact article before the normal candidate
   const replies = Array.from({ length: 6 }, (_, index) => new Article({
     primary: true, permalink: `https://x.com/reply/status/${67890 + index}`,
   }));
-  const { snapshot, extracted, delays } = await captureXRecaptureFixture([...replies, target]);
+  const { observation, extracted, delays } = await captureXRecaptureFixture([...replies, target]);
+  const [snapshot] = observation.snapshots;
   assert.deepEqual(extracted, [target]);
   assert.deepEqual(delays, []);
   assert.equal(snapshot.blocks[0].platformId, "x:status:12345");
-  assert.equal(snapshot.xRecaptureSelection.outcome, "target_captured");
-  assert.equal(snapshot.xRecaptureSelection.scannedCount, 7);
+  assert.equal(observation.coverage.xRecaptureSelection.outcome, "target_captured");
+  assert.equal(observation.coverage.xRecaptureSelection.scannedCount, 7);
+  assert.equal(Object.hasOwn(snapshot, "xRecaptureSelection"), false);
+});
+
+test("Windowed X recognizes a detail article's direct date permalink without a time element", async () => {
+  const detail = new DetailArticle({ links: [[detailPath], [`${detailPath}/analytics`]] });
+  const probe = createProbe([detail], { url: detailURL, sharedDOM: true });
+  assert.equal(probe().state, "feed_ready");
+  const block = probe.extract(detail);
+  assert.equal(block.platformId, "x:status:12345");
+  assert.equal(block.presentation.permalinkSource, "detail_date_anchor");
+  assert.equal(block.author, "Owner name");
+  assert.equal(block.text, "Detail post body");
+  assert.equal(block.publishedAt, null);
+  const reply = new Article({ wrapperHref: "/reply/status/67890" });
+  const { extracted, observation } = await captureXRecaptureFixture([reply, detail]);
+  assert.deepEqual(extracted, [detail]);
+  assert.equal(observation.coverage.xRecaptureSelection.targetMatchCount, 1);
+  assert.equal(observation.coverage.xRecaptureSelection.outcome, "target_captured");
+});
+
+test("Windowed X never substitutes detail-page links from replies, quotes, or analytics", async () => {
+  const reply = new DetailArticle({ wrapperHref: "/reply/status/67890" });
+  const unrelated = [
+    reply,
+    new DetailArticle({ links: [[`${detailPath}/analytics`]] }),
+    new DetailArticle({ links: [[detailPath, "quote"]] }),
+    new DetailArticle({ outerArticle: reply }),
+    new DetailArticle({ links: [[detailPath, "body"]] }),
+    new DetailArticle({ links: [["/reply/status/67890"]] }),
+    new DetailArticle({ links: [[`https://x.com.evil.test${detailPath}`]] }),
+  ];
+  const { extracted, observation } = await captureXRecaptureFixture(unrelated);
+  assert.deepEqual(extracted, []);
+  assert.equal(observation.coverage.xRecaptureSelection.targetMatchCount, 0);
+  assert.equal(emptyCaptureDiagnostics(observation).xRecaptureSelection.outcome, "target_not_identified");
+  assert.equal(Object.hasOwn(observation.snapshots[0], "xRecaptureSelection"), false);
+  const detail = new DetailArticle();
+  assert.equal(createProbe([detail], { sharedDOM: true })().state, "feed_hydrating");
+  assert.equal(createProbe([detail], { url: `${detailURL}/analytics`, sharedDOM: true })().state, "feed_hydrating");
+  const placeholder = new DetailArticle({ text: "" });
+  assert.equal(createProbe([placeholder], { url: detailURL, sharedDOM: true })().state, "feed_hydrating");
 });
 
 test("Windowed X recapture reports why the target could not be admitted", async () => {
@@ -412,26 +488,26 @@ test("Windowed X recapture reports why the target could not be admitted", async 
     [[target], { identityChanges: true }, "target_identity_changed", []],
   ]) {
     const result = await captureXRecaptureFixture(candidates, options);
-    assert.equal(result.snapshot.blocks.length, 0, outcome);
-    assert.equal(result.snapshot.xRecaptureSelection.outcome, outcome);
+    assert.equal(result.observation.snapshots[0].blocks.length, 0, outcome);
+    assert.equal(result.observation.coverage.xRecaptureSelection.outcome, outcome);
     assert.deepEqual(result.delays, delays, outcome);
     if (outcome === "target_not_identified") {
-      assert.equal(result.snapshot.xRecaptureSelection.conflictingIdentityCount, 1);
+      assert.equal(result.observation.coverage.xRecaptureSelection.conflictingIdentityCount, 1);
       assert.equal(result.extracted.length, 0);
     }
   }
   const late = await captureXRecaptureFixture([other], { afterDelay: [other, target] });
   assert.deepEqual(late.delays, [150]);
   assert.deepEqual(late.extracted, [target]);
-  assert.equal(late.snapshot.xRecaptureSelection.outcome, "target_captured");
-  assert.equal(late.snapshot.xRecaptureSelection.rescanned, true);
+  assert.equal(late.observation.coverage.xRecaptureSelection.outcome, "target_captured");
+  assert.equal(late.observation.coverage.xRecaptureSelection.rescanned, true);
 });
 
 async function captureXRecaptureFixture(candidates, options = {}) {
-  const targetURL = "https://x.com/owner/status/12345";
+  const targetURL = detailURL;
   const extracted = [], delays = [];
   const context = vm.createContext({
-    URL,
+    URL, performance,
     window: { location: new URL(options.pageURL ?? targetURL) },
     document: { querySelectorAll: selector => (delays.length && options.afterDelay || candidates)
       .filter(article => selector !== 'article[data-testid="tweet"]' || article.primary) },
@@ -443,10 +519,19 @@ async function captureXRecaptureFixture(candidates, options = {}) {
     uniqueElements: values => [...new Set(values)],
     delay: async milliseconds => { delays.push(milliseconds); },
     normalizeCandidateDiagnostics: () => null,
-    readScrollPosition: () => ({ y: 0 }), viewportHeight: () => 900,
+    readScrollPosition: () => ({ x: 0, y: 0 }), viewportHeight: () => 900,
+    getScrollContext: () => null, describeScrollContext: () => null,
+    restoreScrollContext: () => true,
+    CAPTURE_DEADLINE_RESERVE_MS: 100,
+    sourceMatchesPage: () => true,
+    summarizeFieldCoverage: () => null,
+    qualityPolicy: { summarize: () => ({ verdict: "complete" }) },
+    blockIdentity: block => block.platformId,
+    sourceEvents: () => [],
     mediaAcquisitionEngine: {
       observe: () => null,
       acquire: async () => ({ media: [], audit: { outcome: "not_applicable" } }),
+      summarize: () => ({ outcomes: {} }),
     },
     mediaPostProcessor: { withPlaybackStatus: (_source, _media, audit) => audit },
     evaluateBlockQuality: () => ({ verdict: options.invalidQuality ? "invalid" : "complete", evidenceModalities: ["text"], issues: [] }),
@@ -458,21 +543,24 @@ async function captureXRecaptureFixture(candidates, options = {}) {
       return { permalink, platformId: context.AkuSourceAdapters.get("x").platformIdFromCandidates([permalink]), media: [] };
     },
   });
-  for (const file of ["capture-primitives.js", "source-adapter-runtime.js", "adapters/x-adapter.js",
+  for (const file of ["capture-primitives.js", "source-adapter-runtime.js", "adapters/x-adapter.js", "bounded-capture-policy.js",
     "shared-dom-engine/browser-runtime.js", "adapters/x-dom-shadow.js"]) {
     vm.runInContext(fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8"), context);
   }
   context.sourceAdapters = context.AkuSourceAdapters;
+  context.capturePolicy = context.AkuBoundedCapturePolicy;
   const source = fs.readFileSync(new URL("../content-script.js", import.meta.url), "utf8");
   for (const [start, end] of [
+    ["  async function collectBoundedObservation(", "  async function captureVisibleSnapshot("],
     ["  async function captureVisibleSnapshot(", "  function assertNoXAccessChallenge("],
     ["  function admittedBlockKey(", "  function selectorDetectedOutside("],
     ["  function discoverSourceCandidates(", "  function sourceMatchesPage("],
   ]) {
     vm.runInContext(source.slice(source.indexOf(start), source.indexOf(end)), context);
   }
-  const snapshot = await context.captureVisibleSnapshot("x", {
-    maxBlocksPerSnapshot: 5, qualityRetryBudget: 1, qualityRetrySettleMs: 150, recaptureTarget: targetURL,
-  }, null, Date.now() + 3_000, "managed_window", null);
-  return { snapshot, extracted, delays };
+  const observation = await context.collectBoundedObservation({
+    source: "x", mode: "recapture_media", targetUrl: targetURL, scrolls: 0,
+    maxBlocksPerSnapshot: 5, qualityRetryBudget: 1, qualityRetrySettleMs: 150, sourceFreshness: {},
+  });
+  return { observation, extracted, delays };
 }

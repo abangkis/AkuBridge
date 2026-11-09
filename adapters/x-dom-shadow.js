@@ -42,7 +42,8 @@
       expectedPermalink: null,
       source: decision.provenance?.includes("post-wrapper") ? "post_wrapper"
         : decision.provenance?.includes("time-anchor") ? "time_anchor"
-          : decision.locator ? "quote_anchor" : null,
+          : decision.provenance?.includes("detail-date-anchor") ? "detail_date_anchor"
+            : decision.locator ? "quote_anchor" : null,
     };
   }
 

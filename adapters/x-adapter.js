@@ -537,16 +537,23 @@ function imageUrls(image) {
     return [...container.querySelectorAll(selector)].find((element) => !quote?.contains?.(element));
   }
 
+  function alternatePostPermalink(container, quote) {
+    const wrapped = wrappedPostPermalink(container);
+    if (wrapped) return wrapped;
+    const identity = resolveIdentity(container, quote);
+    return identity?.source === "detail_date_anchor" ? identity.permalink : null;
+  }
+
   function findXTextRoot(container, quote = findQuotedPostContainer(container)) {
     return firstOwnElement(container, legacyTextSelector, quote) ??
       firstOwnElement(container, xArticleRootSelector, quote) ??
-      (wrappedPostPermalink(container) ? firstOwnElement(container, wrappedTextSelector, quote) : null);
+      (alternatePostPermalink(container, quote) ? firstOwnElement(container, wrappedTextSelector, quote) : null);
   }
 
   function findXAuthor(container, { compactText }, quote = findQuotedPostContainer(container)) {
     const legacy = compactText(firstOwnElement(container, legacyAuthorSelector, quote)?.innerText);
     if (legacy) return legacy.slice(0, 300);
-    const permalink = wrappedPostPermalink(container);
+    const permalink = alternatePostPermalink(container, quote);
     const handle = permalink && new URL(permalink).pathname.split("/")[1].toLowerCase();
     if (!handle || handle === "i") return "";
     const profile = `https://x.com/${handle}`;
