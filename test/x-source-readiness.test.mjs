@@ -3,6 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import { AkuBridgeError, createTabLease, serializeBridgeError } from "../bridge-runtime-policy.js";
+import { emptyCaptureDiagnostics } from "../capture-observation-policy.js";
 
 class Article {
   constructor({ primary = false, author = "", text = "", permalink = "", media = false, visible = true,
@@ -323,7 +324,7 @@ test("Windowed X recapture records only the final tab route category before clos
   const capture = service.slice(service.indexOf("async function captureWithSourceTabRecovery("),
     service.indexOf("async function capturePreparedSource("));
   const targetUrl = "https://x.com/owner/status/12345";
-  let tabUrl, closed, empty;
+  let tabUrl, closed, empty, selection;
   const context = vm.createContext({
     URL, AkuBridgeError,
     chrome: { tabs: {
@@ -336,9 +337,13 @@ test("Windowed X recapture records only the final tab route category before clos
     } },
     sourceAccessGranted: async () => true,
     findOrOpenSourceTab: async () => ({ tab: { id: 17 }, opened: true, restoreFocus: async () => ({}) }),
-    capturePreparedSource: async () => ({ pageUrl: targetUrl + "?private_query=1", coverage: {} }),
+    capturePreparedSource: async () => ({
+      pageUrl: targetUrl + "?private_query=1",
+      coverage: {},
+      snapshots: selection ? [{ xRecaptureSelection: selection }] : [],
+    }),
     observationEvidenceBlockCount: () => empty ? 0 : 1,
-    emptyCaptureDiagnostics: () => ({ fixture: true }),
+    emptyCaptureDiagnostics,
     shouldCloseOpenedSourceTab: () => true,
     shouldRetrySourceTab: () => false,
     sourceDefinition: () => ({}),
@@ -368,4 +373,106 @@ test("Windowed X recapture records only the final tab route category before clos
     assert.equal(error.details.xRecaptureRoute.kind, "feed");
     return true;
   });
+  selection = { outcome: "target_not_identified", targetMatchCount: 0 };
+  await assert.rejects(context.captureWithSourceTabRecovery(command), error => {
+    const failure = serializeBridgeError(error);
+    assert.equal(failure.code, "recapture_target_not_observed");
+    assert.deepEqual(failure.details.xRecaptureSelection, selection);
+    assert.equal(failure.details.xRecaptureRoute.kind, "feed");
+    return true;
+  });
 });
+
+test("Windowed X recapture selects the exact article before the normal candidate cap", async () => {
+  const target = new Article({ wrapperHref: "/owner/status/12345" });
+  const replies = Array.from({ length: 6 }, (_, index) => new Article({
+    primary: true, permalink: `https://x.com/reply/status/${67890 + index}`,
+  }));
+  const { snapshot, extracted, delays } = await captureXRecaptureFixture([...replies, target]);
+  assert.deepEqual(extracted, [target]);
+  assert.deepEqual(delays, []);
+  assert.equal(snapshot.blocks[0].platformId, "x:status:12345");
+  assert.equal(snapshot.xRecaptureSelection.outcome, "target_captured");
+  assert.equal(snapshot.xRecaptureSelection.scannedCount, 7);
+});
+
+test("Windowed X recapture reports why the target could not be admitted", async () => {
+  const target = new Article({ wrapperHref: "/owner/status/12345" });
+  const other = new Article({ wrapperHref: "/other/status/67890" });
+  const quote = new Article({ wrapperHref: "/owner/status/12345" });
+  const quoting = new Article({ wrapperHref: "/other/status/67890", quote });
+  const conflicting = new Article({ wrapperHref: "/owner/status/12345", permalink: "https://x.com/other/status/67890" });
+  for (const [candidates, options, outcome, delays] of [
+    [[other, quoting, quote, conflicting], {}, "target_not_identified", [150]],
+    [[new Article({ wrapperHref: "/owner/status/12345", visible: false })], {}, "target_not_visible", []],
+    [[target, new Article({ wrapperHref: "/owner/status/12345" })], {}, "ambiguous_target", []],
+    [[target], { pageURL: "https://x.com/home" }, "target_route_mismatch", []],
+    [[target], { invalidQuality: true }, "target_quality_rejected", []],
+    [[target], { routeChanges: true }, "target_route_mismatch", []],
+    [[target], { identityChanges: true }, "target_identity_changed", []],
+  ]) {
+    const result = await captureXRecaptureFixture(candidates, options);
+    assert.equal(result.snapshot.blocks.length, 0, outcome);
+    assert.equal(result.snapshot.xRecaptureSelection.outcome, outcome);
+    assert.deepEqual(result.delays, delays, outcome);
+    if (outcome === "target_not_identified") {
+      assert.equal(result.snapshot.xRecaptureSelection.conflictingIdentityCount, 1);
+      assert.equal(result.extracted.length, 0);
+    }
+  }
+  const late = await captureXRecaptureFixture([other], { afterDelay: [other, target] });
+  assert.deepEqual(late.delays, [150]);
+  assert.deepEqual(late.extracted, [target]);
+  assert.equal(late.snapshot.xRecaptureSelection.outcome, "target_captured");
+  assert.equal(late.snapshot.xRecaptureSelection.rescanned, true);
+});
+
+async function captureXRecaptureFixture(candidates, options = {}) {
+  const targetURL = "https://x.com/owner/status/12345";
+  const extracted = [], delays = [];
+  const context = vm.createContext({
+    URL,
+    window: { location: new URL(options.pageURL ?? targetURL) },
+    document: { querySelectorAll: selector => (delays.length && options.afterDelay || candidates)
+      .filter(article => selector !== 'article[data-testid="tweet"]' || article.primary) },
+    isVisibleInViewport: article => article.visible,
+    assertNoXAccessChallenge: () => {}, updateCaptureProgress: () => {},
+    findPermalinkDetails: () => null, waitForValue: () => null,
+    expandSourceContent: () => null, restoreSourceContent: () => {},
+    compactText: value => String(value ?? "").trim(),
+    uniqueElements: values => [...new Set(values)],
+    delay: async milliseconds => { delays.push(milliseconds); },
+    normalizeCandidateDiagnostics: () => null,
+    readScrollPosition: () => ({ y: 0 }), viewportHeight: () => 900,
+    mediaAcquisitionEngine: {
+      observe: () => null,
+      acquire: async () => ({ media: [], audit: { outcome: "not_applicable" } }),
+    },
+    mediaPostProcessor: { withPlaybackStatus: (_source, _media, audit) => audit },
+    evaluateBlockQuality: () => ({ verdict: options.invalidQuality ? "invalid" : "complete", evidenceModalities: ["text"], issues: [] }),
+    extractBlock: article => {
+      extracted.push(article);
+      if (options.routeChanges) context.window.location = new URL("https://x.com/home");
+      const permalink = options.identityChanges ? "https://x.com/other/status/67890"
+        : context.AkuSourceAdapters.get("x").resolveIdentity(article).permalink;
+      return { permalink, platformId: context.AkuSourceAdapters.get("x").platformIdFromCandidates([permalink]), media: [] };
+    },
+  });
+  for (const file of ["capture-primitives.js", "source-adapter-runtime.js", "adapters/x-adapter.js",
+    "shared-dom-engine/browser-runtime.js", "adapters/x-dom-shadow.js"]) {
+    vm.runInContext(fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8"), context);
+  }
+  context.sourceAdapters = context.AkuSourceAdapters;
+  const source = fs.readFileSync(new URL("../content-script.js", import.meta.url), "utf8");
+  for (const [start, end] of [
+    ["  async function captureVisibleSnapshot(", "  function assertNoXAccessChallenge("],
+    ["  function admittedBlockKey(", "  function selectorDetectedOutside("],
+    ["  function discoverSourceCandidates(", "  function sourceMatchesPage("],
+  ]) {
+    vm.runInContext(source.slice(source.indexOf(start), source.indexOf(end)), context);
+  }
+  const snapshot = await context.captureVisibleSnapshot("x", {
+    maxBlocksPerSnapshot: 5, qualityRetryBudget: 1, qualityRetrySettleMs: 150, recaptureTarget: targetURL,
+  }, null, Date.now() + 3_000, "managed_window", null);
+  return { snapshot, extracted, delays };
+}

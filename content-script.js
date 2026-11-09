@@ -304,6 +304,9 @@
       : Promise.resolve(null);
 
     const plan = capturePolicy.normalizeCapturePlan(payload);
+    const snapshotPlan = source === "x" && payload.mode === "recapture_media"
+      ? { ...plan, recaptureTarget: payload.targetUrl ?? "" }
+      : plan;
     const captureVisibilityMode =
       payload.tabAcquisition?.captureVisibilityMode ?? "same_window";
     updateCaptureProgress("capture_started", { source, scrolls: plan.scrolls });
@@ -361,7 +364,7 @@
         updateCaptureProgress("snapshot_started", { source, snapshotIndex: index });
         const snapshot = await captureVisibleSnapshot(
           source,
-          plan,
+          snapshotPlan,
           scrollContext,
           operationDeadlineAtMs,
           captureVisibilityMode,
@@ -729,17 +732,33 @@
   ) {
     assertNoXAccessChallenge(source);
     const capturedAt = new Date().toISOString();
-    const discovery = discoverSourceCandidates(source);
+    const adapter = sourceAdapters.get(source);
+    const recaptureTarget = payload.recaptureTarget ?? null;
+    const targetId = recaptureTarget === null ? null : xRecaptureStatusID(recaptureTarget);
+    let discovery = discoverSourceCandidates(source);
+    let targetSelection = recaptureTarget === null ? null
+      : selectXRecaptureCandidate(adapter, discovery.candidates, targetId, scrollContext);
+    const settleMs = payload.qualityRetrySettleMs;
+    if (targetSelection?.diagnostics.outcome === "target_not_identified" &&
+        payload.qualityRetryBudget > 0 && Date.now() + settleMs < operationDeadlineAtMs) {
+      await delay(settleMs);
+      assertNoXAccessChallenge(source);
+      discovery = discoverSourceCandidates(source);
+      targetSelection = selectXRecaptureCandidate(adapter, discovery.candidates, targetId, scrollContext);
+      targetSelection.diagnostics.rescanned = true;
+    }
     const selectorCandidates = discovery.candidates;
     const structuralCandidates = discovery.readinessCandidates ?? selectorCandidates;
     const containers = selectorCandidates.filter((element) =>
       isVisibleInViewport(element, scrollContext),
     );
-    const adapter = sourceAdapters.get(source);
-    const boundedContainers = containers.slice(0, Math.min(
-      payload.maxBlocksPerSnapshot,
-      adapter.maxBlocksPerSnapshot ?? payload.maxBlocksPerSnapshot,
-    ));
+    const boundedContainers = targetSelection
+      ? targetSelection.container ? [targetSelection.container] : []
+      : containers.slice(0, Math.min(
+        payload.maxBlocksPerSnapshot,
+        adapter.maxBlocksPerSnapshot ?? payload.maxBlocksPerSnapshot,
+      ));
+    const retryBudget = payload.qualityRetryBudget - (targetSelection?.diagnostics.rescanned ? 1 : 0);
     updateCaptureProgress("snapshot_candidates_ready", {
       source,
       visibleContainerCount: containers.length,
@@ -766,7 +785,10 @@
     const blocks = [];
     const qualityReports = [];
     for (const [containerIndex, container] of boundedContainers.entries()) {
-      if (Date.now() >= operationDeadlineAtMs) break;
+      if (Date.now() >= operationDeadlineAtMs) {
+        if (targetSelection) targetSelection.diagnostics.outcome = "target_deadline";
+        break;
+      }
       updateCaptureProgress("extracting_block", { source, containerIndex });
       const expansion = await expandSourceContent(container, source, operationDeadlineAtMs);
       let block;
@@ -790,7 +812,11 @@
           expansion,
           capturedAt,
         );
-        if (!block) continue;
+        const firstRejection = targetSelection ? xRecaptureBlockRejection(block, targetId) : null;
+        if (!block || firstRejection) {
+          if (targetSelection) targetSelection.diagnostics.outcome = firstRejection;
+          continue;
+        }
         candidateKey = provisionalCandidateKey(source, block, containerIndex, capturedAt);
         let mediaEvidence = observeMedia();
         let qualityAttempt = 0;
@@ -800,15 +826,15 @@
           block,
           candidateKey,
           qualityAttempt,
-          payload.qualityRetryBudget - qualityAttempt,
+          retryBudget - qualityAttempt,
           mediaEvidence,
         );
         while (
           captureQuality.verdict === "retryable" &&
-          qualityAttempt < payload.qualityRetryBudget &&
+          qualityAttempt < retryBudget &&
           Date.now() < operationDeadlineAtMs
         ) {
-          const attemptsAvailable = payload.qualityRetryBudget - qualityAttempt;
+          const attemptsAvailable = retryBudget - qualityAttempt;
           qualityAttempt += 1;
           updateCaptureProgress("quality_retry", {
             source,
@@ -851,7 +877,7 @@
             expansion,
             capturedAt,
           );
-          if (!block) break;
+          if (!block || targetSelection && xRecaptureBlockRejection(block, targetId)) break;
           if (mediaEvidence && block.platformId !== mediaEvidence.candidateId) {
             mediaRecovery = null;
             candidateKey = provisionalCandidateKey(source, block, containerIndex, capturedAt);
@@ -872,11 +898,15 @@
             block,
             candidateKey,
             qualityAttempt,
-            payload.qualityRetryBudget - qualityAttempt,
+            retryBudget - qualityAttempt,
             mediaEvidence,
           );
         }
-        if (!block) continue;
+        const rejection = targetSelection ? xRecaptureBlockRejection(block, targetId) : null;
+        if (!block || rejection) {
+          if (targetSelection) targetSelection.diagnostics.outcome = rejection;
+          continue;
+        }
         if (captureQuality.verdict === "retryable") {
           captureQuality = evaluateBlockQuality(
             container,
@@ -919,11 +949,15 @@
         if (block?.presentation) block.presentation.contentExpansion = legacyExpansionState(expansion?.state);
       }
       qualityReports.push(captureQuality);
-      if (captureQuality.verdict === "invalid") continue;
+      if (captureQuality.verdict === "invalid") {
+        if (targetSelection) targetSelection.diagnostics.outcome = "target_quality_rejected";
+        continue;
+      }
       const dedupKey = admittedBlockKey(block);
       if (blocks.some((existing) => admittedBlockKey(existing) === dedupKey)) continue;
       block.feedPosition = selectorCandidates.indexOf(container) + 1;
       blocks.push(block);
+      if (targetSelection) targetSelection.diagnostics.outcome = "target_captured";
       if (blocks.length >= payload.maxBlocksPerSnapshot) break;
     }
 
@@ -934,6 +968,7 @@
       selectorCandidateCount: selectorCandidates.length,
       structuralCandidateCount: structuralCandidates.length,
       visibleContainerCount: containers.length,
+      ...(targetSelection ? { xRecaptureSelection: targetSelection.diagnostics } : {}),
       candidateDiagnostics: normalizeCandidateDiagnostics(
         discovery.candidateDiagnostics,
         structuralCandidates.length,
@@ -946,6 +981,64 @@
       blocks,
       qualityReports,
     };
+  }
+
+  function selectXRecaptureCandidate(adapter, candidates, targetId, scrollContext) {
+    const maxCandidates = 64;
+    const diagnostics = {
+      outcome: "target_not_identified", scannedCount: 0, missingIdentityCount: 0,
+      conflictingIdentityCount: 0, targetMatchCount: 0, visibleTargetMatchCount: 0,
+      scanBounded: candidates.length > maxCandidates, rescanned: false,
+    };
+    if (!targetId || xRecaptureStatusID(window.location.href) !== targetId) {
+      diagnostics.outcome = targetId ? "target_route_mismatch" : "invalid_target";
+      return { container: null, diagnostics };
+    }
+    let container = null;
+    for (const candidate of candidates.slice(0, maxCandidates)) {
+      diagnostics.scannedCount++;
+      const identity = adapter.resolveIdentity?.(candidate, adapter.findQuotedRoot?.(candidate) ?? null);
+      const candidateId = identity?.status === "identified" ? xRecaptureStatusID(identity.permalink) : null;
+      if (identity?.status === "conflicting") {
+        diagnostics.conflictingIdentityCount++;
+      } else if (!candidateId) {
+        diagnostics.missingIdentityCount++;
+      } else if (candidateId === targetId) {
+        diagnostics.targetMatchCount++;
+        if (isVisibleInViewport(candidate, scrollContext)) {
+          diagnostics.visibleTargetMatchCount++;
+          container = candidate;
+        }
+      }
+    }
+    if (diagnostics.visibleTargetMatchCount > 1) {
+      diagnostics.outcome = "ambiguous_target";
+      container = null;
+    } else if (container) {
+      diagnostics.outcome = "target_selected";
+    } else if (diagnostics.targetMatchCount > 0) {
+      diagnostics.outcome = "target_not_visible";
+    }
+    return { container, diagnostics };
+  }
+
+  function xRecaptureBlockRejection(block, targetId) {
+    if (xRecaptureStatusID(window.location.href) !== targetId) return "target_route_mismatch";
+    if (!block) return "target_extraction_empty";
+    if (block.platformId !== `x:status:${targetId}` || xRecaptureStatusID(block.permalink) !== targetId) {
+      return "target_identity_changed";
+    }
+    return null;
+  }
+
+  function xRecaptureStatusID(value) {
+    try {
+      const url = new URL(value);
+      if (url.origin !== "https://x.com" || url.username || url.password) return null;
+      return /^\/(?:[\w]{1,15}|i\/web)\/status\/(\d{5,30})(?:\/|$)/i.exec(url.pathname)?.[1] ?? null;
+    } catch {
+      return null;
+    }
   }
 
   function assertNoXAccessChallenge(source) {

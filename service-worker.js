@@ -1212,12 +1212,16 @@ async function captureWithSourceTabRecovery(command) {
         : null;
       if (recaptureRoute) observation.coverage.xRecaptureRoute = recaptureRoute;
       if (observationEvidenceBlockCount(observation) === 0) {
+        const details = emptyCaptureDiagnostics(observation);
+        const targetMissing = diagnoseRecaptureRoute && Boolean(details.xRecaptureSelection);
         throw new AkuBridgeError(
-          "capture_empty",
+          targetMissing ? "recapture_target_not_observed" : "capture_empty",
           "capture",
-          `AkuBridge found no usable ${command.payload.source} evidence after the bounded capture.`,
+          targetMissing
+            ? "AkuBridge could not capture the requested X post."
+            : `AkuBridge found no usable ${command.payload.source} evidence after the bounded capture.`,
           {
-            ...emptyCaptureDiagnostics(observation),
+            ...details,
             ...(recaptureRoute ? { xRecaptureRoute: recaptureRoute } : {}),
           },
         );
