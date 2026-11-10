@@ -8,7 +8,7 @@
     "text": "Author quoted a technical update.\n\n1 First item\n2 Second item",
     "avatarUrl": "https://pbs.twimg.com/profile_images/x-avatar.jpg",
     "quotedPost": {
-      "author": "Ian Bremmer @ianbremmer · 18h",
+      "author": "Ian Bremmer",
       "avatarUrl": "https://pbs.twimg.com/profile_images/ian-avatar.jpg",
       "text": "A quoted post body preserved as nested source evidence.",
       "permalink": null,

@@ -275,8 +275,7 @@
       const avatar = quoted.querySelector('[data-testid^="UserAvatar-Container-"] img') ??
         (wrapped ? firstOwnElement(quoted, wrappedAvatarSelector) : null);
       return {
-        author: wrapped ? findXAuthor(quoted, { compactText })
-          : compactText(quoted.querySelector(legacyAuthorSelector)?.innerText),
+        author: findXAuthor(quoted, { compactText }),
         avatarUrl: imageUrls(avatar).map(normalizeHttpUrl).find(Boolean) ?? null,
         text,
         permalink,
@@ -551,8 +550,18 @@ function imageUrls(image) {
   }
 
   function findXAuthor(container, { compactText }, quote = findQuotedPostContainer(container)) {
-    const legacy = compactText(firstOwnElement(container, legacyAuthorSelector, quote)?.innerText);
-    if (legacy) return legacy.slice(0, 300);
+    const header = firstOwnElement(container, legacyAuthorSelector, quote);
+    const legacy = compactText(header?.innerText);
+    if (legacy) {
+      const profiles = [...(header.querySelectorAll?.("a[href]") ?? [])]
+        .filter((anchor) => !quote?.contains?.(anchor) && /^https:\/\/x\.com\/[\w]{1,15}\/?$/i.test(anchor.href));
+      const profileURLs = new Set(profiles.map((anchor) => anchor.href.replace(/\/$/, "").toLowerCase()));
+      const names = profileURLs.size === 1
+        ? profiles.map((anchor) => compactText(anchor.innerText)).filter(Boolean) : [];
+      // Some legacy headers expose only a combined display name, handle, and relative age.
+      const displayName = /^(.+?) @[\w]{1,15} · \d+[smhd]$/i.exec(legacy)?.[1];
+      return (preferredXAuthorName(names) || displayName || legacy).slice(0, 300);
+    }
     const permalink = alternatePostPermalink(container, quote);
     const handle = permalink && new URL(permalink).pathname.split("/")[1].toLowerCase();
     if (!handle || handle === "i") return "";
@@ -564,7 +573,11 @@ function imageUrls(image) {
       .map((anchor) => compactText(anchor.innerText)).filter(Boolean);
     const headerNames = profileNames(wrappedAuthorSelector);
     const names = headerNames.length ? headerNames : profileNames("a[href]");
-    return (names.find((name) => !name.startsWith("@")) ?? names[0] ?? "").slice(0, 300);
+    return preferredXAuthorName(names).slice(0, 300);
+  }
+
+  function preferredXAuthorName(names) {
+    return names.find((name) => !name.startsWith("@")) ?? names[0] ?? "";
   }
 
   function isXTextRoot(element) {

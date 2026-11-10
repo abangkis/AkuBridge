@@ -264,15 +264,16 @@ function syntheticCandidate(source) {
     querySelectorAll: () => [],
     closest: (selector) => selector === '[role="link"]' ? quotedContainer : null,
   };
+  const quotedAuthorHeader = { innerText: "Ian Bremmer @ianbremmer · 18h" };
   const quotedContainer = {
     querySelector(selector) {
       if (selector === '[data-testid="tweetText"]') return quotedText;
-      if (selector === '[data-testid="User-Name"]') return { innerText: "Ian Bremmer @ianbremmer · 18h" };
+      if (selector === '[data-testid="User-Name"]') return quotedAuthorHeader;
       if (selector === '[data-testid^="UserAvatar-Container-"] img') return quotedAvatar;
       if (selector === "time") return quotedTime;
       return null;
     },
-    querySelectorAll: () => [],
+    querySelectorAll: (selector) => selector === '[data-testid="User-Name"]' ? [quotedAuthorHeader] : [],
   };
   const mainText = {
     innerText: "Author quoted a technical update.\n\n1 First item\n2 Second item",
