@@ -1,0 +1,95 @@
+{
+  "origin": {
+    "kind": "persisted_observation_subset",
+    "observationId": "observation_1785892dd64aa62528400335a258eddf",
+    "capturedAt": "2026-11-11T10:49:58.753Z",
+    "matchingSnapshots": 3,
+    "redaction": "All URL query values removed; no original DOM was captured. Test DOM and player responses are reconstructed/synthetic."
+  },
+  "block": {
+    "platformId": "linkedin:ugcpost:7525912124464857088",
+    "permalink": "https://www.linkedin.com/feed/update/urn:li:ugcPost:7525912124464857088/",
+    "author": "William Faucher",
+    "text": "Ok so. #UnrealEngine 5.9 is pretty sick. You can now build a web browser version of your game, so I built EasyWaterscape's playable demo... and it runs at a rock solid 60fps, @ high settings, in chrome, @ 4586 x 2372. (200% screen percentage)\n\nWhat the heck\n\n#DellTech #DellProPrecision #NVIDIA\nCindy Olivo Crystal Cook Logan Lawler",
+    "contentKind": "video",
+    "media": [
+      {
+        "alt": "",
+        "height": 264,
+        "kind": "image",
+        "playbackMode": null,
+        "playbackUrl": null,
+        "posterUrl": null,
+        "url": "https://media.licdn.com/dms/image/v2/D4E05AQGbcvO9JFJkUQ/videocover-low/B4EaHFpM9CHQBQ-/0/1794317285013",
+        "width": 470
+      }
+    ],
+    "mediaRecovery": {
+      "acquisitionStage": "primary_dom",
+      "attempts": 0,
+      "candidateDiagnostics": [
+        {
+          "acceptedCount": 1,
+          "candidateCount": 4,
+          "duplicateCount": 0,
+          "rejectedGeometryCount": 2,
+          "rejectedHostCount": 0,
+          "stage": "initial_dom",
+          "trustedUnknownGeometryAcceptedCount": 0,
+          "urlMissingCount": 1,
+          "urlPresentCount": 3,
+          "urlSources": {
+            "css_background": 1,
+            "current_src": 2,
+            "src_property": 1
+          }
+        },
+        {
+          "acceptedCount": 0,
+          "candidateCount": 0,
+          "duplicateCount": 0,
+          "rejectedGeometryCount": 0,
+          "rejectedHostCount": 0,
+          "stage": "structured_state",
+          "trustedUnknownGeometryAcceptedCount": 0,
+          "urlMissingCount": 0,
+          "urlPresentCount": 0,
+          "urlSources": {}
+        }
+      ],
+      "engineVersion": "media-acquisition-engine-v4",
+      "expectedKinds": [
+        "video"
+      ],
+      "foregroundRequired": false,
+      "limitation": "",
+      "method": "none",
+      "outcome": "primary_complete",
+      "policyVersion": "media-acquisition-v2",
+      "postProcessorVersion": "media-post-processor-v2",
+      "recoveredCount": 0,
+      "source": "linkedin",
+      "strategyVersion": "linkedin-media-acquisition-v2",
+      "trace": [
+        "primary_complete"
+      ],
+      "visibilityRequirement": "none"
+    },
+    "captureQuality": {
+      "attempt": 0,
+      "candidateKey": "linkedin:text:bbb70b27",
+      "contentFamily": "feed_post",
+      "evidenceModalities": [
+        "text",
+        "image"
+      ],
+      "identityComparison": null,
+      "identitySource": "stable_text",
+      "issues": [],
+      "profile": "social-post-v2",
+      "score": 1,
+      "textCompleteness": "no_collapse_observed",
+      "verdict": "complete"
+    }
+  }
+}

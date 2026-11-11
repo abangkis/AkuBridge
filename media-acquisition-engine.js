@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "media-acquisition-engine-v4";
+  const runtimeRevision = "media-acquisition-engine-v5";
   const policyVersion = "media-acquisition-v2";
   const sourceAdapters = globalThis.AkuSourceAdapters;
   const capturePolicy = globalThis.AkuBoundedCapturePolicy;
@@ -31,6 +31,7 @@
     candidateId = null,
     excludeRoot = null,
     initialMedia = [],
+    contentKind = "",
     mediaRootDetected = false,
     mediaEvidence = null,
     skipMediaWait = false,
@@ -40,6 +41,7 @@
     captureVisibilityMode = "same_window",
     extractPrimary,
     delay,
+    signal,
   }) {
     const adapter = sourceAdapters.get(source);
     const strategy = adapter.mediaAcquisition;
@@ -69,21 +71,37 @@
       candidateDiagnostics,
     };
     const primary = normalizeMedia(source, initialMedia);
+    let partial = primary;
+    const guarded = typeof strategy.isComplete === "function";
+    const complete = values => values.length > 0 && (strategy.isComplete?.(values, { contentKind, expectedKinds }) ?? true);
+    const cancelled = () => guarded && (signal?.aborted || Date.now() >= deadlineAtMs);
+    const matchesOwner = strategy.createOwnerGuard?.(container, candidateId) ?? (() => true);
+    const ownerValid = () => matchesOwner() && (!mediaEvidence || mediaEvidence.matchesOwner());
+    const finish = (media, audit) => {
+      const preserved = guarded && !media.length ? partial : media;
+      if (strategy.isComplete && !complete(preserved) && preserved.length) {
+        return result(preserved, { ...audit, outcome: "unresolved", limitation: "video_stream_not_resolved",
+          trace: [...audit.trace.filter(stage => !stage.endsWith("_complete")), "video_stream_not_resolved"] });
+      }
+      return result(preserved, audit);
+    };
+    const structuredLookup = () => strategy.extractStructuredCandidates?.(container, {
+      candidateId: mediaEvidence?.candidateId ?? candidateId, excludeRoot, collectRootCandidates,
+      uniqueElements, deadlineAtMs, signal,
+    });
+    if (guarded && (cancelled() || !ownerValid())) return finish([], { ...base, outcome: "unavailable", trace: ["acquisition_cancelled"] });
     const structured = normalizeMedia(
       source,
-      await strategy.extractStructuredCandidates?.(container, {
-        candidateId: mediaEvidence?.candidateId ?? candidateId,
-        excludeRoot,
-        collectRootCandidates,
-        uniqueElements,
-      }) ?? [],
+      await structuredLookup() ?? [],
     );
+    if (guarded && (cancelled() || !ownerValid())) return finish([], { ...base, outcome: "unavailable", trace: ["acquisition_cancelled"] });
     recordDiagnostics(candidateDiagnostics, "structured_state", structured);
     const processed = mediaPostProcessor.process(source, primary, structured);
-    if (processed.media.length > 0) {
+    partial = processed.media;
+    if (complete(processed.media)) {
       const enriched = processed.enrichedCount > 0;
       const structuredOnly = primary.length === 0 && structured.length > 0;
-      return result(processed.media, {
+      return finish(processed.media, {
         ...base,
         outcome: enriched || structuredOnly ? "recovered" : "primary_complete",
         recoveredCount: enriched ? processed.enrichedCount : structuredOnly ? processed.media.length : 0,
@@ -102,18 +120,19 @@
     }
     const rootDetected = mediaEvidence ? mediaEvidence.signal === "owned" : mediaRootDetected;
     if (!rootDetected && expectedKinds.length === 0) {
-      return result([], {
+      return finish([], {
         ...base,
         outcome: "not_applicable",
         trace: ["primary_missing", mediaEvidence?.signal === "ambiguous" ? "media_signal_ambiguous" : "media_root_absent"],
       });
     }
 
-    if (mediaEvidence && Date.now() < deadlineAtMs) {
+    if (mediaEvidence && Date.now() < deadlineAtMs && (!guarded || ownerValid())) {
       const available = normalizeMedia(source, mediaEvidence.readAvailableCandidates());
+      if (guarded && !ownerValid()) return finish([], { ...base, outcome: "unavailable", trace: ["media_owner_changed"] });
       recordDiagnostics(candidateDiagnostics, "alternate_dom_immediate", available);
-      if (available.length > 0) {
-        return result(available, {
+      if (complete(available)) {
+        return finish(available, {
           ...base,
           outcome: "recovered",
           recoveredCount: available.length,
@@ -124,7 +143,7 @@
       }
     }
     if (mediaEvidence && skipMediaWait) {
-      return result([], {
+      return finish([], {
         ...base,
         outcome: "unavailable",
         limitation: "The post was usable without media and no media URL was available during capture.",
@@ -136,7 +155,7 @@
       captureVisibilityMode === "managed_window" &&
       strategy.quietRecovery === "foreground_required"
     ) {
-      return result([], {
+      return finish([], {
         ...base,
         outcome: "unavailable",
         visibilityRequirement: "foreground_window",
@@ -157,9 +176,9 @@
       typeof strategy.extractCandidates !== "function" ||
       attemptsAvailable < 1 ||
       Date.now() >= deadlineAtMs ||
-      mediaEvidence && Date.now() + settle >= deadlineAtMs
+      (mediaEvidence || guarded) && Date.now() + settle >= deadlineAtMs
     ) {
-      return result([], {
+      return finish([], {
         ...base,
         outcome: "unavailable",
         ...foregroundRequirement(strategy, captureVisibilityMode),
@@ -174,21 +193,22 @@
     );
     let attempts = 0;
     const trace = ["primary_missing", "media_root_detected", "structured_state_empty"];
-    for (; attempts < maximumAttempts && Date.now() < deadlineAtMs; attempts += 1) {
+    for (; attempts < maximumAttempts && Date.now() < deadlineAtMs && !cancelled(); attempts += 1) {
       await delay(settle);
-      if (mediaEvidence && Date.now() >= deadlineAtMs) {
+      if (cancelled() || mediaEvidence && Date.now() >= deadlineAtMs) {
         attempts += 1;
         break;
       }
-      if (mediaEvidence && !mediaEvidence.matchesOwner()) {
+      if (!ownerValid()) {
         attempts += 1;
         trace.push("media_owner_changed");
         break;
       }
       const hydrated = normalizeMedia(source, extractPrimary?.() ?? []);
+      if (guarded && !ownerValid()) { attempts += 1; break; }
       recordDiagnostics(candidateDiagnostics, "primary_hydration", hydrated);
-      if (hydrated.length > 0) {
-        return result(hydrated, {
+      if (complete(hydrated)) {
+        return finish(hydrated, {
           ...base,
           outcome: "recovered",
           attempts: attempts + 1,
@@ -198,7 +218,20 @@
           trace: [...trace, "primary_hydration_complete"],
         });
       }
+      if (hydrated.length) partial = hydrated;
       trace.push("primary_hydration_empty");
+      if (strategy.isComplete) {
+        const retried = normalizeMedia(source, await structuredLookup() ?? []);
+        if (cancelled() || !ownerValid()) { attempts += 1; break; }
+        const enriched = mediaPostProcessor.process(source, partial, retried);
+        partial = enriched.media;
+        if (complete(partial)) return finish(partial, {
+          ...base, outcome: "recovered", attempts: attempts + 1, recoveredCount: enriched.enrichedCount,
+          method: "structured_enrichment", acquisitionStage: "structured_enrichment",
+          trace: [...trace, "structured_enrichment_complete"],
+        });
+      }
+      if (guarded && !ownerValid()) { attempts += 1; break; }
       const alternateCandidates = mediaEvidence
         ? observe({ source, container, candidateId, excludeRoot: adapter.findQuotedRoot?.(container) ?? null })
           .readAvailableCandidates()
@@ -208,9 +241,10 @@
           uniqueElements,
         });
       const alternate = normalizeMedia(source, alternateCandidates);
+      if (guarded && !ownerValid()) { attempts += 1; break; }
       recordDiagnostics(candidateDiagnostics, "alternate_dom", alternate);
-      if (alternate.length > 0) {
-        return result(alternate, {
+      if (complete(alternate)) {
+        return finish(alternate, {
           ...base,
           outcome: "recovered",
           attempts: attempts + 1,
@@ -220,10 +254,11 @@
           trace: [...trace, "alternate_dom_complete"],
         });
       }
+      if (!partial.length && alternate.length) partial = alternate;
       trace.push("alternate_dom_empty");
     }
     if (Date.now() >= deadlineAtMs) trace.push("deadline_exhausted");
-    return result([], {
+    return finish([], {
       ...base,
       outcome: "unavailable",
       attempts,

@@ -182,12 +182,12 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
     linkedInAdapter,
     /\[data-testid="mainFeed"\] \[role="listitem"\]/,
   );
-  assert.match(linkedInAdapter, /linkedin-dom-v22/);
+  assert.match(linkedInAdapter, /linkedin-dom-v23/);
   assert.match(contentScript, /platformId/);
   assert.match(contentScript, /findMedia/);
   assert.match(xAdapter, /tweetPhoto/);
   assert.match(xAdapter, /previewInterstitial/);
-  assert.match(contentScript, /source-adapters-v122/);
+  assert.match(contentScript, /source-adapters-v123/);
   assert.match(contentScript, /AKU_BROWSER_RECOVER_SOURCE_READINESS/);
   assert.match(serviceWorker, /recoverSourceReadiness/);
   assert.match(contentScript, /candidateDiagnostics: normalizeCandidateDiagnostics/);
@@ -294,16 +294,16 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
   assert.match(freshnessRuntime, /adapter\.freshness\.revealObservationMs/);
   assert.match(linkedInAdapter, /revealObservationMs: 12_000/);
   assert.match(linkedInAdapter, /rejectInsideFeedCandidate: true/);
-  assert.match(mediaAcquisitionEngine, /media-acquisition-engine-v4/);
+  assert.match(mediaAcquisitionEngine, /media-acquisition-engine-v5/);
   assert.match(mediaAcquisitionEngine, /structured_state/);
   assert.match(mediaAcquisitionEngine, /primary_hydration/);
   assert.match(mediaAcquisitionEngine, /alternate_dom/);
   assert.match(mediaAcquisitionEngine, /quiet_recovery_unsupported/);
   assert.doesNotMatch(mediaAcquisitionEngine, /source\s*===\s*["'](?:x|linkedin)["']/);
   assert.match(xAdapter, /x-media-acquisition-v2/);
-  assert.match(linkedInAdapter, /linkedin-media-acquisition-v2/);
+  assert.match(linkedInAdapter, /linkedin-media-acquisition-v3/);
   assert.match(linkedInAdapter, /AKU_LINKEDIN_COLLECT_STRUCTURED_MEDIA/);
-  assert.match(mediaAcquisitionEngine, /await strategy\.extractStructuredCandidates/);
+  assert.match(mediaAcquisitionEngine, /await structuredLookup\(\)/);
   assert.match(worker, /AKU_LINKEDIN_COLLECT_STRUCTURED_MEDIA/);
   assert.match(contentScript, /mediaAcquisitionEngine\.acquire/);
   assert.match(contentScript, /const captureVisibilityMode =\s*payload\.tabAcquisition\?\.captureVisibilityMode \?\? "same_window"/);
@@ -508,7 +508,7 @@ test("structured media collection runs parallel with a hard failure-soft budget"
   assert.match(worker, /AKU_BROWSER_STRUCTURED_MEDIA_READY/);
   assert.match(contentScript, /deferredMediaInbox\.wait/);
   assert.match(contentScript, /processSnapshots/);
-  assert.match(processor, /media-post-processor-v2/);
+  assert.match(processor, /media-post-processor-v3/);
   assert.match(runtime, /mode: "parallel_deferred"/);
 });
 
@@ -558,8 +558,8 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.match(tabBridge, /protocolMajor: sidecarProtocolMajor/);
   const capabilities = createBridgeCapabilities({ version: "0.9.4.0", version_name: "0.9.4", manifest_version: 3 });
   assert.equal(capabilities.extensionVersion, "0.9.4");
-  assert.equal(capabilities.runtimeRevision, "source-adapters-v122");
-  assert.equal(capabilities.buildId, "aku-bridge-0.9.4-source-adapters-v122");
+  assert.equal(capabilities.runtimeRevision, "source-adapters-v123");
+  assert.equal(capabilities.buildId, "aku-bridge-0.9.4-source-adapters-v123");
   assert.equal(capabilities.focusPolicyRevision, "quiet-containment-only-v2");
   assert.equal(capabilities.contractVersion, "aku-browser.bridge.v2");
   assert.equal(capabilities.protocolMajor, 2);
@@ -583,7 +583,7 @@ test("AkuBridge exposes additive read-only capabilities and structured failures"
   assert.equal("updateCapabilities" in legacyCapabilities, false);
   assert.equal("focusPolicyRevision" in legacyCapabilities, false);
   assert.equal(legacyCapabilities.contractVersion, "aku-browser.bridge.v2");
-  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v25", linkedin: "linkedin-dom-v22", facebook: "facebook-dom-v19", instagram: "instagram-dom-v6" });
+  assert.deepEqual(capabilities.adapterVersions, { x: "x-dom-v25", linkedin: "linkedin-dom-v23", facebook: "facebook-dom-v19", instagram: "instagram-dom-v6" });
   assert.deepEqual(capabilities.mediaEvidenceAdapterVersions, {
     x: "x-response-evidence-v2",
     linkedin: "linkedin-main-world-video-v1",

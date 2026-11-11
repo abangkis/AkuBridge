@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v122";
+  const runtimeRevision = "source-adapters-v123";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -838,6 +838,7 @@
           Date.now() < operationDeadlineAtMs
         ) {
           const attemptsAvailable = retryBudget - qualityAttempt;
+          const recoveryOwnerId = block.platformId;
           qualityAttempt += 1;
           updateCaptureProgress("quality_retry", {
             source,
@@ -855,6 +856,7 @@
               candidateId: block.platformId,
               excludeRoot: quotedRoot,
               initialMedia: block.media,
+              contentKind: block.contentKind,
               mediaRootDetected: true,
               mediaEvidence,
               attemptsAvailable,
@@ -881,12 +883,16 @@
             capturedAt,
           );
           if (!block || targetSelection && xRecaptureBlockRejection(block, targetId)) break;
-          if (mediaEvidence && block.platformId !== mediaEvidence.candidateId) {
+          if ((mediaEvidence && block.platformId !== mediaEvidence.candidateId) ||
+              (typeof adapter.mediaAcquisition.isComplete === "function" &&
+                (!recoveryOwnerId || block.platformId !== recoveryOwnerId))) {
             mediaRecovery = null;
             candidateKey = provisionalCandidateKey(source, block, containerIndex, capturedAt);
           }
           if (mediaRecovery?.media?.length > 0) {
-            block.media = capturePolicy.normalizeMediaCandidates(
+            block.media = typeof adapter.mediaAcquisition.isComplete === "function"
+              ? mediaPostProcessor.process(source, block.media, mediaRecovery.media).media
+              : capturePolicy.normalizeMediaCandidates(
               source,
               [...block.media, ...mediaRecovery.media],
             );
@@ -928,6 +934,7 @@
             candidateId: block.platformId,
             excludeRoot: sourceAdapters.get(source).findQuotedRoot?.(container) ?? null,
             initialMedia: block.media,
+            contentKind: block.contentKind,
             mediaRootDetected: captureQuality.issues.some((issue) => issue.field === "media"),
             mediaEvidence,
             skipMediaWait: captureQuality.evidenceModalities.length > 0,
@@ -1119,6 +1126,9 @@
         ? mediaEvidence.signal === "owned"
         : hasPotentialMediaRoot(container, source, quotedRoot),
       mediaEvidence,
+      mediaPlaybackMissing: typeof adapter.mediaAcquisition.isComplete === "function" &&
+        !adapter.mediaAcquisition.isComplete(block.media, { contentKind: block.contentKind,
+          expectedKinds: mediaEvidence?.expectedKinds ?? [] }),
       timestampSignalDetected:
         selectorDetectedOutside(container, selectors.timestamp, quotedRoot) ||
         Boolean(block.presentation?.timestampText),

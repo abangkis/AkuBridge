@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "capture-quality-v3";
+  const runtimeRevision = "capture-quality-v4";
   if (globalThis.AkuCaptureQualityPolicy?.runtimeRevision === runtimeRevision) return;
 
   const profiles = Object.freeze({
@@ -106,6 +106,12 @@
         impact: expectation.impact ?? "evidence",
         attempt,
       }));
+    }
+
+    if (facts.mediaPlaybackMissing === true) {
+      issues.push(issue({ field: "media", code: "video_stream_not_resolved",
+        observedState: "pending_hydration", severity: "high", recoverable: true,
+        impact: "evidence", attempt }));
     }
 
     for (const expectation of profile.optionalDetectedFields) {

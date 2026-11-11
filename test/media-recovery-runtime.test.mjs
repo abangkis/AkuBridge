@@ -27,6 +27,23 @@ test("media acquisition accepts already complete primary media without retry", a
   assert.deepEqual([...result.audit.trace], ["primary_complete"]);
 });
 
+test("sources without the optional completeness hook retain primary and deadline behavior", async () => {
+  for (const source of ["x", "instagram"]) {
+    let lookups = 0;
+    const context = runtimeContext(() => { throw new Error("no fallback expected"); }, {
+      expectedKinds: ["video"],
+      extractStructuredCandidates: async () => { lookups++; return []; },
+    });
+    const primary = media("https://pbs.twimg.com/media/retained.jpg");
+    const result = await context.AkuMediaAcquisitionEngine.acquire({ source, container: {},
+      initialMedia: [primary], deadlineAtMs: Date.now() - 1, attemptsAvailable: 1,
+      extractPrimary: () => [], delay: async () => { throw new Error("no wait expected"); } });
+    assert.equal(result.audit.outcome, "primary_complete");
+    assert.equal(result.media[0].url, primary.url);
+    assert.equal(lookups, 1);
+  }
+});
+
 test("X keeps poster-only and HLS unresolved until deferred owned MP4 arrives", async () => {
   const context = runtimeContext(() => [], { expectedKinds: ["video"], useRealPolicy: true });
   const poster = media("https://pbs.twimg.com/ext_tw_video_thumb/23456/pu/img/poster.jpg", "video");

@@ -27,7 +27,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "linkedin",
     displayName: "LinkedIn",
-    adapterVersion: "linkedin-dom-v22",
+    adapterVersion: "linkedin-dom-v23",
     adapterScript: "adapters/linkedin-adapter.js",
     supportScripts: Object.freeze(["linkedin-permalink-policy.js", "linkedin-timestamp-policy.js"]),
     ...feedRoutes.linkedin,

@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "media-post-processor-v2";
+  const runtimeRevision = "media-post-processor-v3";
   const capturePolicy = globalThis.AkuBoundedCapturePolicy;
   if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
 
@@ -174,6 +174,19 @@
   }
 
   function withPlaybackStatus(source, media, audit) {
+    if (source === "linkedin") {
+      const strategy = globalThis.AkuSourceAdapters?.get?.(source)?.mediaAcquisition;
+      const expectedKinds = audit.expectedKinds ?? [];
+      if (strategy?.isComplete && !strategy.isComplete(media, { expectedKinds })) {
+        return { ...audit, outcome: "unresolved", limitation: "video_stream_not_resolved",
+          trace: [...new Set([...(audit.trace ?? []).filter(stage => !stage.endsWith("_complete")), "video_stream_not_resolved"])] };
+      }
+      if (strategy?.isComplete && audit.outcome === "unresolved" && expectedKinds.includes("video")) {
+        return { ...audit, outcome: "recovered", limitation: "",
+          trace: (audit.trace ?? []).filter(stage => stage !== "video_stream_not_resolved") };
+      }
+      return audit;
+    }
     if (source !== "x") return audit;
     const videos = media.filter(entry => entry.kind === "video");
     if (videos.some(entry => entry.playbackMode !== "inline" || !entry.playbackUrl)) {

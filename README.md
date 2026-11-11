@@ -1,7 +1,7 @@
 # AkuBridge
 
 Current source candidate identity: **`0.9.4`** / Chrome manifest
-**`0.9.4.0`** / runtime **`source-adapters-v122`**.
+**`0.9.4.0`** / runtime **`source-adapters-v123`**.
 
 The source candidate is pinned by AkuBrowser/contracts/source-candidate-identity.json.
 It does not qualify an installed or published release; historical release
@@ -90,7 +90,7 @@ reference still listed `x-dom-v23`.
 flowchart LR
     V["Generic visibility orchestrator<br/>Quiet or Adaptive"] --> DOM["Rendered source DOM"]
     DOM --> XA["X adapter<br/>x-dom-v24<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
-    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v22<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v2"]
+    DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v23<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v3"]
     DOM --> FA["Facebook adapter<br/>facebook-dom-v19<br/>facebook-media-acquisition-v2"]
     DOM --> IA["Instagram adapter<br/>instagram-dom-v6<br/>instagram-media-acquisition-v2"]
     XA --> R["Source-adapter registry"]
@@ -121,6 +121,23 @@ flowchart LR
     O --> SW["Service worker transport"]
     SW --> S["AkuSidecar validation<br/>and admission"]
 ```
+
+LinkedIn video completeness requires an allowlisted progressive MP4, not only a
+video cover. The adapter's optional `isComplete` hook makes cover-only videos
+retryable within the existing quality retry budget, then `usable_degraded` with
+an `unresolved` media audit if playback remains missing. Text and cover evidence
+are retained. Photos and the other source adapters keep their existing rules.
+Scoped Video.js requests share in-flight work only for the same container,
+post, and player nodes. Responses are accepted only while the original page,
+owner identity, and owned player membership remain current; cancellation,
+deadline expiry, or container/player replacement prevents cache ingestion.
+The request still has a maximum 220 ms wait and no added retry allowance.
+
+The regression fixture for post `7525912124464857088` contains a sanitized
+subset of its persisted observation: three snapshots contained the same
+470×264 cover and no playback URL. No original DOM was captured. Its tests use
+reconstructed DOM and separately synthetic player responses, so they prove
+the capture contracts without claiming a fresh LinkedIn capture or live playback.
 
 The generic visibility orchestrator owns the capture surface before parsing:
 Quiet catch-up uses a reusable, dedicated non-focused Chrome window. Adaptive

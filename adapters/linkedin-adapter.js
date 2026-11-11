@@ -41,12 +41,11 @@
     ...baseMediaEvidenceRuntime,
     responseDiagnostics: () => lastLiveMediaDiagnostics,
   }) : null;
-  let liveMediaScan = null;
-  let liveMediaScanStartedAtMs = 0;
+  const liveMediaScans = new WeakMap();
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v22",
+    version: "linkedin-dom-v23",
     maxBlocksPerSnapshot: 8,
     scrollContext: "nearest_scrollable",
     scrollRootSelectors: Object.freeze(['[data-testid="mainFeed"]', "main", "#workspace"]),
@@ -125,11 +124,13 @@
       pendingContentPattern: /^(?:new posts?|show new posts?)$/i,
     }),
     mediaAcquisition: Object.freeze({
-      version: "linkedin-media-acquisition-v2",
+      version: "linkedin-media-acquisition-v3",
       maxAttempts: 1,
       settleMs: 900,
       quietRecovery: "bounded_dom",
       detectExpectedKinds: detectLinkedInExpectedMediaKinds,
+      isComplete: linkedInMediaComplete,
+      createOwnerGuard: linkedInOwnerGuard,
       extractStructuredCandidates: collectLinkedInStructuredMediaCandidates,
       extractCandidates: extractLinkedInRecoveryCandidates,
     }),
@@ -351,8 +352,35 @@
     });
   }
 
-  async function collectLinkedInStructuredMediaCandidates(container, { candidateId } = {}) {
+  function linkedInMediaComplete(media, { contentKind, expectedKinds = [] } = {}) {
+    const values = Array.isArray(media) ? media : [];
+    const expectsVideo = contentKind === "video" || expectedKinds.includes("video") ||
+      values.some(value => value?.kind === "video");
+    return expectsVideo
+      ? values.some(value => value?.playbackMode === "inline" && normalizeLinkedInStructuredMedia(value))
+      : true;
+  }
+
+  function linkedInOwnerGuard(container, candidateId) {
+    const expected = linkedinPlatformIdFromCandidates([candidateId]);
+    const initial = linkedinCandidateIdFromContainer(container);
+    return () => {
+      const current = linkedinCandidateIdFromContainer(container);
+      return container?.isConnected !== false && Boolean(expected) && initial === expected && current === expected;
+    };
+  }
+
+  async function collectLinkedInStructuredMediaCandidates(container, {
+    candidateId, deadlineAtMs = Number.POSITIVE_INFINITY, signal,
+  } = {}) {
     const normalizedCandidateId = linkedinPlatformIdFromCandidates([candidateId]);
+    const pageUrl = globalThis.location?.href ?? globalThis.window?.location?.href;
+    const matchesOwner = linkedInOwnerGuard(container, normalizedCandidateId);
+    const ownerValid = () => {
+      return !signal?.aborted && Date.now() < deadlineAtMs && matchesOwner() &&
+        pageUrl === (globalThis.location?.href ?? globalThis.window?.location?.href);
+    };
+    if (!normalizedCandidateId || !ownerValid()) return [];
     const cached = () => (
       normalizedCandidateId
         ? mediaEvidenceRuntime?.lookup?.(normalizedCandidateId) ?? []
@@ -370,15 +398,27 @@
     const runtime = globalThis.chrome?.runtime;
     if (typeof runtime?.sendMessage !== "function") return cached();
 
-    const now = Date.now();
-    if (!liveMediaScan || now - liveMediaScanStartedAtMs > 1_000) {
-      liveMediaScanStartedAtMs = now;
-      const playerIds = [...container.querySelectorAll?.("[data-vjs-player][id]") ?? []]
-        .map((element) => String(element.id ?? "").trim().slice(0, 240))
-        .filter(Boolean)
+    const readPlayers = () => [...container.querySelectorAll?.("[data-vjs-player][id]") ?? []]
+        .filter(element => {
+          const owner = element.closest?.('[data-view-name="feed-full-update"], .feed-shared-update-v2, [role="listitem"], article');
+          return !owner || owner === container || linkedinCandidateIdFromContainer(owner) === normalizedCandidateId;
+        })
+        .filter(element => String(element.id ?? "").trim())
         .slice(0, 4);
-      if (!normalizedCandidateId || playerIds.length === 0) return cached();
-      liveMediaScan = boundedLinkedInMediaRequest(runtime, normalizedCandidateId, playerIds).then((outcome) => {
+    const players = readPlayers();
+    const playerIds = players.map(element => String(element.id).trim().slice(0, 240));
+    if (playerIds.length === 0) return cached();
+    const key = JSON.stringify([normalizedCandidateId, playerIds]);
+    const samePlayers = current => current.length === players.length && current.every((player, index) => player === players[index]);
+    const validScope = () => ownerValid() && samePlayers(readPlayers()) &&
+      JSON.stringify(players.map(element => String(element.id).trim().slice(0, 240))) === JSON.stringify(playerIds);
+    let scan = liveMediaScans.get(container);
+    if (!scan || scan.key !== key || !samePlayers(scan.players) ||
+        scan.deadlineAtMs !== deadlineAtMs || scan.signal !== signal) {
+      scan = { key, players, deadlineAtMs, signal };
+      scan.promise = boundedLinkedInMediaRequest(runtime, normalizedCandidateId, playerIds, {
+        deadlineAtMs, signal,
+      }).then((outcome) => {
         const response = outcome.response;
         lastLiveMediaDiagnostics = Object.freeze({
           status: outcome.status,
@@ -386,7 +426,12 @@
           ...(response?.evidence?.diagnostics ?? {}),
           accepted: response?.ok === true,
         });
-        if (response?.ok && response.evidence) mediaEvidenceRuntime?.ingestStructured?.(response.evidence);
+        if (validScope() && response?.ok && response.evidence) {
+          // A scoped response may enrich only its requested owner, never a neighbor.
+          mediaEvidenceRuntime?.ingestStructured?.({ candidates: response.evidence.candidates?.filter(
+            value => linkedinPlatformIdFromCandidates([value?.candidateId]) === normalizedCandidateId,
+          ) ?? [] });
+        }
         return response;
       }).catch((error) => {
         lastLiveMediaDiagnostics = Object.freeze({
@@ -394,28 +439,38 @@
           reason: String(error?.message ?? error).slice(0, 200),
         });
         return null;
+      }).finally(() => {
+        if (liveMediaScans.get(container) === scan) liveMediaScans.delete(container);
       });
+      liveMediaScans.set(container, scan);
     }
-    await liveMediaScan;
-    return cached();
+    await scan.promise;
+    return validScope() ? cached() : [];
   }
 
-  function boundedLinkedInMediaRequest(runtime, candidateId, playerIds) {
+  function boundedLinkedInMediaRequest(runtime, candidateId, playerIds, { deadlineAtMs, signal }) {
     const startedAtMs = performance.now();
     let timer = null;
+    let onAbort;
+    if (signal?.aborted || Date.now() >= deadlineAtMs) return Promise.resolve({ status: "cancelled", response: null, elapsedMs: 0 });
     const timeout = new Promise((resolve) => {
-      timer = setTimeout(() => resolve({ status: "timeout", response: null }), 220);
+      timer = setTimeout(() => resolve({ status: "timeout", response: null }), Math.min(220, deadlineAtMs - Date.now()));
+    });
+    const aborted = new Promise((resolve) => {
+      onAbort = () => resolve({ status: "cancelled", response: null });
+      signal?.addEventListener("abort", onAbort, { once: true });
     });
     const request = Promise.resolve(runtime.sendMessage({
       type: "AKU_LINKEDIN_COLLECT_STRUCTURED_MEDIA",
       candidateIds: [candidateId],
       playerIds,
     })).then((response) => ({ status: "completed", response }));
-    return Promise.race([request, timeout]).then((outcome) => ({
+    return Promise.race([request, timeout, aborted]).then((outcome) => ({
       ...outcome,
       elapsedMs: Math.max(0, Math.round((performance.now() - startedAtMs) * 10) / 10),
     })).finally(() => {
       if (timer !== null) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
     });
   }
 
