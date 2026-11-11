@@ -6,6 +6,7 @@ import { resolveLinkedInStructuredMediaInMainWorld } from "../linkedin-main-worl
 
 const root = new URL("../", import.meta.url);
 const persisted = JSON.parse(fs.readFileSync(new URL("fixtures/linkedin-7525912124464857088-cover-only.json", import.meta.url)));
+const detailRecaptures = JSON.parse(fs.readFileSync(new URL("fixtures/linkedin-7525912124464857088-video-placeholder.json", import.meta.url)));
 const target = persisted.block.platformId;
 const other = "linkedin:ugcpost:7525912124464857999";
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -25,6 +26,8 @@ function reconstructedPost(id = target) {
       if (selector === "[data-vjs-player][id]") return post.players;
       if (selector === "[data-urn], [data-id], a[href]") return [];
       if (selector === "video, [data-view-name*='video' i], [aria-label*='video' i]") return post.hasVideo ? [{}] : [];
+      if (post.placeholder && (selector === "img" || selector === "video" ||
+          selector.includes("video, [data-test-document-container]"))) return [];
       if (selector === ".update-components-image, .feed-shared-image") return [];
       if (selector === "[data-test-document-container], iframe[title*='document' i]" || selector === "time") return [];
       return [{ closest: () => null, getBoundingClientRect: () => ({ width: 470, height: 264 }) }];
@@ -56,10 +59,13 @@ function runtime(send = async () => ({ ok: true, evidence: { candidates: [] } })
   return { context, adapter, requests, delays, lookup, cache };
 }
 
-async function windowedCapture({ send, budget = 1, media = persisted.block.media, contentKind = "video", reextract } = {}) {
+async function windowedCapture({ send, budget = 1, capturedBlock = persisted.block,
+  media = capturedBlock.media, contentKind = capturedBlock.contentKind, reextract,
+  placeholder = false, deadlineMs = 5_000, legacyFallback = false } = {}) {
   const r = runtime(send);
   const post = reconstructedPost();
-  post.hasVideo = contentKind === "video";
+  post.hasVideo = placeholder || contentKind === "video";
+  post.placeholder = placeholder;
   let extractions = 0;
   Object.assign(r.context, {
     sourceAdapters: r.context.AkuSourceAdapters, capturePolicy: r.context.AkuBoundedCapturePolicy,
@@ -71,20 +77,28 @@ async function windowedCapture({ send, budget = 1, media = persisted.block.media
     expandSourceContent: () => null, restoreSourceContent: () => {},
     extractBlock: () => {
       extractions++;
-      return reextract?.(post, extractions) ?? { ...clone(persisted.block), media: clone(media), contentKind };
+      return reextract?.(post, extractions) ?? { ...clone(capturedBlock), media: clone(media), contentKind };
     },
     findMedia: () => clone(media), delay: async ms => { r.delays.push(ms); },
     compactText: value => String(value ?? "").trim(), normalizeCandidateDiagnostics: () => null,
+    uniqueElements: values => [...new Set(values)],
     readScrollPosition: () => ({ y: 0 }), viewportHeight: () => 900,
   });
-  const source = fs.readFileSync(new URL("content-script.js", root), "utf8");
+  let source = fs.readFileSync(new URL("content-script.js", root), "utf8");
+  if (legacyFallback) {
+    // Revert only the quality fallback in memory to prove this fixture detects the original miss.
+    const previous = source;
+    source = source.replace(/expectedKinds: mediaEvidence\?\.expectedKinds \?\? adapter\.mediaAcquisition\.detectExpectedKinds\(container, \{\s*excludeRoot: quotedRoot, uniqueElements,\s*\}\)/,
+      "expectedKinds: mediaEvidence?.expectedKinds ?? []");
+    assert.notEqual(source, previous);
+  }
   vm.runInContext(source.slice(source.indexOf("  async function captureVisibleSnapshot("),
     source.indexOf("  function assertNoXAccessChallenge(")), r.context);
   vm.runInContext(source.slice(source.indexOf("  function evaluateBlockQuality("),
     source.indexOf("  function extractBlock(")), r.context);
   const snapshot = await r.context.captureVisibleSnapshot("linkedin",
     { maxBlocksPerSnapshot: 3, qualityRetryBudget: budget, qualityRetrySettleMs: 100 },
-    null, Date.now() + 5_000, "same_window", null);
+    null, Date.now() + deadlineMs, "same_window", null);
   return { ...r, snapshot };
 }
 
@@ -103,18 +117,73 @@ test("persisted LinkedIn cover-only video with valid text consumes one bounded r
   assert.equal(requests.length, 2);
 });
 
+test("actual detail recapture placeholders trigger the existing retry even with text and contentKind post", async () => {
+  for (const fixture of detailRecaptures.recaptures) {
+    const legacy = await windowedCapture({ capturedBlock: fixture.block, placeholder: true,
+      budget: fixture.coverage.captureQuality.retryBudget, legacyFallback: true });
+    assert.equal(legacy.snapshot.blocks[0].captureQuality.verdict, "complete");
+    assert.equal(legacy.snapshot.blocks[0].mediaRecovery.attempts, 0);
+    assert.deepEqual(legacy.delays, []);
+    const r = await windowedCapture({ capturedBlock: fixture.block, placeholder: true,
+      budget: fixture.coverage.captureQuality.retryBudget });
+    const block = r.snapshot.blocks[0];
+    assert.equal(block.text, fixture.block.text);
+    assert.equal(block.contentKind, "post");
+    assert.equal(block.media.length, 0);
+    assert.equal(block.captureQuality.verdict, "usable_degraded");
+    assert.equal(block.captureQuality.attempt, 1);
+    assert.equal(block.mediaRecovery.outcome, "unresolved");
+    assert.equal(block.mediaRecovery.attempts, 1);
+    assert.deepEqual(r.delays, [100]);
+    assert.equal(r.requests.length, 2);
+  }
+});
+
+test("detail placeholder retry can recover the correctly owned synthetic player", async () => {
+  let calls = 0;
+  const r = await windowedCapture({ capturedBlock: detailRecaptures.recaptures[1].block, placeholder: true,
+    send: async request => ++calls === 1 ? { ok: true, evidence: { candidates: [] } }
+      : scopedSyntheticResponse(request) });
+  const block = r.snapshot.blocks[0];
+  assert.equal(block.captureQuality.verdict, "complete");
+  assert.equal(block.mediaRecovery.outcome, "recovered");
+  assert.equal(block.mediaRecovery.attempts, 1);
+  assert.equal(block.platformId, target);
+  assert.equal(block.media[0].playbackUrl, syntheticVideo(target).playbackUrl);
+  assert.equal(r.cache(other).length, 0);
+  assert.deepEqual(r.delays, [100]);
+});
+
+test("detail placeholder does not expand quota or start a settle beyond its deadline", async () => {
+  for (const limits of [{ budget: 0 }, { deadlineMs: 50 }]) {
+    const r = await windowedCapture({ capturedBlock: detailRecaptures.recaptures[1].block,
+      placeholder: true, ...limits });
+    const block = r.snapshot.blocks[0];
+    assert.equal(block.captureQuality.verdict, "usable_degraded");
+    assert.equal(block.mediaRecovery.outcome, "unresolved");
+    assert.equal(block.mediaRecovery.attempts, 0);
+    assert.equal(block.text, detailRecaptures.recaptures[1].block.text);
+    assert.deepEqual(r.delays, []);
+    assert.equal(r.requests.length, 1);
+  }
+});
+
+function scopedSyntheticResponse(request) {
+  const post = reconstructedPost(request.candidateIds[0]);
+  post.players[0].id = request.playerIds[0];
+  const evidence = resolveLinkedInStructuredMediaInMainWorld({ ...request,
+    document: { querySelectorAll: selector => selector === "[data-vjs-player]" ? post.players : [] },
+    videojs: { getPlayer: () => ({ currentSources: () => [{ src: syntheticVideo(target).playbackUrl,
+      poster: persisted.block.media[0].url }] }) },
+  });
+  return { ok: true, evidence };
+}
+
 test("Windowed actual adapter/quality/acquisition recovers only the scoped player within existing retry", async () => {
   let calls = 0;
   const result = await windowedCapture({ send: async request => {
     if (++calls === 1) return { ok: true, evidence: { candidates: [] } };
-    const post = reconstructedPost(request.candidateIds[0]);
-    post.players[0].id = request.playerIds[0];
-    const evidence = resolveLinkedInStructuredMediaInMainWorld({ ...request,
-      document: { querySelectorAll: selector => selector === "[data-vjs-player]" ? post.players : [] },
-      videojs: { getPlayer: () => ({ currentSources: () => [{ src: syntheticVideo(target).playbackUrl,
-        poster: persisted.block.media[0].url }] }) },
-    });
-    return { ok: true, evidence };
+    return scopedSyntheticResponse(request);
   } });
   const block = result.snapshot.blocks[0];
   assert.equal(block.captureQuality.verdict, "complete");

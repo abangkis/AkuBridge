@@ -1,0 +1,300 @@
+{
+  "origin": {
+    "kind": "persisted_recapture_subset",
+    "redaction": "URL query values removed. No original DOM was captured; tests reconstruct a video-placeholder DOM and use separately synthetic player responses."
+  },
+  "recaptures": [
+    {
+      "id": "recapture_2a642c0999bb36129ee0b9933178448b",
+      "capturedAt": "2026-11-11T12:19:20.139Z",
+      "pageUrl": "https://www.linkedin.com/feed/update/urn:li:ugcPost:7525912124464857088/",
+      "block": {
+        "platformId": "linkedin:ugcpost:7525912124464857088",
+        "permalink": "https://www.linkedin.com/feed/update/urn:li:ugcPost:7525912124464857088/",
+        "author": "William Faucher",
+        "text": "Ok so. #UnrealEngine 5.9 is pretty sick. You can now build a web browser version of your game, so I built EasyWaterscape's playable demo... and it runs at a rock solid 60fps, @ high settings, in chrome, @ 4586 x 2372. (200% screen percentage)\n\nWhat the heck\n\n#DellTech #DellProPrecision #NVIDIA\nCindy Olivo Crystal Cook Logan Lawler",
+        "contentKind": "post",
+        "media": [],
+        "mediaRecovery": {
+          "acquisitionStage": "none",
+          "attempts": 0,
+          "candidateDiagnostics": [
+            {
+              "acceptedCount": 0,
+              "candidateCount": 2,
+              "duplicateCount": 0,
+              "rejectedGeometryCount": 2,
+              "rejectedHostCount": 0,
+              "stage": "initial_dom",
+              "trustedUnknownGeometryAcceptedCount": 0,
+              "urlMissingCount": 0,
+              "urlPresentCount": 2,
+              "urlSources": {
+                "src_property": 2
+              }
+            },
+            {
+              "acceptedCount": 0,
+              "candidateCount": 0,
+              "duplicateCount": 0,
+              "rejectedGeometryCount": 0,
+              "rejectedHostCount": 0,
+              "stage": "structured_state",
+              "trustedUnknownGeometryAcceptedCount": 0,
+              "urlMissingCount": 0,
+              "urlPresentCount": 0,
+              "urlSources": {}
+            }
+          ],
+          "engineVersion": "media-acquisition-engine-v5",
+          "expectedKinds": [
+            "video"
+          ],
+          "foregroundRequired": false,
+          "limitation": "video_stream_not_resolved",
+          "method": "none",
+          "outcome": "unresolved",
+          "policyVersion": "media-acquisition-v2",
+          "postProcessorVersion": "media-post-processor-v3",
+          "recoveredCount": 0,
+          "source": "linkedin",
+          "strategyVersion": "linkedin-media-acquisition-v3",
+          "trace": [
+            "primary_missing",
+            "media_root_detected",
+            "attempt_unavailable",
+            "video_stream_not_resolved"
+          ],
+          "visibilityRequirement": "none"
+        },
+        "captureQuality": {
+          "attempt": 0,
+          "candidateKey": "linkedin:ugcpost:7525912124464857088",
+          "contentFamily": "feed_post",
+          "evidenceModalities": [
+            "text"
+          ],
+          "identityComparison": null,
+          "identitySource": "platform_id",
+          "issues": [
+            {
+              "attempt": 0,
+              "code": "pending_hydration",
+              "field": "avatarUrl",
+              "impact": "presentation",
+              "observedState": "pending_hydration",
+              "recoverable": false,
+              "severity": "low"
+            }
+          ],
+          "profile": "social-post-v2",
+          "score": 0.99,
+          "textCompleteness": "no_collapse_observed",
+          "verdict": "complete"
+        }
+      },
+      "coverage": {
+        "adapterVersion": "linkedin-dom-v23",
+        "captureVisibilityMode": "managed_window",
+        "captureQuality": {
+          "candidateReportCount": 2,
+          "issueCounts": {
+            "avatarUrl:pending_hydration": 2
+          },
+          "profile": "social-post-v2",
+          "retryAttempts": 0,
+          "retryBudget": 1,
+          "verdict": "complete",
+          "verdictCounts": {
+            "complete": 2,
+            "invalid": 0,
+            "retryable": 0,
+            "usable_degraded": 0
+          }
+        },
+        "structuredMediaEvidence": {
+          "acceptedCandidateCount": 0,
+          "avatarCache": null,
+          "cache": {
+            "accepted": 0,
+            "candidateCount": 0,
+            "evicted": 0,
+            "expired": 0,
+            "maxCandidates": 128,
+            "maxMediaPerCandidate": 20,
+            "rejected": 0,
+            "runtimeRevision": "media-post-processor-v3",
+            "source": "linkedin",
+            "ttlMs": 600000
+          },
+          "deferred": {
+            "enrichedBlockCount": 0,
+            "received": true,
+            "requested": true,
+            "structuredBlockCount": 0
+          },
+          "resolver": {
+            "assignedCandidateCount": 0,
+            "bounded": false,
+            "candidateCount": 0,
+            "candidateURNCount": 1,
+            "collection": {
+              "budgetMs": 250,
+              "elapsedMs": 29.1,
+              "mode": "parallel_deferred",
+              "runtimeRevision": "structured-media-collection-runtime-v1",
+              "status": "completed"
+            },
+            "directPlaybackURLCount": 0,
+            "playerRootCount": 1,
+            "rejectedAdaptiveURLCount": 0,
+            "resolvedPlayerCount": 0,
+            "traversedNodeCount": 0
+          },
+          "responseObserver": null,
+          "source": "linkedin"
+        }
+      }
+    },
+    {
+      "id": "recapture_83b22369153931a1d427d0d19978743b",
+      "capturedAt": "2026-11-11T12:24:29.730Z",
+      "pageUrl": "https://www.linkedin.com/feed/update/urn:li:ugcPost:7525912124464857088/",
+      "block": {
+        "platformId": "linkedin:ugcpost:7525912124464857088",
+        "permalink": "https://www.linkedin.com/feed/update/urn:li:ugcPost:7525912124464857088/",
+        "author": "William Faucher",
+        "text": "Ok so. #UnrealEngine 5.9 is pretty sick. You can now build a web browser version of your game, so I built EasyWaterscape's playable demo... and it runs at a rock solid 60fps, @ high settings, in chrome, @ 4586 x 2372. (200% screen percentage)\n\nWhat the heck\n\n#DellTech #DellProPrecision #NVIDIA\nCindy Olivo Crystal Cook Logan Lawler",
+        "contentKind": "post",
+        "media": [],
+        "mediaRecovery": {
+          "acquisitionStage": "none",
+          "attempts": 0,
+          "candidateDiagnostics": [
+            {
+              "acceptedCount": 0,
+              "candidateCount": 2,
+              "duplicateCount": 0,
+              "rejectedGeometryCount": 2,
+              "rejectedHostCount": 0,
+              "stage": "initial_dom",
+              "trustedUnknownGeometryAcceptedCount": 0,
+              "urlMissingCount": 0,
+              "urlPresentCount": 2,
+              "urlSources": {
+                "current_src": 2
+              }
+            },
+            {
+              "acceptedCount": 0,
+              "candidateCount": 0,
+              "duplicateCount": 0,
+              "rejectedGeometryCount": 0,
+              "rejectedHostCount": 0,
+              "stage": "structured_state",
+              "trustedUnknownGeometryAcceptedCount": 0,
+              "urlMissingCount": 0,
+              "urlPresentCount": 0,
+              "urlSources": {}
+            }
+          ],
+          "engineVersion": "media-acquisition-engine-v5",
+          "expectedKinds": [
+            "video"
+          ],
+          "foregroundRequired": false,
+          "limitation": "video_stream_not_resolved",
+          "method": "none",
+          "outcome": "unresolved",
+          "policyVersion": "media-acquisition-v2",
+          "postProcessorVersion": "media-post-processor-v3",
+          "recoveredCount": 0,
+          "source": "linkedin",
+          "strategyVersion": "linkedin-media-acquisition-v3",
+          "trace": [
+            "primary_missing",
+            "media_root_detected",
+            "attempt_unavailable",
+            "video_stream_not_resolved"
+          ],
+          "visibilityRequirement": "none"
+        },
+        "captureQuality": {
+          "attempt": 0,
+          "candidateKey": "linkedin:ugcpost:7525912124464857088",
+          "contentFamily": "feed_post",
+          "evidenceModalities": [
+            "text"
+          ],
+          "identityComparison": null,
+          "identitySource": "platform_id",
+          "issues": [],
+          "profile": "social-post-v2",
+          "score": 1,
+          "textCompleteness": "no_collapse_observed",
+          "verdict": "complete"
+        }
+      },
+      "coverage": {
+        "adapterVersion": "linkedin-dom-v23",
+        "captureVisibilityMode": "managed_window_foreground",
+        "captureQuality": {
+          "candidateReportCount": 2,
+          "issueCounts": {},
+          "profile": "social-post-v2",
+          "retryAttempts": 0,
+          "retryBudget": 1,
+          "verdict": "complete",
+          "verdictCounts": {
+            "complete": 2,
+            "invalid": 0,
+            "retryable": 0,
+            "usable_degraded": 0
+          }
+        },
+        "structuredMediaEvidence": {
+          "acceptedCandidateCount": 0,
+          "avatarCache": null,
+          "cache": {
+            "accepted": 0,
+            "candidateCount": 0,
+            "evicted": 0,
+            "expired": 0,
+            "maxCandidates": 128,
+            "maxMediaPerCandidate": 20,
+            "rejected": 0,
+            "runtimeRevision": "media-post-processor-v3",
+            "source": "linkedin",
+            "ttlMs": 600000
+          },
+          "deferred": {
+            "enrichedBlockCount": 0,
+            "received": true,
+            "requested": true,
+            "structuredBlockCount": 0
+          },
+          "resolver": {
+            "assignedCandidateCount": 0,
+            "bounded": false,
+            "candidateCount": 0,
+            "candidateURNCount": 1,
+            "collection": {
+              "budgetMs": 250,
+              "elapsedMs": 96.4,
+              "mode": "parallel_deferred",
+              "runtimeRevision": "structured-media-collection-runtime-v1",
+              "status": "completed"
+            },
+            "directPlaybackURLCount": 0,
+            "playerRootCount": 1,
+            "rejectedAdaptiveURLCount": 0,
+            "resolvedPlayerCount": 0,
+            "traversedNodeCount": 0
+          },
+          "responseObserver": null,
+          "source": "linkedin"
+        }
+      }
+    }
+  ]
+}

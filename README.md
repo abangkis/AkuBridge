@@ -1,7 +1,7 @@
 # AkuBridge
 
 Current source candidate identity: **`0.9.4`** / Chrome manifest
-**`0.9.4.0`** / runtime **`source-adapters-v123`**.
+**`0.9.4.0`** / runtime **`source-adapters-v124`**.
 
 The source candidate is pinned by AkuBrowser/contracts/source-candidate-identity.json.
 It does not qualify an installed or published release; historical release
@@ -138,6 +138,12 @@ subset of its persisted observation: three snapshots contained the same
 470×264 cover and no playback URL. No original DOM was captured. Its tests use
 reconstructed DOM and separately synthetic player responses, so they prove
 the capture contracts without claiming a fresh LinkedIn capture or live playback.
+The detail-recapture fixture also preserves the later background and foreground
+results with `contentKind: post`, empty media, and a detected video placeholder.
+Quality uses the adapter's expected-kind detector when no shared observation is
+available, so this state can consume the existing video retry instead of being
+declared complete from text alone. The test reverses only that fallback in memory
+to demonstrate the original zero-retry behavior; player responses remain synthetic.
 
 The generic visibility orchestrator owns the capture surface before parsing:
 Quiet catch-up uses a reusable, dedicated non-focused Chrome window. Adaptive

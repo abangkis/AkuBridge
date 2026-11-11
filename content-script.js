@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v123";
+  const runtimeRevision = "source-adapters-v124";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -1128,7 +1128,9 @@
       mediaEvidence,
       mediaPlaybackMissing: typeof adapter.mediaAcquisition.isComplete === "function" &&
         !adapter.mediaAcquisition.isComplete(block.media, { contentKind: block.contentKind,
-          expectedKinds: mediaEvidence?.expectedKinds ?? [] }),
+          expectedKinds: mediaEvidence?.expectedKinds ?? adapter.mediaAcquisition.detectExpectedKinds(container, {
+            excludeRoot: quotedRoot, uniqueElements,
+          }) }),
       timestampSignalDetected:
         selectorDetectedOutside(container, selectors.timestamp, quotedRoot) ||
         Boolean(block.presentation?.timestampText),
