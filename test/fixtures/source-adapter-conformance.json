@@ -12,7 +12,12 @@
       "avatarUrl": "https://pbs.twimg.com/profile_images/ian-avatar.jpg",
       "text": "A quoted post body preserved as nested source evidence.",
       "permalink": null,
-      "publishedAt": "2026-07-13T00:00:00.000Z",
+      "publishedAt": null,
+      "presentation": {
+        "timestampSource": "unavailable",
+        "timestampEstimated": false,
+        "timestampPrecision": "unknown"
+      },
       "links": [],
       "media": [
         {

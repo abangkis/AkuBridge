@@ -155,6 +155,7 @@
     },
     findAuthor: findXAuthor,
     resolveIdentity,
+    extractTimestamp: extractXTimestamp,
     findPermalinkDetails: (container) => {
       const url = wrappedPostPermalink(container);
       return url ? { url, source: "post_wrapper" } : null;
@@ -254,6 +255,7 @@
       normalizeHttpUrl,
       structuredText,
       findMedia,
+      capturedAt = new Date().toISOString(),
     }) => {
       const quoted = findQuotedPostContainer(container);
       if (!quoted) return null;
@@ -274,13 +276,17 @@
       );
       const avatar = quoted.querySelector('[data-testid^="UserAvatar-Container-"] img') ??
         (wrapped ? firstOwnElement(quoted, wrappedAvatarSelector) : null);
+      const timestamp = identityConflictReason
+        ? { publishedAt: null, source: "unavailable", estimated: false, precision: "unknown" }
+        : extractXTimestamp(quoted, { permalink, capturedAt, allowQuoteAnchors: true });
       return {
         author: findXAuthor(quoted, { compactText }),
         avatarUrl: imageUrls(avatar).map(normalizeHttpUrl).find(Boolean) ?? null,
         text,
         permalink,
         ...(identityConflictReason ? { identityConflictReason } : {}),
-        publishedAt: time?.getAttribute?.("datetime") || null,
+        publishedAt: timestamp.publishedAt,
+        presentation: timestampPresentation(timestamp),
         links: [...(textRoot?.querySelectorAll("a[href]") ?? [])]
           .map((anchor) => ({
             text: compactText(anchor.innerText).slice(0, 300),
@@ -469,6 +475,70 @@ function imageUrls(image) {
   }
 
   function statusID(url) { return String(url || "").match(/\/status\/(\d+)/)?.[1] || ""; }
+
+  function estimateXTimestamp(value, capturedAt) {
+    const text = String(value ?? "").trim().replace(/^[·•]\s*|\s*[·•]$/g, "");
+    const match = /^(\d{1,4})\s*([smhdw])$/i.exec(text);
+    const now = /^now$/i.test(text);
+    const capturedMs = Date.parse(capturedAt);
+    if ((!match && !now) || match && Number(match[1]) < 1 || !Number.isFinite(capturedMs)) return null;
+    const unit = now ? "s" : match[2].toLowerCase();
+    const duration = { s: 1000, m: 60000, h: 3600000, d: 86400000, w: 604800000 }[unit];
+    return { publishedAt: new Date(capturedMs - (now ? 0 : Number(match[1])) * duration).toISOString(),
+      source: "relative_text_estimate", estimated: true,
+      precision: { s: "second", m: "minute", h: "hour", d: "day", w: "week" }[unit], text, capturedAt };
+  }
+
+  function timestampPresentation(value) {
+    return { timestampSource: value.source, timestampEstimated: value.estimated,
+      timestampPrecision: value.precision,
+      ...(value.text ? { timestampText: value.text } : {}),
+      ...(value.estimated ? { timestampCapturedAt: value.capturedAt } : {}) };
+  }
+
+  // Only an identified post's own timestamp anchor or owned author header can
+  // supply time. Post text, quotes and surrounding articles have no authority.
+  function extractXTimestamp(container, { permalink, capturedAt = new Date().toISOString(), allowQuoteAnchors = false } = {}) {
+    const unavailable = source => ({ publishedAt: null, source, estimated: false, precision: "unknown" });
+    const quote = findQuotedPostContainer(container);
+    const identity = resolveIdentity(container, quote, allowQuoteAnchors);
+    const owner = canonicalizeXPermalink(permalink || identity?.permalink || ownPostURL(container, quote));
+    if (!owner || identity && (identity.status !== "identified" || identity.permalink !== owner)) return unavailable("unavailable");
+    const wrapped = wrappedPostPermalink(container);
+    if (wrapped && wrapped !== owner) return unavailable("unavailable");
+    const body = findXTextRoot(container, quote);
+    const isOwn = node => !quote?.contains?.(node) && !body?.contains?.(node) &&
+      (!node.closest?.("article") || node.closest("article") === (container.matches?.("article") ? container : container.closest?.("article")));
+    const headers = [...container.querySelectorAll(`${legacyAuthorSelector}, .x-middot-group`)].filter(isOwn);
+    const native = new Map();
+    for (const time of container.querySelectorAll("time")) {
+      if (!isOwn(time)) continue;
+      const anchor = time.closest?.("a[href]");
+      const anchorURL = canonicalizeXPermalink(anchor?.href);
+      const inHeader = headers.some(header => header.contains(time));
+      if (anchor ? anchorURL !== owner : !inHeader) continue;
+      const value = time.getAttribute?.("datetime") || time.dateTime;
+      const ms = value ? Date.parse(value) : NaN;
+      if (Number.isFinite(ms)) native.set(ms, new Date(ms).toISOString());
+    }
+    if (native.size > 1) return unavailable("conflicting_native_time");
+    if (native.size === 1) return { publishedAt: native.values().next().value,
+      source: "native_datetime", estimated: false, precision: "exact" };
+    const relative = new Map();
+    for (const header of headers) {
+      const nodes = [...header.querySelectorAll("time, span, a"),
+        ...[...(header.childNodes ?? [])].filter(node => node.nodeType === 3)];
+      for (const node of nodes) {
+        if (!isOwn(node)) continue;
+        const anchor = node.closest?.("a[href]");
+        if (anchor && canonicalizeXPermalink(anchor.href) !== owner || node.querySelector?.("a[href]")) continue;
+        const estimate = estimateXTimestamp(node.textContent ?? node.innerText ?? node.nodeValue, capturedAt);
+        if (estimate) relative.set(estimate.publishedAt, estimate);
+      }
+    }
+    if (relative.size > 1) return unavailable("conflicting_relative_time");
+    return relative.values().next().value ?? unavailable("unavailable");
+  }
 
   // Reply target identity must be explicit. Account mentions and card adjacency
   // cannot identify the replied-to post.

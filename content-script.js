@@ -1244,17 +1244,24 @@
       normalizeHttpUrl,
       normalizeHttpsUrl,
     }) ?? [];
-    const nativePublishedAt = normalizeDate(time?.getAttribute("datetime"));
-    const relativeTimestamp = !nativePublishedAt
+    const sourceTimestamp = adapter.extractTimestamp?.(container, { permalink, capturedAt });
+    const nativePublishedAt = sourceTimestamp
+      ? sourceTimestamp.estimated ? null : sourceTimestamp.publishedAt
+      : normalizeDate(time?.getAttribute("datetime"));
+    const relativeTimestamp = sourceTimestamp
+      ? sourceTimestamp.estimated ? sourceTimestamp : null
+      : !nativePublishedAt
       ? adapter.estimateRelativeTimestamp?.(presentation.timestampText, capturedAt) ?? null
       : null;
-    presentation.timestampSource = nativePublishedAt
+    presentation.timestampSource = sourceTimestamp?.source ?? (nativePublishedAt
       ? "native_datetime"
       : relativeTimestamp
         ? "relative_text_estimate"
         : presentation.promoted
           ? "not_exposed_promoted"
-          : "unavailable";
+          : "unavailable");
+    if (sourceTimestamp?.text) presentation.timestampText = sourceTimestamp.text;
+    if (sourceTimestamp?.estimated) presentation.timestampCapturedAt = capturedAt;
     presentation.timestampEstimated = Boolean(relativeTimestamp);
     presentation.timestampPrecision = relativeTimestamp?.precision
       ?? (nativePublishedAt ? "exact" : "unknown");
@@ -1263,6 +1270,7 @@
       normalizeHttpUrl,
       structuredText,
       findMedia: (root) => findMedia(root, source),
+      capturedAt,
     });
     const quotedPost = normalizeQuotedPost(quoteEvidence);
     presentation.permalinkSource = sharedIdentity?.source ?? directPermalink?.source ?? recoveredPermalink?.source ?? "unavailable";
@@ -1371,6 +1379,7 @@
       text,
       permalink: normalizeHttpUrl(value.permalink),
       publishedAt: normalizeDate(value.publishedAt),
+      ...(value.presentation ? { presentation: value.presentation } : {}),
       links,
       media: Array.isArray(value.media) ? value.media.slice(0, 20) : [],
     };

@@ -1,0 +1,134 @@
+{
+  "provenance": "Selected normalized fields read from persisted observation, not captured DOM. Reconstructed header times and DOM must be labeled separately.",
+  "observationId": "observation_5b2fe23435afed2ea6ee8d5881352bd0",
+  "runId": "run_5d55db084c848432ee9caa737a16d3dd",
+  "pageUrl": "https://x.com/home",
+  "cases": [
+    {
+      "statusId": "2120807746077417799",
+      "occurrences": [
+        {
+          "snapshotIndex": 0,
+          "capturedAt": "2026-11-12T09:59:21.397Z",
+          "block": {
+            "evidenceKey": "x:97764eea54a8e5fd570dfbcb",
+            "author": "Token Gremlin",
+            "text": "Happy GPT-6.2 Astra and Sol day!\n\n(Or the day we all cancel our subscriptions and collectively lose our minds.)",
+            "permalink": "https://x.com/TokenGremlin/status/2120807746077417799",
+            "publishedAt": null,
+            "platformId": "x:status:2120807746077417799",
+            "contentKind": "post",
+            "relationshipType": "original",
+            "parentPermalink": "",
+            "presentation": {
+              "timestampSource": "unavailable",
+              "timestampPrecision": "unknown",
+              "timestampEstimated": false,
+              "permalinkSource": "post_wrapper",
+              "primaryIdentity": {
+                "candidates": [
+                  "https://x.com/TokenGremlin/status/2120807746077417799"
+                ],
+                "expectedPermalink": null,
+                "permalink": "https://x.com/TokenGremlin/status/2120807746077417799",
+                "source": "post_wrapper",
+                "status": "identified"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "statusId": "2120760559675261406",
+      "occurrences": [
+        {
+          "snapshotIndex": 1,
+          "capturedAt": "2026-11-12T09:59:22.839Z",
+          "block": {
+            "evidenceKey": "x:766f239f5eb6cf16f54da582",
+            "author": "周周聊搞钱",
+            "text": "The entire internet is betting on whether Nvidia’s board will dare to oust Jensen Huang over a sex scandal. Just now, Naval, author of The Almanack of Naval Ravikant and a godfather of Silicon Valley investing, waded in with a brutal warning to the board:\n\n“By all rights, we should have learned our lesson from Jobs and Kalanick (Uber’s founder) a long time ago—you can’t just casually replace a founder…”\n\nAnyone who knows a bit of Silicon Valley history knows the weight of those words:\n1️⃣ In 1985, Apple kicked out Jobs: the board brought in a professional manager who had sold soda as CEO, and Apple spent the next 12 years in the doldrums, nearly going bankrupt. In the end, they still had to get down on their knees and beg Jobs to come back and save the company;\n\n2️⃣ In 2017, Uber forced out Kalanick: again over internal compliance and personal-conduct scandals, the board cut down the founder, and Uber instantly lost its killer instinct, with its expansion grinding to a halt.\n\nNaval’s words strip away Wall Street’s most hypocritical pretenses: professional managers guard the “compliance bottom line,” while founders hold the empire’s “soul and intuition.”\n\nUsing a rigid HR compliance manual to put on trial the one mind that personally built a multi-trillion-dollar computing empire—that isn’t cleaning up corporate governance. That’s tearing down your own Great Wall.\n\nFirst Musk was online saying he’s “ready to take over from Old Huang at any moment,” and now Naval has invoked Jobs to warn the board. Silicon Valley’s biggest names have already shown their hands: if Nvidia’s board really dares to cut off its own balls tonight, tomorrow it will become the biggest joke in business history!",
+            "permalink": "https://x.com/eazymoney888/status/2120760559675261406",
+            "publishedAt": null,
+            "platformId": "x:status:2120760559675261406",
+            "contentKind": "post",
+            "relationshipType": "quote",
+            "parentPermalink": "https://x.com/naval/status/2120752211588452715",
+            "presentation": {
+              "timestampSource": "unavailable",
+              "timestampPrecision": "unknown",
+              "timestampEstimated": false,
+              "permalinkSource": "post_wrapper",
+              "primaryIdentity": {
+                "candidates": [
+                  "https://x.com/eazymoney888/status/2120760559675261406"
+                ],
+                "expectedPermalink": null,
+                "permalink": "https://x.com/eazymoney888/status/2120760559675261406",
+                "source": "post_wrapper",
+                "status": "identified"
+              },
+              "quoteIdentity": {
+                "conflictReason": null,
+                "id": "2120752211588452715",
+                "permalink": "https://x.com/naval/status/2120752211588452715",
+                "source": "dom_permalink",
+                "status": "identified"
+              }
+            },
+            "quotedPost": {
+              "author": "Naval",
+              "text": "You’d think we’d have learned from Steve Jobs and Travis Kalanick that one does not just simply replace the founder…",
+              "permalink": "https://x.com/naval/status/2120752211588452715",
+              "publishedAt": null
+            }
+          }
+        },
+        {
+          "snapshotIndex": 2,
+          "capturedAt": "2026-11-12T09:59:24.336Z",
+          "block": {
+            "evidenceKey": "x:766f239f5eb6cf16f54da582",
+            "author": "周周聊搞钱",
+            "text": "The entire internet is betting on whether Nvidia’s board will dare to oust Jensen Huang over a sex scandal. Just now, Naval, author of The Almanack of Naval Ravikant and a godfather of Silicon Valley investing, waded in with a brutal warning to the board:\n\n“By all rights, we should have learned our lesson from Jobs and Kalanick (Uber’s founder) a long time ago—you can’t just casually replace a founder…”\n\nAnyone who knows a bit of Silicon Valley history knows the weight of those words:\n1️⃣ In 1985, Apple kicked out Jobs: the board brought in a professional manager who had sold soda as CEO, and Apple spent the next 12 years in the doldrums, nearly going bankrupt. In the end, they still had to get down on their knees and beg Jobs to come back and save the company;\n\n2️⃣ In 2017, Uber forced out Kalanick: again over internal compliance and personal-conduct scandals, the board cut down the founder, and Uber instantly lost its killer instinct, with its expansion grinding to a halt.\n\nNaval’s words strip away Wall Street’s most hypocritical pretenses: professional managers guard the “compliance bottom line,” while founders hold the empire’s “soul and intuition.”\n\nUsing a rigid HR compliance manual to put on trial the one mind that personally built a multi-trillion-dollar computing empire—that isn’t cleaning up corporate governance. That’s tearing down your own Great Wall.\n\nFirst Musk was online saying he’s “ready to take over from Old Huang at any moment,” and now Naval has invoked Jobs to warn the board. Silicon Valley’s biggest names have already shown their hands: if Nvidia’s board really dares to cut off its own balls tonight, tomorrow it will become the biggest joke in business history!",
+            "permalink": "https://x.com/eazymoney888/status/2120760559675261406",
+            "publishedAt": null,
+            "platformId": "x:status:2120760559675261406",
+            "contentKind": "post",
+            "relationshipType": "quote",
+            "parentPermalink": "https://x.com/naval/status/2120752211588452715",
+            "presentation": {
+              "timestampSource": "unavailable",
+              "timestampPrecision": "unknown",
+              "timestampEstimated": false,
+              "permalinkSource": "post_wrapper",
+              "primaryIdentity": {
+                "candidates": [
+                  "https://x.com/eazymoney888/status/2120760559675261406"
+                ],
+                "expectedPermalink": null,
+                "permalink": "https://x.com/eazymoney888/status/2120760559675261406",
+                "source": "post_wrapper",
+                "status": "identified"
+              },
+              "quoteIdentity": {
+                "conflictReason": null,
+                "id": "2120752211588452715",
+                "permalink": "https://x.com/naval/status/2120752211588452715",
+                "source": "dom_permalink",
+                "status": "identified"
+              }
+            },
+            "quotedPost": {
+              "author": "Naval",
+              "text": "You’d think we’d have learned from Steve Jobs and Travis Kalanick that one does not just simply replace the founder…",
+              "permalink": "https://x.com/naval/status/2120752211588452715",
+              "publishedAt": null
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
