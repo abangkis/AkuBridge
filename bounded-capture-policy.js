@@ -232,6 +232,15 @@
     return null;
   }
 
+  // The caller supplies media from an owned DOM scope. Only an asset-bound
+  // master playlist may enrich that poster; a progressive DOM URL wins.
+  function xPlaybackUrl(poster, directPlayback, entries = []) {
+    if (!xVideoCDNUrl(poster, "https://pbs.twimg.com")) return null;
+    const direct = xVideoCDNUrl(directPlayback, "https://video.twimg.com");
+    if (direct && isXMP4(direct.href)) return direct.href;
+    return xHlsMasterUrl(poster, directPlayback) || findXHlsMasterUrl(poster, entries);
+  }
+
   function xPlaybackRank(media) {
     if (media.kind !== "video" || media.playbackMode !== "inline") return 0;
     const playback = safeMediaUrl("x", media.playbackUrl);
@@ -404,7 +413,9 @@
     hasChangedVisibleFeed,
     platformIdFromCandidates,
     normalizeMediaCandidates,
+    xHlsMasterUrl,
     findXHlsMasterUrl,
+    xPlaybackUrl,
     xPlaybackRank,
     mediaUrlFromCssBackground,
   });

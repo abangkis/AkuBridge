@@ -1573,7 +1573,7 @@
       for (const candidate of candidates) {
         if (candidate.kind !== "video" || !candidate.posterUrl || capturePolicy.xPlaybackRank(candidate)) continue;
         entries ??= performance.getEntriesByType("resource");
-        const playlist = capturePolicy.findXHlsMasterUrl(candidate.posterUrl, entries);
+        const playlist = capturePolicy.xPlaybackUrl(candidate.posterUrl, candidate.playbackUrl, entries);
         if (!playlist) continue;
         candidate.playbackUrl = playlist;
         candidate.playbackMode = "inline";
