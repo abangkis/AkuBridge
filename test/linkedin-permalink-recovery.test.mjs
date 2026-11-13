@@ -15,6 +15,7 @@ test("LinkedIn recovers a native permalink through bounded embed dialog evidence
   let closeClicks = 0;
 
   const menuButton = {
+    getAttribute: name => name === "aria-label" ? "Open control menu for post by Fixture author" : null,
     click() {
       menuClicks += 1;
       menuVisible = !menuVisible;
@@ -50,7 +51,7 @@ test("LinkedIn recovers a native permalink through bounded embed dialog evidence
       return [embedCode];
     },
   };
-  const menu = {};
+  const menu = { querySelectorAll: selector => selector === 'a[href], [role="menuitem"][href]' ? [] : [embedAction] };
   const document = {
     querySelectorAll(selector) {
       if (selector === '[role="menu"] a[href], [role="menu"] [role="menuitem"][href]') return [];
@@ -94,6 +95,7 @@ test("LinkedIn keeps direct menu URN recovery ahead of embed interaction", async
   let menuClicks = 0;
   let embedClicks = 0;
   const menuButton = {
+    getAttribute: name => name === "aria-label" ? "Open control menu for post by Fixture author" : null,
     click() {
       menuClicks += 1;
       menuVisible = !menuVisible;
@@ -107,7 +109,7 @@ test("LinkedIn keeps direct menu URN recovery ahead of embed interaction", async
     getAttribute() { return null; },
     click() { embedClicks += 1; },
   };
-  const menu = {};
+  const menu = { querySelectorAll: selector => selector === 'a[href], [role="menuitem"][href]' ? [direct] : [embedAction] };
   const document = {
     querySelectorAll(selector) {
       if (selector === '[role="menu"] a[href], [role="menu"] [role="menuitem"][href]') {
@@ -160,9 +162,11 @@ function browserContext(document) {
 }
 
 function candidate(menuButton) {
+  const body = { innerText: "A stable post body owned by Fixture author." };
   return {
     querySelector(selector) {
       if (selector === 'button[aria-label^="Open control menu for post by"]') return menuButton;
+      if (selector === '[data-testid="expandable-text-box"]') return body;
       return null;
     },
   };

@@ -78,6 +78,7 @@
     estimateRelativeTimestamp: (timestampText, capturedAt) =>
       globalThis.AkuLinkedInTimestampPolicy?.estimateFromRelativeText(timestampText, capturedAt) ?? null,
     recoverPermalinks: recoverLinkedInPermalinks,
+    validateRecoveredPermalink: validateLinkedInRecoveredPermalink,
     mediaHosts: Object.freeze(["licdn.com"]),
     structuredMediaEvidence: Object.freeze({
       payloadField: "linkedinStructuredMediaEvidence",
@@ -502,124 +503,142 @@
     return Number.isFinite(number) && number > 0 ? Math.min(8_192, Math.round(number)) : 0;
   }
 
+  const permalinkRecoveryOwners = new WeakMap();
+  const linkedinMenuButtonSelector = 'button[aria-label^="Open control menu for post by"]';
+  const linkedinDialogSelector = '[role="dialog"], [data-test-modal], .artdeco-modal';
+  const compactRecoveryText = value => String(value ?? "").replace(/\s+/g, " ").trim();
+
+  function recoveryOwner(container) {
+    const button = container.querySelector(linkedinMenuButtonSelector);
+    const body = container.querySelector('[data-testid="expandable-text-box"]') ??
+      container.querySelector('.update-components-text, .feed-shared-update-v2__description');
+    const label = button?.getAttribute?.("aria-label") ?? "";
+    const text = compactRecoveryText(stripExpansionControl(body?.innerText ?? body?.textContent));
+    return button && text && /^Open control menu for post by\s+\S/i.test(label)
+      ? { container, button, body, label, text, route: String(globalThis.location?.href ?? window.location?.href ?? "") }
+      : null;
+  }
+
+  function recoveryOwnerMatches(owner, allowExpansion = false) {
+    if (!owner || owner.container.isConnected === false || owner.button.isConnected === false) return false;
+    const current = recoveryOwner(owner.container);
+    if (!current || current.button !== owner.button || current.body !== owner.body ||
+        current.label !== owner.label || current.route !== owner.route) return false;
+    const prefix = owner.text.replace(/(?:\.{3}|…)$/, "").trimEnd();
+    return current.text === owner.text || allowExpansion && prefix.length >= 32 && current.text.startsWith(prefix);
+  }
+
+  function validateLinkedInRecoveredPermalink(container, recovered) {
+    const proof = permalinkRecoveryOwners.get(recovered);
+    if (!proof || proof.url !== recovered.url || proof.owner.container !== container ||
+        !recoveryOwnerMatches(proof.owner, true)) return false;
+    const nativeID = linkedinCandidateIdFromContainer(container);
+    return !nativeID || nativeID === linkedinPlatformIdFromCandidates([proof.url]);
+  }
+
   async function recoverLinkedInPermalinks(containers, operationDeadlineAtMs, helpers) {
     const recovered = new WeakMap();
-    const snapshotDeadlineAtMs = Math.min(
-      Date.now() + 5_000,
-      Number.isFinite(operationDeadlineAtMs) ? operationDeadlineAtMs : Date.now() + 5_000,
-    );
+    const snapshotDeadlineAtMs = Math.min(Date.now() + 5_000,
+      Number.isFinite(operationDeadlineAtMs) ? operationDeadlineAtMs : Date.now() + 5_000);
+    const allMenus = () => [...document.querySelectorAll('[role="menu"]')];
+    const allDialogs = () => [...document.querySelectorAll(linkedinDialogSelector)];
+    const visible = nodes => nodes.filter(node => helpers.isVisibleInViewport(node));
+    const menuEntries = (menu, visibleOnly = true) => [...menu.querySelectorAll('a[href], [role="menuitem"][href]')]
+      .filter(node => !visibleOnly || helpers.isVisibleInViewport(node))
+      .map(node => ({ url: globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEvidence(node.href),
+        source: /\/preload\/embed-modal\//i.test(node.pathname) ? "embed_urn" : "menu_urn" }))
+      .filter(entry => entry.url);
+    const dialogEntries = dialog => [dialog, ...dialog.querySelectorAll(
+      '[href], [src], [value], [data-urn], [data-id], input, textarea, code',
+    )].map(permalinkEvidenceFromNode).filter(Boolean);
+    const unavailable = reason => ({ url: null, source: "unavailable", reason });
     for (const container of containers) {
       if (helpers.findPermalinkDetails(container, "linkedin", container.querySelector("time"))) continue;
       const remainingMs = snapshotDeadlineAtMs - Date.now();
-      if (remainingMs <= 0) {
-        recovered.set(container, {
-          url: null,
-          source: "unavailable",
-          reason: "LinkedIn permalink recovery budget was exhausted for this snapshot.",
-        });
+      const owner = recoveryOwner(container);
+      if (remainingMs <= 0 || !owner) {
+        recovered.set(container, unavailable(remainingMs <= 0
+          ? "LinkedIn permalink recovery budget was exhausted for this snapshot."
+          : "Post author, body, and control ownership were not exposed."));
         continue;
       }
-      // A slow or stale menu must not consume the complete snapshot budget
-      // and starve every later candidate. DOM/URN evidence is always attempted
-      // first; menu recovery receives a small independent slice.
-      const candidateBudgetMs = Math.min(1_200, remainingMs);
-      const menuButton = container.querySelector('button[aria-label^="Open control menu for post by"]');
-      if (!menuButton) {
-        recovered.set(container, { url: null, source: "unavailable", reason: "Post control menu was not exposed." });
+      // Never consume or dismiss another interaction's menu/dialog. Hidden
+      // portal content is also remembered so a delayed stale URN cannot win.
+      if (visible(allMenus()).length || visible(allDialogs()).length) {
+        recovered.set(container, unavailable("An existing menu or dialog prevents exclusive post recovery."));
         continue;
       }
-      const visibleMenuEvidence = () => [...document.querySelectorAll(
-        '[role="menu"] a[href], [role="menu"] [role="menuitem"][href]',
-      )]
-        .filter((link) => helpers.isVisibleInViewport(link))
-        .map((link) => ({
-          href: link.href,
-          url: globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEvidence(link.href) ?? null,
-          source: /\/preload\/embed-modal\//i.test(link.pathname) ? "embed_urn" : "menu_urn",
-        }))
-        .filter((entry) => entry.url);
-      const visibleEmbedAction = () => [...document.querySelectorAll(
-        '[role="menu"] [role="menuitem"], [role="menu"] button',
-      )].find((element) => (
-        helpers.isVisibleInViewport(element)
-        && /\bembed this post\b/i.test(elementLabel(element))
-      )) ?? null;
-      const visibleDialogs = () => [...document.querySelectorAll(
-        '[role="dialog"], [data-test-modal], .artdeco-modal',
-      )].filter((dialog) => helpers.isVisibleInViewport(dialog));
-      const visibleEmbedEvidence = () => {
-        for (const dialog of visibleDialogs()) {
-          const nodes = [
-            dialog,
-            ...dialog.querySelectorAll(
-              '[href], [src], [value], [data-urn], [data-id], input, textarea, code',
-            ),
-          ];
-          for (const node of nodes) {
-            const evidence = permalinkEvidenceFromNode(node);
-            if (evidence) return evidence;
-          }
-        }
-        return null;
+      const oldMenuURLs = new Set(allMenus().flatMap(menu => menuEntries(menu, false)).map(entry => entry.url));
+      const oldDialogURLs = new Set(allDialogs().flatMap(dialogEntries).map(entry => entry.url));
+      const candidateDeadline = Math.min(snapshotDeadlineAtMs, Date.now() + 1_200);
+      let boundMenu = null;
+      let boundDialog = null;
+      const ownerCurrent = () => recoveryOwnerMatches(owner);
+      const associated = (surface, trigger) => {
+        const controls = compactRecoveryText(trigger.getAttribute?.("aria-controls") || trigger.getAttribute?.("aria-owns"));
+        const labelledBy = compactRecoveryText(surface.getAttribute?.("aria-labelledby"));
+        if (controls && !controls.split(" ").includes(surface.id)) return false;
+        if (labelledBy && !labelledBy.split(" ").includes(trigger.id)) return false;
+        return true;
       };
-      const closeVisibleDialog = async () => {
-        const dialog = visibleDialogs()[0];
-        if (!dialog) return;
-        const close = [...dialog.querySelectorAll('button, [role="button"]')].find((element) =>
-          /\b(?:close|dismiss)\b/i.test(elementLabel(element)),
-        );
-        close?.click();
-        await helpers.waitForValue(() => visibleDialogs().length === 0 ? true : null, 4, 25);
+      const uniqueEvidence = entries => {
+        const urls = new Set(entries.map(entry => entry.url));
+        return urls.size === 1 ? entries[0] : null;
       };
-      const previouslyVisible = new Set(visibleMenuEvidence().map((entry) => entry.href));
-      let opened = false;
-      let embedOpened = false;
+      const menuCurrent = () => ownerCurrent() && boundMenu &&
+        visible(allMenus()).length === 1 && visible(allMenus())[0] === boundMenu && associated(boundMenu, owner.button);
       try {
-        menuButton.click();
-        opened = true;
-        const observation = await helpers.waitForValue(
-          () => {
-            const evidence = visibleMenuEvidence().find((entry) => !previouslyVisible.has(entry.href))
-              ?? visibleMenuEvidence()[0]
-              ?? null;
-            if (evidence) return { kind: "evidence", evidence };
-            const action = visibleEmbedAction();
-            return action ? { kind: "embed_action", action } : null;
-          },
-          Math.max(1, Math.ceil(candidateBudgetMs / 50)),
-          50,
-        );
-        let evidence = observation?.kind === "evidence" ? observation.evidence : null;
-        if (!evidence && observation?.kind === "embed_action") {
-          observation.action.click();
-          embedOpened = true;
-          const modalBudgetMs = Math.max(100, snapshotDeadlineAtMs - Date.now());
-          evidence = await helpers.waitForValue(
-            visibleEmbedEvidence,
-            Math.max(1, Math.ceil(Math.min(800, modalBudgetMs) / 50)),
-            50,
-          );
+        owner.button.click();
+        const observation = await helpers.waitForValue(() => {
+          if (!ownerCurrent() || Date.now() >= candidateDeadline) return null;
+          const menus = visible(allMenus());
+          if (menus.length !== 1 || !associated(menus[0], owner.button)) return null;
+          if (boundMenu && boundMenu !== menus[0]) return null;
+          boundMenu = menus[0];
+          const entries = menuEntries(boundMenu);
+          if (entries.some(entry => oldMenuURLs.has(entry.url))) return null;
+          const evidence = uniqueEvidence(entries);
+          if (evidence) return { evidence };
+          if (entries.length) return null; // Conflicting native URNs are not resolved by DOM order.
+          const actions = [...boundMenu.querySelectorAll('[role="menuitem"], button')]
+            .filter(node => helpers.isVisibleInViewport(node) && /\bembed this post\b/i.test(elementLabel(node)));
+          return actions.length === 1 ? { action: actions[0] } : null;
+        }, Math.max(1, Math.ceil(Math.max(0, candidateDeadline - Date.now()) / 50)), 50);
+        let evidence = menuCurrent() ? observation?.evidence : null;
+        if (!evidence && observation?.action && menuCurrent() && !visible(allDialogs()).length) {
+          const action = observation.action;
+          action.click();
+          evidence = await helpers.waitForValue(() => {
+            if (!ownerCurrent() || Date.now() >= candidateDeadline) return null;
+            const dialogs = visible(allDialogs());
+            if (dialogs.length !== 1 || !associated(dialogs[0], action)) return null;
+            if (boundDialog && boundDialog !== dialogs[0]) return null;
+            boundDialog = dialogs[0];
+            const entries = dialogEntries(boundDialog);
+            if (entries.some(entry => oldDialogURLs.has(entry.url))) return null;
+            return uniqueEvidence(entries);
+          }, Math.max(1, Math.ceil(Math.max(0, candidateDeadline - Date.now()) / 50)), 50);
         }
-        recovered.set(container, evidence?.url
-          ? { url: evidence.url, source: evidence.source ?? "embed_urn", reason: "" }
-          : {
-              url: null,
-              source: "unavailable",
-              reason: observation?.kind === "embed_action"
-                ? "The post embed dialog exposed no stable native URN."
-                : "No stable post URN or embed action was exposed after opening the post menu.",
-            });
+        const surfaceEvidence = boundDialog
+          ? visible(allDialogs()).length === 1 && visible(allDialogs())[0] === boundDialog
+            ? uniqueEvidence(dialogEntries(boundDialog)) : null
+          : menuCurrent() ? uniqueEvidence(menuEntries(boundMenu)) : null;
+        const result = evidence?.url && surfaceEvidence?.url === evidence.url && ownerCurrent()
+          ? { url: evidence.url, source: evidence.source, reason: "" }
+          : unavailable("No fresh, unambiguous native URN was bound to this post interaction.");
+        if (result.url) permalinkRecoveryOwners.set(result, { owner, url: result.url });
+        recovered.set(container, result);
       } finally {
-        if (embedOpened) await closeVisibleDialog();
-        if (opened && [...document.querySelectorAll('[role="menu"]')]
-          .some((menu) => helpers.isVisibleInViewport(menu))) {
-          menuButton.click();
-          await helpers.waitForValue(
-            () => [...document.querySelectorAll('[role="menu"]')]
-              .some((menu) => helpers.isVisibleInViewport(menu)) ? null : true,
-            4,
-            25,
-          );
+        // Cleanup only the exact surfaces opened for an unchanged owner.
+        if (ownerCurrent() && boundDialog && visible(allDialogs()).includes(boundDialog)) {
+          const close = [...boundDialog.querySelectorAll('button, [role="button"]')]
+            .find(node => /\b(?:close|dismiss)\b/i.test(elementLabel(node)));
+          close?.click();
+          await helpers.waitForValue(() => !visible(allDialogs()).includes(boundDialog), 4, 25);
+        }
+        if (menuCurrent()) {
+          owner.button.click();
+          await helpers.waitForValue(() => !visible(allMenus()).includes(boundMenu), 4, 25);
         }
       }
     }

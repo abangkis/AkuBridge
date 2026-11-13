@@ -204,7 +204,7 @@ test("AkuBridge recognizes the current LinkedIn feed container", () => {
   assert.match(contentScript, /adapter\.maxBlocksPerSnapshot \?\? payload\.maxBlocksPerSnapshot/);
   assert.match(contentScript, /plan\.captureTimeoutMs - CAPTURE_DEADLINE_RESERVE_MS/);
   assert.match(linkedInAdapter, /const snapshotDeadlineAtMs = Math\.min\(/);
-  assert.match(linkedInAdapter, /const candidateBudgetMs = Math\.min\(1_200, remainingMs\)/);
+  assert.match(linkedInAdapter, /const candidateDeadline = Math\.min\(snapshotDeadlineAtMs, Date\.now\(\) \+ 1_200\)/);
   assert.match(linkedInAdapter, /LinkedIn permalink recovery budget was exhausted for this snapshot/);
   assert.match(contentScript, /adapterRuntimeRevision/);
   assert.match(contentScript, /adapterVersion: sourceAdapters\.get\(source\)\.version/);
@@ -321,7 +321,7 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
   assert.equal(windowedReveal.match(/signal\.element\.click\(\)/g)?.length, 1);
   assert.equal(headlessActivation.match(/signal\.element\.click\(\)/g)?.length, 1);
   assert.equal(freshnessRuntime.match(/signal\.element\.click\(\)/g)?.length, 2);
-  assert.equal(linkedInAdapter.match(/menuButton\.click\(\)/g)?.length, 2);
+  assert.equal(linkedInAdapter.match(/owner\.button\.click\(\)/g)?.length, 2);
   assert.doesNotMatch(contentScript, /(?:like|comment|repost|send)Button\.click\(\)/i);
 });
 

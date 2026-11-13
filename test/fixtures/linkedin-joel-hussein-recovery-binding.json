@@ -1,0 +1,44 @@
+{
+  "origin": {
+    "kind": "persisted_observation_subset",
+    "notice": "Normalized persisted evidence only. No historical DOM or menu lifecycle was retained. Recovery DOM and transitions used by tests are reconstructed; they do not prove the original DOM failure mechanism."
+  },
+  "cases": [
+    {
+      "runId": "run_7b5459375ec34345e288a7828ee394a4",
+      "observationId": "observation_ff950943542ac8f6429a55cbbc7d13a5",
+      "capturedAt": "2026-11-13T07:51:16.263Z",
+      "block": {
+        "evidenceKey": "linkedin:60b4f5da7f20e30113ad875a",
+        "author": "Joel Teodoro Gómez",
+        "text": "~260,000 jobs through my distributed job scheduler. Not one lost.\nNot even when I cut MySQL off for 30 seconds.\n\nIt's cron as a service, written in Go. You tell it to call your endpoint now, at a date, or on a cron expression, and it does, with priorities, retries and a history of every run.\nI designed it for 1 billion executions a day, and tested it at a much smaller scale on one PC emulating AWS.\n\nAnd it has no queue. No Kafka, no RabbitMQ, no Redis. The queue is a MySQL table.\n\nSaving a job in the database and then publishing it to a broker is a dual write. If one of the two fails, they disagree forever. With one table there's only one write.\nExecutors claim jobs with SELECT ... FOR UPDATE SKIP LOCKED, the same idea Shopify used when it moved inventory reservations from Redis to MySQL. Each executor skips the rows another one already locked, so nobody waits.\n\nNothing gets lost because a job is saved before it ever runs. The executor's lease (its temporary right to run that job) lives in the same row, not in Redis, so there's one source of truth.\nAnd every claim bumps an attempt counter. If an old executor comes back late with a result, the counter no longer matches and its write touches 0 rows.\n\nThen I tried to break it.\n10 tests, every job ended as succeeded or dead. I killed an executor mid-run and got 0 duplicates. I cut MySQL for 30 seconds and nothing was lost. 16 jobs ran twice, which is the price of at-least-once and the reason every request carries an Idempotency-Key.\n\nThe load model even puts 30,000 jobs due at 09:00:00 sharp, because that's what crons do.\n\nNow the honest part. Throughput was ~300 jobs/s, and adding executors didn't help. One executor did 301, three did 330.\nThe executors were idle. My scheduler wasn't. It ran one UPDATE per task to move its next run, so 1,000 round trips per tick, each paying 1 ms. A classic N+1, written by me.\nOne batched UPDATE later, a tick went from 5.5 s to 54 ms.\n\nAnd this is the simple version. To keep it simple there's one scheduler per shard. It could scale a lot further with bigger batches, a shorter tick, more schedulers, sharding the jobs table, or smarter scheduling on top.\n\nBoring infrastructure, done carefully, took me further than adding pieces would have. And measuring found the bug that adding machines would have hidden.\n\nFull write-up → https://lnkd.in/eE_nu7y6\n\nCode → https://lnkd.in/ebuPtqXW\n\n#Go #Golang #SystemDesign #Backend",
+        "permalink": "https://www.linkedin.com/feed/update/urn:li:share:7526409821676380160/",
+        "platformId": "linkedin:share:7526409821676380160"
+      }
+    },
+    {
+      "runId": "run_bf4b025432b6aab08456ff44b79ddcc9",
+      "observationId": "observation_35458df20128217f3fdce457c683f2e0",
+      "capturedAt": "2026-11-13T08:00:22.751Z",
+      "block": {
+        "evidenceKey": "linkedin:60b4f5da7f20e30113ad875a",
+        "author": "Hussein Mohsin",
+        "text": "I’m hiring a Senior Network Architect for a FinTech company in Indonesia. This is a senior, hands-on role where you’ll set the network architecture roadmap across data centers and public cloud, own major design decisions, and work with engineering teams to bring those designs into production.\n\nThis is a senior individual contributor role for someone who wants to stay hands-on while shaping the technical direction. I’d like to speak with architects who have 10+ years of relevant experience and have owned the design of a large-scale data center build, hybrid network, or major production upgrade. Telco, banking, and other mission-critical enterprise backgrounds are welcome.\n\nIf that sounds like your next move (or would like to get more information), click on the link below and apply directly. Feel free to send me a direct message for a confidential conversation.\n\n#WeNetwork #IndonesiaJobs #NetworkArchitect #NetworkArchitecture #DataCenter #CloudNetworking #TechJobsIndonesia #Hiring",
+        "permalink": "https://www.linkedin.com/feed/update/urn:li:share:7526409821676380160/",
+        "platformId": "linkedin:share:7526409821676380160"
+      }
+    },
+    {
+      "runId": "run_349e2b46fe3fea9c7f485b705ea0616f",
+      "observationId": "observation_b692d074e5f1d4125ca073bcf64ca0b6",
+      "capturedAt": "2026-11-13T08:34:44.066Z",
+      "block": {
+        "evidenceKey": "linkedin:60b4f5da7f20e30113ad875a",
+        "author": "Joel Teodoro Gómez",
+        "text": "~260,000 jobs through my distributed job scheduler. Not one lost.\nNot even when I cut MySQL off for 30 seconds.\n\nIt's cron as a service, written in Go. You tell it to call your endpoint now, at a date, or on a cron expression, and it does, with priorities, retries and a history of every run.\nI designed it for 1 billion executions a day, and tested it at a much smaller scale on one PC emulating AWS.\n\nAnd it has no queue. No Kafka, no RabbitMQ, no Redis. The queue is a MySQL table.\n\nSaving a job in the database and then publishing it to a broker is a dual write. If one of the two fails, they disagree forever. With one table there's only one write.\nExecutors claim jobs with SELECT ... FOR UPDATE SKIP LOCKED, the same idea Shopify used when it moved inventory reservations from Redis to MySQL. Each executor skips the rows another one already locked, so nobody waits.\n\nNothing gets lost because a job is saved before it ever runs. The executor's lease (its temporary right to run that job) lives in the same row, not in Redis, so there's one source of truth.\nAnd every claim bumps an attempt counter. If an old executor comes back late with a result, the counter no longer matches and its write touches 0 rows.\n\nThen I tried to break it.\n10 tests, every job ended as succeeded or dead. I killed an executor mid-run and got 0 duplicates. I cut MySQL for 30 seconds and nothing was lost. 16 jobs ran twice, which is the price of at-least-once and the reason every request carries an Idempotency-Key.\n\nThe load model even puts 30,000 jobs due at 09:00:00 sharp, because that's what crons do.\n\nNow the honest part. Throughput was ~300 jobs/s, and adding executors didn't help. One executor did 301, three did 330.\nThe executors were idle. My scheduler wasn't. It ran one UPDATE per task to move its next run, so 1,000 round trips per tick, each paying 1 ms. A classic N+1, written by me.\nOne batched UPDATE later, a tick went from 5.5 s to 54 ms.\n\nAnd this is the simple version. To keep it simple there's one scheduler per shard. It could scale a lot further with bigger batches, a shorter tick, more schedulers, sharding the jobs table, or smarter scheduling on top.\n\nBoring infrastructure, done carefully, took me further than adding pieces would have. And measuring found the bug that adding machines would have hidden.\n\nFull write-up → https://lnkd.in/eE_nu7y6\n\nCode → https://lnkd.in/ebuPtqXW\n\n#Go #Golang #SystemDesign #Backend",
+        "permalink": "https://www.linkedin.com/feed/update/urn:li:share:7526409821676380160/",
+        "platformId": "linkedin:share:7526409821676380160"
+      }
+    }
+  ]
+}

@@ -1215,6 +1215,8 @@
     capturedAt = new Date().toISOString(),
   ) {
     const adapter = sourceAdapters.get(source);
+    if (recoveredPermalink?.url && adapter.validateRecoveredPermalink &&
+        !adapter.validateRecoveredPermalink(container, recoveredPermalink)) return null;
     const rawText = structuredText(
       adapter.extractText?.(container, { compactText, structuredText }) ?? container,
     );
