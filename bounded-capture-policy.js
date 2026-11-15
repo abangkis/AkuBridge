@@ -122,7 +122,7 @@
     return null;
   }
 
-  function normalizeMediaCandidates(source, values) {
+  function normalizeMediaCandidates(source, values, { observations = false } = {}) {
     const seen = new Map();
     const media = [];
     const diagnostics = {
@@ -192,7 +192,116 @@
       configurable: false,
       writable: false,
     });
+    if (observations) Object.defineProperty(media, "observations", {
+      value: Object.freeze(media.map((item) =>
+        Object.freeze({ ...seen.get(mediaIdentity(source, item.url)).input.domObservation }))),
+      enumerable: false,
+    });
     return Object.freeze(media);
+  }
+
+  // Both X consumers use this collector. Source selectors stay in the adapter;
+  // this function observes the supplied DOM scope without mutating it.
+  function extractXDOMMedia(container, adapter, { excludeRoot = null } = {}) {
+    const rendering = adapter.mediaRendering ?? {};
+    const candidates = [];
+    const maxCandidates = 128;
+    let bounded = false;
+    let entries;
+    const query = (root, selector) => {
+      const matches = selector ? [...(root.querySelectorAll?.(selector) ?? [])] : [];
+      if (matches.length > maxCandidates) bounded = true;
+      return matches.slice(0, maxCandidates);
+    };
+    const owns = (element) => !excludeRoot?.contains?.(element);
+    const rect = (element) => element?.getBoundingClientRect?.() ?? {};
+    const mediaURL = (value) => {
+      if (typeof value !== "string" || value.length > 2048) return null;
+      try {
+        const url = new URL(value, globalThis.location?.href);
+        if (url.protocol !== "https:" || url.username || url.password || url.port ||
+            !(adapter.mediaHosts ?? []).includes(url.hostname) ||
+            url.hostname === "pbs.twimg.com" && url.pathname.startsWith("/profile_images/")) return null;
+        url.hash = "";
+        return url.href;
+      } catch { return null; }
+    };
+    const background = (element) => mediaUrlFromCssBackground(element?.style?.backgroundImage ||
+      globalThis.getComputedStyle?.(element)?.backgroundImage);
+    const add = (candidate) => {
+      if (candidates.length >= maxCandidates) { bounded = true; return; }
+      const url = mediaURL(candidate.url);
+      if (!url) return;
+      candidates.push({ ...candidate, url, posterUrl: candidate.kind === "video" ? url : undefined });
+    };
+    for (const image of query(container, adapter.imageSelector ?? "img")) {
+      if (!owns(image) || adapter.shouldSkipImage?.(image)) continue;
+      const box = rect(image);
+      const trusted = rendering.trustedRootSelector ? image.closest?.(rendering.trustedRootSelector) : null;
+      const trustedBox = rect(trusted);
+      const videoRoot = rendering.videoRootSelector ? image.closest?.(rendering.videoRootSelector) : null;
+      const srcsets = [image.srcset, image.getAttribute?.("srcset")].filter(Boolean)
+        .flatMap((value) => String(value).split(",").map((part) => part.trim().split(/\s+/)[0]));
+      const urls = [
+        ["current_src", image.currentSrc], ["src_property", image.src],
+        ["src_attribute", image.getAttribute?.("src")],
+        ...srcsets.map((value) => ["srcset", value]),
+        ["data_src", image.getAttribute?.("data-src")],
+        ["data_original", image.getAttribute?.("data-original")],
+      ];
+      const selected = urls.find(([, value]) => mediaURL(value));
+      const decodedURL = mediaURL(image.currentSrc || image.src || image.getAttribute?.("src"));
+      const kind = videoRoot || rendering.embeddedVideoPattern?.test(image.alt || "") ? "video" : "image";
+      add({ kind, url: selected?.[1], posterUrl: kind === "video" ? selected?.[1] : undefined,
+        playbackMode: kind === "video" ? "native" : undefined, alt: image.alt || "",
+        width: box.width || image.naturalWidth || trustedBox.width,
+        height: box.height || image.naturalHeight || trustedBox.height,
+        trustedMediaRoot: Boolean(trusted), urlSource: selected?.[0] ?? "missing",
+        domObservation: { loaded: Boolean(decodedURL && decodedURL === mediaURL(selected?.[1])) &&
+          image.complete === true && image.naturalWidth > 0 && image.naturalHeight > 0,
+          loadedMeaning: "image_decoded", urlSource: selected?.[0] ?? "missing" },
+      });
+    }
+    for (const video of query(container, "video")) {
+      if (!owns(video)) continue;
+      const box = rect(video);
+      const poster = [video.poster, video.getAttribute?.("poster"),
+        ...[video, ...query(video, "*")].filter(owns).map(background)].find(mediaURL);
+      const direct = [video.currentSrc, video.src, ...query(video, "source[src]").map((element) => element.src)]
+        .find((value) => /^https:\/\//i.test(value ?? ""));
+      const urlSource = video.poster || video.getAttribute?.("poster") ? "poster" : "css_background";
+      add({ kind: "video", url: poster, posterUrl: poster, playbackUrl: direct,
+        playbackMode: direct ? "inline" : "native", alt: video.getAttribute?.("aria-label") || "Video preview",
+        width: box.width || video.videoWidth, height: box.height || video.videoHeight,
+        trustedMediaRoot: rendering.trustedVideo === true, urlSource,
+        domObservation: { loaded: video.readyState > 0, loadedMeaning: "video_metadata_ready", urlSource,
+          readyState: video.readyState, paused: video.paused, currentTime: video.currentTime,
+          duration: Number.isFinite(video.duration) ? video.duration : null,
+          sourceKind: video.currentSrc?.startsWith("blob:") ? "blob" : video.currentSrc ? "direct" : "unset" },
+      });
+    }
+    for (const group of rendering.backgroundGroups ?? []) {
+      for (const element of query(container, group.selector)) {
+        if (!owns(element)) continue;
+        const box = rect(element);
+        const url = background(element);
+        add({ kind: group.kind, url, posterUrl: group.kind === "video" ? url : undefined,
+          playbackMode: group.kind === "video" ? "native" : undefined,
+          alt: (group.closestSelector ? element.closest?.(group.closestSelector) : element)?.getAttribute?.("aria-label") || group.fallbackAlt,
+          width: box.width, height: box.height, trustedMediaRoot: true, urlSource: "css_background",
+          domObservation: { loaded: false, loadedMeaning: "css_background_observed", urlSource: "css_background" },
+        });
+      }
+    }
+    for (const candidate of candidates) {
+      if (candidate.kind !== "video") continue;
+      entries ??= globalThis.performance?.getEntriesByType?.("resource") || [];
+      const playback = xPlaybackUrl(candidate.posterUrl, candidate.playbackUrl, entries);
+      candidate.playbackUrl = playback;
+      candidate.playbackMode = playback ? "inline" : "native";
+    }
+    const media = normalizeMediaCandidates("x", candidates, { observations: true });
+    return { media, observations: media.observations, bounded };
   }
 
   function isXMP4(value) {
@@ -413,6 +522,7 @@
     hasChangedVisibleFeed,
     platformIdFromCandidates,
     normalizeMediaCandidates,
+    extractXDOMMedia,
     xHlsMasterUrl,
     findXHlsMasterUrl,
     xPlaybackUrl,

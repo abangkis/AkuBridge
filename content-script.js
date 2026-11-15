@@ -1500,6 +1500,7 @@
   }
 
   function findMedia(container, source, { excludeRoot = null } = {}) {
+    if (source === "x") return capturePolicy.extractXDOMMedia(container, sourceAdapters.get(source), { excludeRoot }).media;
     const candidates = [];
     const adapter = sourceAdapters.get(source);
     const rendering = adapter.mediaRendering ?? {};
@@ -1576,18 +1577,6 @@
           trustedMediaRoot: true,
           urlSource: "css_background",
         });
-      }
-    }
-    if (source === "x") {
-      // X can render a blob URL while its player loads the playlist separately.
-      let entries;
-      for (const candidate of candidates) {
-        if (candidate.kind !== "video" || !candidate.posterUrl || capturePolicy.xPlaybackRank(candidate)) continue;
-        entries ??= performance.getEntriesByType("resource");
-        const playlist = capturePolicy.xPlaybackUrl(candidate.posterUrl, candidate.playbackUrl, entries);
-        if (!playlist) continue;
-        candidate.playbackUrl = playlist;
-        candidate.playbackMode = "inline";
       }
     }
     return capturePolicy.normalizeMediaCandidates(source, candidates);
