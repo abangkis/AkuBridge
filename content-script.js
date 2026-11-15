@@ -1265,7 +1265,7 @@
     if (sourceTimestamp?.text) presentation.timestampText = sourceTimestamp.text;
     if (sourceTimestamp?.estimated) presentation.timestampCapturedAt = capturedAt;
     presentation.timestampEstimated = Boolean(relativeTimestamp);
-    presentation.timestampPrecision = relativeTimestamp?.precision
+    presentation.timestampPrecision = sourceTimestamp?.precision ?? relativeTimestamp?.precision
       ?? (nativePublishedAt ? "exact" : "unknown");
     const quoteEvidence = adapter.extractQuotedPost?.(container, {
       compactText,

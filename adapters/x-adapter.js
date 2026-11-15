@@ -489,6 +489,31 @@ function imageUrls(image) {
       ...(value.estimated ? { timestampCapturedAt: value.capturedAt } : {}) };
   }
 
+  // A rendered clock is not proof of the browser's timezone. Accept only a
+  // complete English date with an explicit UTC/GMT or numeric offset in text.
+  function parseXAbsoluteDateText(value) {
+    const text = String(value ?? "").trim().replace(/\s+/g, " ");
+    if (text.length > 128) return null;
+    const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))? (AM|PM) · (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2}), (\d{4})(?: (Z|UTC|GMT|(?:UTC|GMT)?[+-]\d{2}:?\d{2}))?$/i.exec(text);
+    if (!match) return null;
+    const [, hourText, minuteText, secondText, period, monthText, dayText, yearText, zone] = match;
+    const hour = Number(hourText), minute = Number(minuteText), second = Number(secondText ?? 0);
+    const month = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'].indexOf(monthText.toLowerCase());
+    const day = Number(dayText), year = Number(yearText);
+    if (hour < 1 || hour > 12 || minute > 59 || second > 59 || year < 1000) return null;
+    const local = new Date(Date.UTC(year, month, day, hour % 12 + (period.toUpperCase() === 'PM' ? 12 : 0), minute, second));
+    if (local.getUTCFullYear() !== year || local.getUTCMonth() !== month || local.getUTCDate() !== day) return null;
+    if (!zone) return { text, publishedAt: null };
+    let offset = 0;
+    const numeric = /^(?:UTC|GMT)?([+-])(\d{2}):?(\d{2})$/i.exec(zone);
+    if (numeric) {
+      const hours = Number(numeric[2]), minutes = Number(numeric[3]);
+      if (hours > 14 || minutes > 59 || hours === 14 && minutes !== 0 || numeric[1] === '-' && hours === 0 && minutes === 0) return null;
+      offset = (hours * 60 + minutes) * (numeric[1] === '-' ? -1 : 1);
+    }
+    return { text, publishedAt: new Date(local.getTime() - offset * 60000).toISOString(), precision: secondText ? "second" : "minute" };
+  }
+
   // Only an identified post's own timestamp anchor or owned author header can
   // supply time. Post text, quotes and surrounding articles have no authority.
   function extractXTimestamp(container, { permalink, capturedAt = new Date().toISOString(), allowQuoteAnchors = false } = {}) {
@@ -530,7 +555,22 @@ function imageUrls(image) {
       }
     }
     if (relative.size > 1) return unavailable("conflicting_relative_time");
-    return relative.values().next().value ?? unavailable("unavailable");
+    if (relative.size === 1) return relative.values().next().value;
+    // Additive detail-page fallback. Never let a quote, reply, body link, media
+    // route or unrelated page provide the requested primary post's date.
+    const route = canonicalizeXPermalink(typeof window === "object" ? window.location?.href : globalThis.location?.href);
+    if (route !== owner || allowQuoteAnchors) return unavailable("unavailable");
+    const absolute = new Map();
+    for (const anchor of [...container.querySelectorAll('a[href]')].slice(0, 128)) {
+      if (!isOwn(anchor) || anchor.querySelector?.('a[href]') || canonicalizeXPermalink(anchor.href) !== owner) continue;
+      try { if (new URL(anchor.href).pathname !== new URL(owner).pathname) continue; } catch { continue; }
+      const parsed = parseXAbsoluteDateText(anchor.textContent ?? anchor.innerText);
+      if (parsed) absolute.set(parsed.publishedAt ?? parsed.text, parsed);
+    }
+    if (absolute.size > 1) return unavailable("conflicting_absolute_time");
+    const date = absolute.values().next().value;
+    if (!date?.publishedAt) return { ...unavailable("unavailable"), ...(date ? { text: date.text } : {}) };
+    return { publishedAt: date.publishedAt, source: "absolute_date_anchor", estimated: false, precision: date.precision, text: date.text };
   }
 
   // Reply target identity must be explicit. Account mentions and card adjacency
