@@ -1395,7 +1395,9 @@
     return capturePrimitives.expandContent({
       container,
       adapter,
-      readText: (root) => cleanExpandedText(structuredText(root)),
+      readText: (root) => source === "x"
+        ? adapter.extractText(root, { compactText, structuredText })
+        : cleanExpandedText(structuredText(root)),
       route: () => window.location.href,
       canExpand: () => Date.now() < deadlineAt,
       deadlineAt,

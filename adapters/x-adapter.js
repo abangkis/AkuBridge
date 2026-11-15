@@ -181,6 +181,7 @@
     findQuotedRoot: findQuotedPostContainer,
     contentExpansion: Object.freeze({
       buttonSelector: '[data-testid="tweet-text-show-more-link"]',
+      findInlineButton: (container, direction, quote) => findWrappedExpansionButton(findXTextRoot(container, quote), direction),
       restorable: false,
       attempts: 12,
       intervalMs: 40,
@@ -210,15 +211,9 @@
     permalinkPatterns: Object.freeze([/\/status\/\d+/]),
     contentRootSelector: xContentRootSelector,
     resolveContentRoot: findXTextRoot,
-    extractText: (container, { compactText, structuredText }) => {
-      const read = (node) => typeof structuredText === "function"
-        ? structuredText(node)
-        : compactText(node?.innerText ?? node?.textContent);
+    extractText: (container, helpers) => {
       if (!container) return "";
-      if (isXTextRoot(container)) return read(container);
-
-      const root = findXTextRoot(container);
-      return root ? read(root) : "";
+      return readXText(isXTextRoot(container) ? container : findXTextRoot(container), helpers);
     },
     extractSemantics: (container, { compactText, normalizeHttpUrl }) => {
       const socialContext = compactText(
@@ -261,9 +256,7 @@
       if (!quoted) return null;
       const wrapped = wrappedPostPermalink(quoted);
       const textRoot = wrapped ? findXTextRoot(quoted) : quoted.querySelector(legacyTextSelector);
-      const text = typeof structuredText === "function"
-        ? structuredText(textRoot)
-        : compactText(textRoot?.innerText);
+      const text = readXText(textRoot, { compactText, structuredText });
       const time = quoted.querySelector("time");
       const quoteIdentity = resolveIdentity(quoted, undefined, true);
       const primaryIdentity = quoteIdentity?.permalink ? resolveIdentity(container, quoted) : null;
@@ -617,6 +610,23 @@ function imageUrls(image) {
     return firstOwnElement(container, legacyTextSelector, quote) ??
       firstOwnElement(container, xArticleRootSelector, quote) ??
       (alternatePostPermalink(container, quote) ? firstOwnElement(container, wrappedTextSelector, quote) : null);
+  }
+
+  function findWrappedExpansionButton(root, direction) {
+    if (!root?.matches?.(wrappedTextSelector)) return null;
+    // The wrapped layout renders the control as the last direct element in
+    // the post body. A button elsewhere in the article is not a text control.
+    const button = root.lastElementChild;
+    if (!button?.matches?.('button[type="button"]')) return null;
+    const label = (button.innerText || button.textContent || "").trim().toLowerCase();
+    return label === (direction === "more" ? "show more" : "show less") ? button : null;
+  }
+
+  function readXText(root, { compactText, structuredText }) {
+    if (!root) return "";
+    const control = findWrappedExpansionButton(root, "more") ?? findWrappedExpansionButton(root, "less");
+    if (control) return capturePrimitives.structuredText(root, control);
+    return typeof structuredText === "function" ? structuredText(root) : compactText(root.innerText ?? root.textContent);
   }
 
   function findXAuthor(container, { compactText }, quote = findQuotedPostContainer(container)) {

@@ -15,23 +15,23 @@
       : feedRootPresent ? "selector_mismatch" : "page_shell");
   }
 
-  function structuredText(value) {
+  function structuredText(value, excludedNode = null) {
     if (typeof value === "string") return normalizeStructuredWhitespace(value);
     if (!value || typeof value !== "object") return "";
     if (!value.childNodes || value.childNodes.length === 0) {
       return normalizeStructuredWhitespace(value.innerText || value.textContent || "");
     }
-    return normalizeStructuredWhitespace(readStructuredNode(value));
+    return normalizeStructuredWhitespace(readStructuredNode(value, excludedNode));
   }
 
-  function readStructuredNode(node) {
-    if (!node) return "";
+  function readStructuredNode(node, excludedNode) {
+    if (!node || node === excludedNode) return "";
     if (node.nodeType === 3) return node.nodeValue || "";
     if (node.nodeType !== 1) return "";
     const tag = String(node.tagName || "").toLowerCase();
     if (tag === "img") return node.getAttribute?.("alt") || "";
     if (tag === "br") return "\n";
-    const body = [...(node.childNodes || [])].map(readStructuredNode).join("");
+    const body = [...(node.childNodes || [])].map((child) => readStructuredNode(child, excludedNode)).join("");
     return ["div", "p", "li", "section", "article"].includes(tag) ? `${body}\n` : body;
   }
 
@@ -370,6 +370,8 @@
     readText = structuredText,
     route = defaultRoute,
     canExpand = () => true,
+    expectedPermalink = null,
+    requireExactXPermalink = false,
     deadlineAt = Infinity,
     wait = defaultWait,
   } = {}) {
@@ -391,11 +393,28 @@
     if (Date.now() >= deadlineAt) return state("deadline_expired");
 
     const initialContainer = getContainer();
+    const pinXOwner = adapter.source === "x" || requireExactXPermalink;
+    const hasIdentity = pinXOwner && typeof adapter.resolveIdentity === "function";
+    const initialIdentity = hasIdentity ? adapter.resolveIdentity(initialContainer) : null;
+    const pinnedPermalink = pinXOwner ? canonicalizeXPermalink(initialIdentity?.permalink ?? expectedPermalink) : null;
+    const preservesOwner = (currentContainer) => {
+      if (!pinXOwner) return true;
+      if (hasIdentity) {
+        const currentIdentity = adapter.resolveIdentity(currentContainer);
+        if (initialIdentity?.status !== "identified" || currentIdentity?.status !== "identified" ||
+            !pinnedPermalink || canonicalizeXPermalink(currentIdentity.permalink) !== pinnedPermalink) return false;
+      }
+      const currentPermalink = canonicalizeXPermalink(readRoute(route));
+      // Feed expansion is allowed for Windowed capture. On a detail route,
+      // both callers must keep the exact owner; Headless requires that route.
+      return (!requireExactXPermalink || Boolean(pinnedPermalink && currentPermalink)) &&
+        (!currentPermalink || !pinnedPermalink || currentPermalink === pinnedPermalink);
+    };
     const initialRoot = findContentRoot(initialContainer, adapter);
     const before = readText(initialRoot) || "";
     let button = findExpansionButton(initialContainer, adapter, "more");
     if (!button) return state("no_collapse_observed", { contentRoot: initialRoot, before });
-    if (!canExpandSafely(canExpand, button, { container: initialContainer, contentRoot: initialRoot, route: startRoute })) {
+    if (!preservesOwner(initialContainer) || !canExpandSafely(canExpand, button, { container: initialContainer, contentRoot: initialRoot, route: startRoute })) {
       return state("not_allowed", { button, contentRoot: initialRoot, before });
     }
 
@@ -414,7 +433,7 @@
       button = findExpansionButton(currentContainer, adapter, "less")
         ?? findExpansionButton(currentContainer, adapter, "more")
         ?? button;
-      if (!canExpandSafely(canExpand, button, { container: currentContainer, contentRoot, route: startRoute })) {
+      if (!preservesOwner(currentContainer) || !canExpandSafely(canExpand, button, { container: currentContainer, contentRoot, route: startRoute })) {
         return state("not_allowed", { button, contentRoot, before });
       }
       if (codePointLength(currentText) > codePointLength(before) ||
@@ -597,12 +616,15 @@
   }
 
   function findExpansionButton(container, adapter, direction) {
-    const selector = adapter.contentExpansion?.buttonSelector;
-    if (!selector) return null;
+    const policy = adapter.contentExpansion;
+    if (!policy || !container) return null;
     const quotedRoot = adapter.findQuotedRoot?.(container) ?? null;
-    return [...(container?.querySelectorAll?.(selector) ?? [])]
+    const legacyButton = policy.buttonSelector && [...(container.querySelectorAll?.(policy.buttonSelector) ?? [])]
       .find((candidate) => !quotedRoot?.contains?.(candidate) &&
-        expansionLabel(candidate?.innerText || candidate?.textContent, direction)) ?? null;
+        expansionLabel(candidate?.innerText || candidate?.textContent, direction));
+    if (legacyButton) return legacyButton;
+    const button = policy.findInlineButton?.(container, direction, quotedRoot);
+    return button && !quotedRoot?.contains?.(button) ? button : null;
   }
 
   function canExpandSafely(canExpand, button, context) {
@@ -667,6 +689,7 @@
     markXReplyContextAmbiguous,
     mergeXResponseReply,
     expansionLabel,
+    findExpansionButton,
     expandContent,
     restoreContent,
     textCompleteness,

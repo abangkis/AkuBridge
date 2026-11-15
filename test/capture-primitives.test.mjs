@@ -223,6 +223,53 @@ test("expandContent reports absence of a collapse control without claiming compl
   assert.equal(api.textCompleteness({ expansionState: expansion.state }), "no_collapse_observed");
 });
 
+test("X expansion pins its owner across feed/detail routes and DOM replacement", async (t) => {
+  const owner = "https://x.com/owner/status/123";
+  const other = "https://x.com/other/status/456";
+  for (const scenario of [
+    { name: "Windowed feed", route: "https://x.com/home", expected: "expanded_no_restore_control", clicks: 1 },
+    { name: "exact detail", route: owner, exact: true, expected: "expanded_no_restore_control", clicks: 1 },
+    { name: "Headless feed", route: "https://x.com/home", exact: true, expected: "not_allowed", clicks: 0 },
+    { name: "different detail", route: other, expected: "not_allowed", clicks: 0 },
+    { name: "missing identity", route: owner, identity: "missing", expected: "not_allowed", clicks: 0 },
+    { name: "conflicting identity", route: owner, identity: "conflicting", expected: "not_allowed", clicks: 0 },
+    { name: "owner replaced on click", route: owner, replaceOwner: true, expected: "not_allowed", clicks: 1 },
+  ]) await t.test(scenario.name, async () => {
+    const api = primitives();
+    let identity = { status: scenario.identity ?? "identified", permalink: owner };
+    let text = "Excerpt", clicks = 0;
+    const root = {};
+    const button = { innerText: "Show more", click() {
+      clicks++; text = "Excerpt with all remaining authored content";
+      if (scenario.replaceOwner) identity = { status: "identified", permalink: other };
+    } };
+    const container = { querySelectorAll: selector => selector === ".root" ? [root] : [button] };
+    const expansion = await api.expandContent({ container,
+      adapter: { source: "x", resolveIdentity: () => identity, contentRootSelector: ".root",
+        contentExpansion: { buttonSelector: ".button", restorable: false } },
+      route: () => scenario.route, requireExactXPermalink: scenario.exact === true,
+      readText: () => text, wait: async () => {},
+    });
+    assert.equal(expansion.state, scenario.expected);
+    assert.equal(clicks, scenario.clicks);
+    if (scenario.expected === "not_allowed") assert.equal(api.textCompleteness({ expansionState: expansion.state }), "partial");
+  });
+});
+
+test("X owner pinning leaves other adapters' expansion contracts unchanged", async () => {
+  const api = primitives();
+  let text = "Excerpt";
+  const root = {};
+  const button = { innerText: "Show more", click() { text = "Longer complete caption"; } };
+  const expansion = await api.expandContent({
+    container: { querySelectorAll: selector => selector === ".root" ? [root] : [button] },
+    adapter: { source: "instagram", resolveIdentity: () => { throw Error("unrelated identity must not be called"); },
+      contentRootSelector: ".root", contentExpansion: { buttonSelector: ".button", restorable: false } },
+    readText: () => text, route: () => "https://www.instagram.com/", wait: async () => {},
+  });
+  assert.equal(expansion.state, "expanded_no_restore_control");
+});
+
 test("text completeness stays additive and text replacement requires exact identity and longer Unicode text", () => {
   const api = primitives();
 
