@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "capture-quality-v4";
+  const runtimeRevision = "capture-quality-v5";
   if (globalThis.AkuCaptureQualityPolicy?.runtimeRevision === runtimeRevision) return;
 
   const profiles = Object.freeze({
@@ -27,6 +27,62 @@
       ]),
     }),
   });
+
+  const factFields = Object.freeze([
+    "contentRootDetected", "authorRootDetected", "primaryAvatarRootDetected", "mediaRootDetected",
+    "mediaEvidence", "mediaPlaybackMissing", "timestampSignalDetected", "publishedAtNotExposed", "stableTextIdentity",
+  ]);
+
+  // This wire contains observations only, never a verdict or retry authority.
+  function normalizeFacts(facts) {
+    return Object.freeze(Object.fromEntries(factFields.map(field => [field,
+      facts && typeof facts === "object" && Object.getOwnPropertyDescriptor(facts, field)?.value === true,
+    ])));
+  }
+
+  function observeCandidateFacts({ container, adapter, candidate, mediaEvidence }) {
+    const selectors = adapter.qualitySelectors ?? {};
+    const quotedRoot = adapter.findQuotedRoot?.(container) ?? null;
+    const uniqueElements = values => [...new Set(values)];
+    const detectedOutside = selector => Boolean(selector && [...container.querySelectorAll(selector)]
+      .some(element => !quotedRoot?.contains?.(element)));
+    // Match the Windowed acquisition observer's ownership signal without
+    // acquiring candidates, waiting, or widening the media owner.
+    if (mediaEvidence === undefined && typeof adapter.mediaAcquisition.observeEvidence === "function") {
+      const observed = adapter.mediaAcquisition.observeEvidence(container, {
+        candidateId: candidate.platformId, excludeRoot: quotedRoot, uniqueElements, collectRootCandidates: () => [],
+      });
+      mediaEvidence = { expectedKinds: observed.expectedKinds,
+        signal: observed.expectedKinds.length || candidate.media?.length ? "owned" : observed.ambiguous ? "ambiguous" : "absent" };
+    }
+    const potentialMediaRoot = () => {
+      if (detectedOutside(selectors.media)) return true;
+      for (const image of container.querySelectorAll(adapter.imageSelector ?? "img")) {
+        if (quotedRoot?.contains?.(image) || adapter.shouldSkipImage?.(image)) continue;
+        const rect = image.getBoundingClientRect();
+        if ((rect.width || image.naturalWidth) >= 180 && (rect.height || image.naturalHeight) >= 90) return true;
+      }
+      return [...container.querySelectorAll("video")].some(video => {
+        if (quotedRoot?.contains?.(video)) return false;
+        const rect = video.getBoundingClientRect();
+        return (rect.width || video.videoWidth) >= 180 && (rect.height || video.videoHeight) >= 90;
+      });
+    };
+    return normalizeFacts({
+      contentRootDetected: detectedOutside(selectors.content),
+      authorRootDetected: detectedOutside(selectors.author),
+      primaryAvatarRootDetected: detectedOutside(selectors.avatar),
+      mediaRootDetected: mediaEvidence ? mediaEvidence.signal === "owned" : potentialMediaRoot(),
+      mediaEvidence: Boolean(mediaEvidence),
+      mediaPlaybackMissing: typeof adapter.mediaAcquisition.isComplete === "function" &&
+        !adapter.mediaAcquisition.isComplete(candidate.media, { contentKind: candidate.contentKind,
+          expectedKinds: mediaEvidence?.expectedKinds ?? adapter.mediaAcquisition.detectExpectedKinds(container, { excludeRoot: quotedRoot, uniqueElements }) }),
+      timestampSignalDetected: detectedOutside(selectors.timestamp) || Boolean(candidate.presentation?.timestampText),
+      publishedAtNotExposed: candidate.presentation?.timestampSource === "not_exposed_promoted" ||
+        candidate.presentation?.timestampAvailability === "not_exposed_promoted",
+      stableTextIdentity: String(candidate.text ?? "").replace(/\s+/g, " ").trim().length >= 40,
+    });
+  }
 
   function evaluateCandidate({
     candidate,
@@ -241,6 +297,8 @@
     runtimeRevision,
     profiles,
     evaluateCandidate,
+    normalizeFacts,
+    observeCandidateFacts,
     summarize,
   });
 })();

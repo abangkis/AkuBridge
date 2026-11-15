@@ -1118,7 +1118,7 @@
     const adapter = sourceAdapters.get(source);
     const selectors = adapter.qualitySelectors ?? {};
     const quotedRoot = adapter.findQuotedRoot?.(container) ?? null;
-    const facts = {
+    const facts = source === "x" ? qualityPolicy.observeCandidateFacts({ container, adapter, candidate: block, mediaEvidence }) : {
       contentRootDetected: selectorDetectedOutside(container, selectors.content, quotedRoot),
       authorRootDetected: selectorDetectedOutside(container, selectors.author, quotedRoot),
       primaryAvatarRootDetected: selectorDetectedOutside(container, selectors.avatar, quotedRoot),
