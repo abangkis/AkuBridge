@@ -170,12 +170,22 @@
   });
 
   function assessInstagramReadiness(context) {
+    // Adapter diagnosis must not replace access or navigation blockers.
+    if (["source_unavailable", "login_required", "challenge_required", "wrong_page"].includes(context.state)) {
+      return { state: context.state, diagnosis: context.state };
+    }
+    if (context.state === "loading" || context.loadingIndicator === true &&
+        (context.visibleSelectorCandidateCount ?? 0) === 0) {
+      return { state: "loading", diagnosis: "navigation_incomplete" };
+    }
     if (context.feedRootPresent === true &&
         context.documentReadyState === "complete" &&
         (context.visibleSelectorCandidateCount ?? 0) === 0) {
       const selectorPostsPresent = context.selectorCandidateCount > 0;
       const structuralPostsPresent = context.structuralCandidateCount > 0;
-      const visuallySettledWithoutCandidates = context.visualHydrationReady === true &&
+      // The no-configuration visual default is not evidence of a settled feed.
+      const visuallySettledWithoutCandidates = context.visualHydrationRequired === true &&
+        context.visualHydrationReady === true &&
         !selectorPostsPresent && !structuralPostsPresent;
       return {
         state: selectorPostsPresent
@@ -189,8 +199,8 @@
             ? "post_permalink_unhydrated"
             : visuallySettledWithoutCandidates
               ? "dom_contract_mismatch"
-              : "feed_shell_unhydrated",
-        ...(visuallySettledWithoutCandidates ? {} : {
+              : "feed_state_unverified",
+        ...(selectorPostsPresent || structuralPostsPresent ? {
           recovery: {
             action: "recreate_managed_surface",
             inPageAction: selectorPostsPresent
@@ -198,12 +208,10 @@
               : "reset_feed_top",
             reason: selectorPostsPresent
               ? "post_outside_capture_viewport"
-              : structuralPostsPresent
-                ? "post_permalink_unhydrated"
-                : "feed_shell_unhydrated",
+              : "post_permalink_unhydrated",
             maxAttempts: 1,
           },
-        }),
+        } : {}),
       };
     }
     return {

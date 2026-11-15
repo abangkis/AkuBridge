@@ -65,7 +65,7 @@ test("X canonicalizes native post action routes to the base post", () => {
   assert.equal(canonicalize("https://x.com/home"), null);
 });
 
-test("X and Instagram diagnose unhydrated feed shells through the generic contract", () => {
+test("generic readiness distinguishes Instagram's unverified shell from X hydration recovery", () => {
   const context = createBrowserContext();
   runScript(context, "source-adapter-runtime.js");
   runScript(context, path.join("adapters", "x-adapter.js"));
@@ -80,10 +80,9 @@ test("X and Instagram diagnose unhydrated feed shells through the generic contra
       structuralCandidateCount: 0,
     });
     assert.equal(assessment.state, "selector_mismatch");
-    assert.equal(assessment.diagnosis, "feed_shell_unhydrated");
-    assert.deepEqual(JSON.parse(JSON.stringify(assessment.recovery)), {
+    assert.equal(assessment.diagnosis, source === "instagram" ? "feed_state_unverified" : "feed_shell_unhydrated");
+    assert.deepEqual(JSON.parse(JSON.stringify(assessment.recovery)), source === "instagram" ? null : {
       action: "recreate_managed_surface",
-      ...(source === "instagram" ? { inPageAction: "reset_feed_top" } : {}),
       reason: "feed_shell_unhydrated",
       maxAttempts: 1,
     });
@@ -106,6 +105,7 @@ test("X and Instagram diagnose unhydrated feed shells through the generic contra
     documentReadyState: "complete",
     selectorCandidateCount: 0,
     structuralCandidateCount: 0,
+    visualHydrationRequired: true,
     visualHydrationReady: true,
   });
   assert.equal(settledContractMismatch.state, "selector_mismatch");
