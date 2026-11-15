@@ -1308,9 +1308,8 @@ function xRecaptureRouteKind(value, targetUrl) {
   try {
     const url = new URL(value);
     if (url.origin !== "https://x.com" || url.username || url.password) return "outside_x";
-    const statusId = path => /^\/(?:[\w]{1,15}|i\/web)\/status\/(\d+)(?:\/|$)/i.exec(path)?.[1];
-    const id = statusId(url.pathname);
-    if (id) return id === statusId(new URL(targetUrl).pathname) ? "target_status" : "other_status";
+    const id = xStatusIdFromPath(url.pathname);
+    if (id) return id === xStatusIdFromPath(new URL(targetUrl).pathname) ? "target_status" : "other_status";
     if (/^\/home\/?$/i.test(url.pathname)) return "feed";
     if (/^\/(?:login|i\/flow\/(?:login|signup))(?:\/|$)/i.test(url.pathname)) return "login";
     if (/^\/(?:account\/access|i\/flow\/challenge)(?:\/|$)/i.test(url.pathname)) return "challenge";
@@ -1318,6 +1317,10 @@ function xRecaptureRouteKind(value, targetUrl) {
   } catch {
     return "unavailable";
   }
+}
+
+function xStatusIdFromPath(path) {
+  return /^\/(?:[\w]{1,15}|i\/web)\/status\/(\d+)(?:\/|$)/i.exec(path)?.[1];
 }
 
 async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) {
@@ -1344,6 +1347,8 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
   });
   const sourcePolicy = sourceDefinition(command.payload.source);
   const structuredCollector = structuredMediaCollectors.get(sourcePolicy?.structuredMediaCollector);
+  const xRecaptureTarget = command.type === "recapture_media" && command.payload.source === "x"
+    ? command.payload.targetUrl : null;
   const structuredMediaRequestId = structuredCollector
     ? `${command.id}:${sourceTabRecoveryCount}`
     : null;
@@ -1375,7 +1380,9 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
     ? (await captureWithParallelStructuredMedia({
         capture: () => collectFromTabWithDeadline(prepared.tab.id, payload),
         collect: () => collectStructuredMediaWithinBudget({
-          collector: structuredCollector,
+          collector: xRecaptureTarget
+            ? tabId => structuredCollector(tabId, xRecaptureTarget)
+            : structuredCollector,
           tabId: prepared.tab.id,
           budgetMs: STRUCTURED_MEDIA_COLLECTION_BUDGET_MS,
         }),
@@ -1402,8 +1409,14 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
   return response.observation;
 }
 
-async function collectXStructuredMediaEvidence(tabId) {
+async function collectXStructuredMediaEvidence(tabId, recaptureTarget = null) {
   try {
+    const statusId = recaptureTarget
+      ? xStatusIdFromPath(new URL(assertRecaptureTarget("x", recaptureTarget)).pathname)
+      : null;
+    if (recaptureTarget && !/^\d{5,30}$/.test(statusId ?? "")) {
+      throw new Error("X structured media recapture requires an exact status ID.");
+    }
     const target = { tabId };
     await chrome.scripting.executeScript({
       target,
@@ -1415,6 +1428,7 @@ async function collectXStructuredMediaEvidence(tabId) {
       world: "MAIN",
       func: resolveXStructuredMediaInMainWorld,
       args: [{
+        ...(statusId ? { candidateIds: [`x:status:${statusId}`], maxMediaDepth: 16 } : {}),
         maxCandidates: 16,
         maxMediaPerCandidate: 4,
         maxTraversalNodes: 1_500,

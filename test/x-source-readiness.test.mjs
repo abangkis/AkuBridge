@@ -4,7 +4,8 @@ import test from "node:test";
 import vm from "node:vm";
 import { AkuBridgeError, createTabLease, serializeBridgeError } from "../bridge-runtime-policy.js";
 import { emptyCaptureDiagnostics } from "../capture-observation-policy.js";
-
+import { isNativePostUrl } from "../source-catalog.js";
+import { captureWithParallelStructuredMedia, collectStructuredMediaWithinBudget } from "../structured-media-collection-runtime.js";
 
 class Article {
   constructor({ primary = false, author = "", text = "", permalink = "", media = false, visible = true,
@@ -430,6 +431,49 @@ test("Windowed X recapture selects the exact article before the normal candidate
   assert.equal(observation.coverage.xRecaptureSelection.outcome, "target_captured");
   assert.equal(observation.coverage.xRecaptureSelection.scannedCount, 7);
   assert.equal(Object.hasOwn(snapshot, "xRecaptureSelection"), false);
+});
+
+test("Windowed X video recapture passes one validated status ID to the MAIN-world resolver", async () => {
+  const service = fs.readFileSync(new URL("../service-worker.js", import.meta.url), "utf8");
+  const resolverRequests = [];
+  const context = vm.createContext({
+    URL, isNativePostUrl, captureWithParallelStructuredMedia, collectStructuredMediaWithinBudget,
+    chrome: { scripting: { executeScript: async request => {
+      if (request.func) resolverRequests.push(request.args[0]);
+      return [{ result: { candidates: [] } }];
+    } } },
+    assertTabLease: async () => {},
+    inspectCaptureSurface: async () => ({}),
+    normalizeSourceTabLifecycle: () => ({}),
+    recoverSourceFreshness: async () => ({}),
+    sourceDefinition: () => ({ structuredMediaCollector: "x_response" }),
+    collectFromTabWithDeadline: async () => ({ ok: true, observation: {} }),
+    deliverStructuredMediaEvidence: async () => true,
+    resolveXStructuredMediaInMainWorld: () => {},
+    STRUCTURED_MEDIA_COLLECTION_BUDGET_MS: 250,
+    STRUCTURED_MEDIA_DELIVERY_WAIT_MS: 250,
+  });
+  for (const [start, end] of [
+    ["function xStatusIdFromPath(", "async function claimCommand("],
+    ["function assertRecaptureTarget(", "async function prepareSourceTab("],
+  ]) {
+    vm.runInContext(service.slice(service.indexOf(start), service.indexOf(end)), context);
+  }
+  context.structuredMediaCollectors = new Map([["x_response", context.collectXStructuredMediaEvidence]]);
+  const capture = (type, targetUrl) => context.capturePreparedSource({
+    id: "fixture", type, payload: { source: "x", targetUrl },
+  }, { tab: { id: 7 } }, 0);
+  await capture("recapture_media", detailURL);
+  await capture("collect");
+  await capture("recapture_media", "https://x.com/home");
+  assert.equal(resolverRequests.length, 2);
+  assert.deepEqual([...resolverRequests[0].candidateIds], ["x:status:12345"]);
+  assert.equal(resolverRequests[0].maxTraversalNodes, 1_500);
+  assert.equal(resolverRequests[0].maxDepth, 9);
+  assert.equal(resolverRequests[0].maxMediaDepth, 16);
+  assert.equal(resolverRequests[1].candidateIds, undefined);
+  assert.equal(resolverRequests[1].maxDepth, 9);
+  assert.equal(resolverRequests[1].maxMediaDepth, undefined);
 });
 
 test("Windowed X recognizes a detail article's direct date permalink without a time element", async () => {

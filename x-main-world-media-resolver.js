@@ -1,6 +1,6 @@
 // This function is intentionally self-contained so Chrome can serialize it into the MAIN world.
-// It returns only candidate IDs and allowlisted media evidence; no React objects or response data
-// cross the isolated-world boundary.
+// It returns candidate IDs, allowlisted media evidence, and diagnostic counts.
+// React objects and raw responses stay in the MAIN world.
 export function resolveXStructuredMediaInMainWorld(request = {}) {
   const runtimeRevision = "x-main-world-media-resolver-v1";
   const maxCandidates = clamp(request.maxCandidates, 1, 16, 12);
@@ -9,23 +9,43 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
   // Headless React roots can place the owning Tweet at depth 13. Preserve the
   // existing Bridge default; deeper traversal requires an explicit bounded request.
   const maxDepth = clamp(request.maxDepth, 2, 16, 9);
+  const maxMediaDepth = clamp(request.maxMediaDepth, maxDepth, 16, maxDepth);
   const requestedIds = new Set(
     (Array.isArray(request.candidateIds) ? request.candidateIds : [])
       .map(normalizeCandidateId)
       .filter(Boolean)
       .slice(0, maxCandidates),
   );
+  const articleScanLimit = requestedIds.size ? 64 : maxCandidates;
   const articles = unique([
     ...(globalThis.document?.querySelectorAll?.('article[data-testid="tweet"]') ?? []),
     ...(globalThis.document?.querySelectorAll?.("main article") ?? []),
-  ]).slice(0, maxCandidates);
+  ]).slice(0, articleScanLimit);
   const candidates = [];
+  const preferMp4 = request.playbackFormat === "mp4";
+  const mediaScan = preferMp4 ? {
+    maxDepth: maxMediaDepth,
+    traversedNodeCount: 0,
+    hlsVariantCount: 0,
+    mp4VariantCount: 0,
+    pairedVideoCount: 0,
+    nodeLimitedArticleCount: 0,
+    depthLimitedArticleCount: 0,
+    variantLimitedArticleCount: 0,
+    propertyLimitedArticleCount: 0,
+    outcomes: {
+      variants_not_found: 0, hls_only: 0, mp4_pairing_failed: 0, scan_limited: 0, mp4_paired: 0,
+    },
+  } : null;
+  let matchedArticleCount = 0;
   let traversedNodeCount = 0;
   let matchedStructuredNodeCount = 0;
 
   for (const article of articles) {
+    if (matchedArticleCount >= maxCandidates) break;
     const candidateId = candidateIdFromContainer(article);
     if (!candidateId || (requestedIds.size > 0 && !requestedIds.has(candidateId))) continue;
+    matchedArticleCount += 1;
     const numericId = candidateId.slice("x:status:".length);
     const roots = reactRoots(article);
     const seen = new Set();
@@ -50,10 +70,10 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
       }
     }
 
-    const media = request.playbackFormat === "mp4"
-      ? collectMp4PreferredMedia(matched, numericId, maxMediaPerCandidate, maxDepth)
+    const media = preferMp4
+      ? collectMp4PreferredMedia(matched, numericId, maxMediaPerCandidate, maxMediaDepth)
       : collectStructuredMedia(matched, numericId, maxMediaPerCandidate);
-    if (request.playbackFormat !== "mp4") pairVideoEvidence(media);
+    if (!preferMp4) pairVideoEvidence(media);
     if (media.length > 0) candidates.push({ candidateId, media });
   }
 
@@ -63,10 +83,15 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
     candidates,
     diagnostics: Object.freeze({
       articleCount: articles.length,
+      requestedIdCount: requestedIds.size,
+      matchedArticleCount,
       candidateCount: candidates.length,
       traversedNodeCount,
       matchedStructuredNodeCount,
       bounded: traversedNodeCount >= maxTraversalNodes,
+      ...(mediaScan ? { mediaScan: Object.freeze({
+        ...mediaScan, outcomes: Object.freeze(mediaScan.outcomes),
+      }) } : {}),
     }),
   });
 
@@ -238,14 +263,21 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
 
   // In MP4 mode, collect bounded poster and variant evidence before applying the output limit.
   function collectMp4PreferredMedia(matched, numericId, limit, maxMediaDepth) {
+    if (!matched.length) return [];
     const posters = new Map();
     const variants = new Map();
+    const hlsUrls = new Set();
+    const mp4Urls = new Set();
     const images = [];
     const imageSeen = new Set();
     const directVideoEntities = new Map();
     let mediaNodesVisited = 0;
+    let variantLimited = false;
+    let propertyLimited = false;
+    const reportPropertyLimit = () => { propertyLimited = true; };
     const mediaQueue = matched.map((value) => ({ value, depth: 0 }));
     const mediaObjectsSeen = new Set();
+    const depthSkipped = new Set();
     while (mediaQueue.length > 0 && mediaNodesVisited < 600) {
       const current = mediaQueue.shift();
       const value = current?.value;
@@ -255,8 +287,9 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
       const owningTweetId = explicitTweetId(value);
       if (owningTweetId && owningTweetId !== numericId) continue;
       const dimensions = dimensionsFromObject(value);
-      const directVideo = directPairFromVideoEntity(value);
+      const directVideo = directPairFromVideoEntity(value, mp4Urls);
       if (directVideo) {
+        variantLimited ||= directVideo.variantLimited === true;
         const posterIdentity = xAssetIdentity(directVideo.posterUrl);
         const previous = directVideoEntities.get(posterIdentity);
         if (directVideo.ambiguous) {
@@ -282,7 +315,7 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
           });
         }
       }
-      for (const [key, rawUrl] of stringEntries(value, 80)) {
+      for (const [key, rawUrl] of stringEntries(value, 80, reportPropertyLimit)) {
         if (!/(?:url|src|poster)/i.test(key)) continue;
         const url = safeXMediaUrl(rawUrl);
         if (!url) continue;
@@ -314,16 +347,19 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
           });
           continue;
         }
-        if (parsed.hostname !== "video.twimg.com" || !/\.mp4$/i.test(parsed.pathname)) continue;
+        if (parsed.hostname !== "video.twimg.com") continue;
+        if (/\.m3u8$/i.test(parsed.pathname)) hlsUrls.add(url);
+        if (!/\.mp4$/i.test(parsed.pathname)) continue;
+        mp4Urls.add(url);
         const identity = videoAssetIdentity(url);
         if (!identity) continue;
         const previous = variants.get(identity);
         if (!previous || playbackArea(url) > playbackArea(previous)) variants.set(identity, url);
       }
-      if (current.depth >= maxMediaDepth) continue;
-      for (const child of dataValues(value, 80)) {
+      for (const child of dataValues(value, 80, reportPropertyLimit)) {
         if (isObject(child) && !mediaObjectsSeen.has(child)) {
-          mediaQueue.push({ value: child, depth: current.depth + 1 });
+          if (current.depth >= maxMediaDepth) depthSkipped.add(child);
+          else mediaQueue.push({ value: child, depth: current.depth + 1 });
         }
       }
     }
@@ -352,12 +388,28 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
       directPosterIdentities.add(posterIdentity);
     }
     const remainingImages = images.filter((item) => !directPosterIdentities.has(xAssetIdentity(item.url)));
+    const nodeLimited = mediaQueue.some(({ value }) => !mediaObjectsSeen.has(value));
+    const depthLimited = [...depthSkipped].some(value => !mediaObjectsSeen.has(value));
+    const pairedVideoCount = directPairs.length + pairedPosters.length;
+    mediaScan.traversedNodeCount += mediaNodesVisited;
+    mediaScan.hlsVariantCount += hlsUrls.size;
+    mediaScan.mp4VariantCount += mp4Urls.size;
+    mediaScan.pairedVideoCount += pairedVideoCount;
+    mediaScan.nodeLimitedArticleCount += Number(nodeLimited);
+    mediaScan.depthLimitedArticleCount += Number(depthLimited);
+    mediaScan.variantLimitedArticleCount += Number(variantLimited);
+    mediaScan.propertyLimitedArticleCount += Number(propertyLimited);
+    const outcome = pairedVideoCount ? "mp4_paired"
+      : nodeLimited || depthLimited || variantLimited || propertyLimited ? "scan_limited"
+        : mp4Urls.size ? "mp4_pairing_failed"
+          : hlsUrls.size ? "hls_only" : "variants_not_found";
+    mediaScan.outcomes[outcome] += 1;
     return [...directPairs, ...pairedPosters, ...unresolvedPosters, ...remainingImages].slice(0, limit);
   }
 
   // Pair only evidence carried by one explicit video media entity. Generic /media posters do
   // not expose the video asset ID, so variants from neighboring entities cannot identify them.
-  function directPairFromVideoEntity(value) {
+  function directPairFromVideoEntity(value, mp4Urls) {
     const type = dataProperty(value, "type");
     if (type !== "video" && type !== "animated_gif") return null;
     const videoInfo = dataProperty(value, "video_info");
@@ -380,7 +432,7 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
     const posterUrl = [...postersByIdentity.values()][0];
     // Unexamined variants could bind this poster to another asset. A capped
     // traversal cannot establish an unambiguous entity in that case.
-    if (variantLength > 32) return { posterUrl, ambiguous: true };
+    if (variantLength > 32) return { posterUrl, ambiguous: true, variantLimited: true };
 
     const assets = new Map();
     const variantCount = Math.min(variantLength, 32);
@@ -394,6 +446,7 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
       if (!playbackUrl) continue;
       const assetIdentity = videoAssetIdentity(playbackUrl);
       if (!assetIdentity) continue;
+      mp4Urls.add(playbackUrl);
       const previous = assets.get(assetIdentity);
       if (!previous || playbackArea(playbackUrl) > playbackArea(previous)) assets.set(assetIdentity, playbackUrl);
     }
@@ -459,28 +512,30 @@ export function resolveXStructuredMediaInMainWorld(request = {}) {
     return size && Number(size[1]) <= 8192 && Number(size[2]) <= 8192 ? Number(size[1]) * Number(size[2]) : 0;
   }
 
-  function dataValues(value, limit) {
+  function dataValues(value, limit, onLimited) {
     const values = [];
-    for (const key of ownNames(value, limit)) {
+    for (const key of ownNames(value, limit, onLimited)) {
       const child = dataProperty(value, key);
       if (child !== undefined) values.push(child);
     }
     return values;
   }
 
-  function stringEntries(value, limit) {
+  function stringEntries(value, limit, onLimited) {
     const entries = [];
-    for (const key of ownNames(value, limit)) {
+    for (const key of ownNames(value, limit, onLimited)) {
       const child = dataProperty(value, key);
       if (typeof child === "string") entries.push([key, child]);
     }
     return entries;
   }
 
-  function ownNames(value, limit) {
+  function ownNames(value, limit, onLimited) {
     if (!isObject(value)) return [];
     try {
-      return Object.getOwnPropertyNames(value).slice(0, limit);
+      const names = Object.getOwnPropertyNames(value);
+      if (names.length > limit) onLimited?.();
+      return names.slice(0, limit);
     } catch {
       return [];
     }

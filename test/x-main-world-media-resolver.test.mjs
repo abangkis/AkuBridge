@@ -77,6 +77,125 @@ test("MAIN-world resolver pairs an X video poster with an allowlisted playback U
   });
 });
 
+test("MP4 diagnostics distinguish owned HLS, unpaired MP4, and absent variants", () => {
+  const poster = "https://pbs.twimg.com/ext_tw_video_thumb/23456/pu/img/poster.jpg";
+  const hls = "https://video.twimg.com/ext_tw_video/23456/pl/fixture.m3u8?secret=diagnostic";
+  const mp4 = "https://video.twimg.com/ext_tw_video/34567/pu/vid/fixture.mp4?secret=diagnostic";
+  const quote = { __typename: "Tweet", rest_id: "99999", legacy: { playbackUrl: mp4 } };
+  for (const [name, variant, hlsCount, mp4Count] of [
+    ["variants_not_found", null, 0, 0],
+    ["hls_only", hls, 1, 0],
+    ["mp4_pairing_failed", mp4, 0, 1],
+  ]) {
+    const article = syntheticArticle("23456", {
+      result: {
+        rest_id: "23456",
+        legacy: {
+          extended_entities: { media: [{
+            type: "video",
+            media_url_https: poster,
+            ...(variant ? { video_info: { variants: [{ url: variant }] } } : {}),
+          }] },
+        },
+        quoted_status_result: { result: quote },
+      },
+    });
+    const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({ playbackFormat: "mp4" }));
+    const scan = result.diagnostics.mediaScan;
+    assert.equal(scan.outcomes[name], 1, name);
+    assert.equal(scan.hlsVariantCount, hlsCount, name);
+    assert.equal(scan.mp4VariantCount, mp4Count, name);
+    assert.equal(scan.pairedVideoCount, 0, name);
+    assert.equal(result.candidates[0].media[0].playbackUrl, null, name);
+    assert.doesNotMatch(JSON.stringify(scan), /secret|twimg|99999/, name);
+  }
+});
+
+test("media diagnostics report node and depth limits separately from the identity scan", () => {
+  const nodeLimited = syntheticArticle("23456", {
+    result: { rest_id: "23456", children: Array.from({ length: 10 }, () => Array.from({ length: 65 }, () => ({}))) },
+  });
+  const deepVariant = syntheticArticle("23456", {
+    result: { rest_id: "23456", child: { child: { child: { url: "https://video.twimg.com/ext_tw_video/23456/pl/fixture.m3u8" } } } },
+  });
+  for (const [article, options, limit] of [
+    [nodeLimited, {}, "nodeLimitedArticleCount"],
+    [deepVariant, { maxDepth: 2 }, "depthLimitedArticleCount"],
+  ]) {
+    const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({ playbackFormat: "mp4", ...options }));
+    const scan = result.diagnostics.mediaScan;
+    assert.equal(result.diagnostics.bounded, false);
+    assert.equal(scan[limit], 1);
+    assert.equal(scan.outcomes.scan_limited, 1);
+    assert.equal(scan.outcomes.variants_not_found, 0);
+    assert.equal(result.candidates.length, 0);
+  }
+});
+
+test("MP4 diagnostics distinguish property truncation from absent variants without widening the scan", async t => {
+  const id = "23456";
+  const poster = "https://pbs.twimg.com/ext_tw_video_thumb/23456/pu/img/poster.jpg";
+  const mp4 = "https://video.twimg.com/ext_tw_video/23456/pu/vid/clip.mp4?secret=property-limit";
+  for (const [name, padding, nested, expectedOutcome, limited, playbackFirst] of [
+    ["MP4 at property 80 remains visible", 77, false, "mp4_paired", false],
+    ["MP4 at property 81 is outside the scan", 78, false, "scan_limited", true],
+    ["nested MP4 at property 81 is outside the scan", 78, true, "scan_limited", true],
+    ["observed MP4 remains paired when later properties are truncated", 78, false, "mp4_paired", true, true],
+    ["no variants within the limit remains an absence observation", 77, null, "variants_not_found", false],
+  ]) await t.test(name, () => {
+    const state = { rest_id: id, media_url_https: poster };
+    let getterCalls = 0;
+    if (playbackFirst) state.playback_url = mp4;
+    for (let index = 0; index < padding; index++) state[`padding_${index}`] = index;
+    Object.defineProperty(state, "padding_0", { get() { getterCalls++; return mp4; } });
+    if (nested !== null && !playbackFirst) state[nested ? "details" : "playback_url"] = nested ? { url: mp4 } : mp4;
+    const article = syntheticArticle(id, state);
+    const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({
+      playbackFormat: "mp4", candidateIds: [`x:status:${id}`], maxMediaDepth: 16,
+    }));
+    const scan = result.diagnostics.mediaScan;
+    assert.equal(scan.outcomes[expectedOutcome], 1);
+    assert.equal(scan.outcomes.variants_not_found, Number(expectedOutcome === "variants_not_found"));
+    assert.equal(scan.propertyLimitedArticleCount, Number(limited));
+    assert.equal(scan.nodeLimitedArticleCount, 0);
+    assert.equal(scan.depthLimitedArticleCount, 0);
+    assert.equal(scan.variantLimitedArticleCount, 0);
+    assert.equal(result.diagnostics.bounded, false, "identity node budget is a separate diagnostic");
+    assert.equal(result.candidates[0].candidateId, `x:status:${id}`);
+    assert.equal(result.candidates[0].media[0].playbackUrl, expectedOutcome === "mp4_paired" ? mp4 : null);
+    assert.equal(getterCalls, 0);
+    assert.doesNotMatch(JSON.stringify(scan), /secret|twimg|23456/);
+  });
+});
+
+test("recapture can reach deeper video variants within its media depth budget", () => {
+  const id = "23456";
+  const poster = "https://pbs.twimg.com/ext_tw_video_thumb/23456/pu/img/poster.jpg";
+  const mp4 = "https://video.twimg.com/ext_tw_video/23456/pu/vid/fixture.mp4";
+  const hls = "https://video.twimg.com/ext_tw_video/23456/pl/fixture.m3u8";
+  for (const [url, expectedOutcome, playbackUrl] of [
+    [mp4, "mp4_paired", mp4],
+    [hls, "hls_only", null],
+  ]) {
+    let branch = { url };
+    for (let level = 0; level < 15; level++) branch = { child: branch };
+    const article = syntheticArticle(id, { rest_id: id, media_url_https: poster, branch });
+    const run = maxMediaDepth => withDocument([article], () => resolveXStructuredMediaInMainWorld({
+      playbackFormat: "mp4", maxDepth: 9, candidateIds: [`x:status:${id}`], maxMediaDepth,
+    }));
+
+    const baseline = run(13);
+    const focused = run(16);
+    assert.equal(baseline.diagnostics.mediaScan.outcomes.scan_limited, 1);
+    assert.equal(baseline.candidates[0].media[0].playbackUrl, null);
+    assert.equal(focused.diagnostics.traversedNodeCount, baseline.diagnostics.traversedNodeCount);
+    assert.equal(focused.diagnostics.mediaScan.maxDepth, 16);
+    assert.equal(focused.diagnostics.mediaScan.depthLimitedArticleCount, 0);
+    assert.equal(focused.diagnostics.mediaScan.outcomes[expectedOutcome], 1);
+    assert.equal(focused.candidates[0].media[0].playbackUrl, playbackUrl);
+  }
+});
+
 test("MAIN-world resolver honors candidate filtering and rejects non-X media hosts", () => {
   const allowed = syntheticArticle("34567", {
     result: {
@@ -98,6 +217,35 @@ test("MAIN-world resolver honors candidate filtering and rejects non-X media hos
   assert.deepEqual(result.candidates.map((candidate) => candidate.candidateId), ["x:status:34567"]);
   assert.equal(JSON.stringify(result).includes("collector.example"), false);
   assert.equal(JSON.stringify(result).includes("filtered.jpg"), false);
+});
+
+test("a requested X post gets the traversal budget even after the ordinary article cap", () => {
+  const noise = syntheticArticle("11111", {
+    data: Array.from({ length: 35 }, () => Array.from({ length: 60 }, () => ({}))),
+  });
+  const targetId = "22222";
+  const poster = "https://pbs.twimg.com/ext_tw_video_thumb/22222/pu/img/poster.jpg";
+  const playback = "https://video.twimg.com/ext_tw_video/22222/pu/vid/clip.mp4";
+  const target = syntheticArticle(targetId, {
+    result: { rest_id: targetId, legacy: { extended_entities: { media: [{
+      type: "video", media_url_https: poster,
+      video_info: { variants: [{ content_type: "video/mp4", url: playback }] },
+    }] } } },
+  });
+  const run = options => withDocument([noise, target], () => resolveXStructuredMediaInMainWorld({
+    maxCandidates: 1, playbackFormat: "mp4", ...options,
+  }));
+  const broad = run({});
+  assert.equal(broad.diagnostics.traversedNodeCount, 1_500);
+  assert.equal(broad.diagnostics.bounded, true);
+  assert.equal(broad.candidates.length, 0);
+  const focused = run({ candidateIds: [`x:status:${targetId}`] });
+  assert.equal(focused.diagnostics.requestedIdCount, 1);
+  assert.equal(focused.diagnostics.matchedArticleCount, 1);
+  assert.equal(focused.diagnostics.bounded, false);
+  assert.equal(focused.diagnostics.mediaScan.outcomes.mp4_paired, 1);
+  assert.deepEqual(focused.candidates.map(c => c.candidateId), [`x:status:${targetId}`]);
+  assert.equal(focused.candidates[0].media[0].playbackUrl, playback);
 });
 
 test("MAIN-world MP4 resolver accepts wrapper-only identity and rejects a conflicting owner", () => {
@@ -487,6 +635,8 @@ test("MP4 extraction fails closed when generic entity variants exceed the inspec
   });
   const result = withDocument([article], () => resolveXStructuredMediaInMainWorld({ playbackFormat: "mp4" }));
   assert.equal(result.candidates[0].media.some(item => item.playbackUrl), false);
+  assert.equal(result.diagnostics.mediaScan.variantLimitedArticleCount, 1);
+  assert.equal(result.diagnostics.mediaScan.outcomes.scan_limited, 1);
 });
 
 test("MP4 extraction rejects unsafe generic poster and playback URLs", () => {
