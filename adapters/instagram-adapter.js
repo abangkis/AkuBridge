@@ -22,7 +22,7 @@
 
   registry.register({
     source: "instagram",
-    version: "instagram-dom-v6",
+    version: "instagram-dom-v7",
     mediaHosts: Object.freeze(["fbcdn.net", "cdninstagram.com"]),
     structuredMediaEvidence: Object.freeze({
       payloadField: "instagramStructuredMediaEvidence",
@@ -120,6 +120,9 @@
     },
     contentExpansion: Object.freeze({
       buttonSelector: '[role="button"], button',
+      resolveRoot: instagramExpansionRoot,
+      ownerIdentity: instagramExpansionOwner,
+      isCollapsed: instagramCollapseDetected,
       restorable: false,
       attempts: 12,
       intervalMs: 40,
@@ -443,21 +446,94 @@
   }
 
   function instagramCaption(container, compactText) {
+    return instagramCaptionSelection(container, compactText)?.text ?? "";
+  }
+
+  function instagramCaptionSelection(container, compactText) {
     const author = instagramAuthor(container, { compactText }).toLocaleLowerCase();
-    const candidates = [...(container.querySelectorAll?.('span[dir="auto"]') ?? [])]
+    const candidates = [...new Set([
+      ...(container.matches?.('span[dir="auto"]') ? [container] : []),
+      ...(container.querySelectorAll?.('span[dir="auto"]') ?? []),
+    ])]
       .map((element) => ({
         element,
-        text: compactText(element.innerText || element.textContent)
-          .replace(/(?:\s+|^)(?:\.\.\.\s*)?more$/i, "")
-          .trim(),
+        text: instagramCaptionText(element, compactText),
       }))
       .filter(({ element, text }) => text &&
+        instagramPrimaryCaptionElement(container, element) &&
         !element.closest?.("a,time") &&
         !element.closest?.('[role="button"]') &&
         text.toLocaleLowerCase() !== author &&
         !isInstagramInterfaceLabel(text));
     candidates.sort((left, right) => right.text.length - left.text.length);
-    return candidates[0]?.text ?? "";
+    return candidates[0] ?? null;
+  }
+
+  function instagramCaptionText(element, compactText) {
+    let text = compactText(element.innerText || element.textContent);
+    const label = globalThis.AkuCapturePrimitives?.expansionLabel;
+    const controls = [...(element.querySelectorAll?.('[role="button"], button') ?? [])]
+      .map(control => compactText(control.innerText || control.textContent))
+      .filter(value => label?.(value, "more") || label?.(value, "less"));
+    if (!controls.length) return text.replace(/(?:\s+|^)(?:\.\.\.\s*)?more$/i, "").trim();
+    for (const value of controls) if (text.toLowerCase().endsWith(value.toLowerCase())) {
+      text = text.slice(0, -value.length).trim();
+    }
+    return text;
+  }
+
+  function instagramPrimaryCaptionElement(container, element) {
+    const article = container.closest?.('article, [role="article"]');
+    const owner = element.closest?.('article, [role="article"]');
+    if (owner && owner !== article && owner !== container) return false;
+    const comment = element.closest?.('[data-comment-id], [data-commentid], [data-testid*="comment" i]');
+    return !comment || !container.contains?.(comment);
+  }
+
+  function instagramExpansionOwner(container) {
+    if (container?.isConnected === false) return null;
+    const identities = [...new Set([...(container.querySelectorAll?.('a[href]') ?? [])]
+      .map(instagramPermalinkFromAnchor).filter(Boolean).map(value => instagramPlatformIdFromCandidates([value])))];
+    return identities.length === 1 ? identities[0] : null;
+  }
+
+  function instagramExpansionRoot(container, direction = "more") {
+    const label = globalThis.AkuCapturePrimitives?.expansionLabel;
+    if (typeof label !== "function") return null;
+    for (const root of instagramCaptionRoots(container)) {
+      const controls = [...(root.querySelectorAll?.('[role="button"], button') ?? [])]
+        .filter(control => label(control.innerText || control.textContent, direction));
+      if (controls.length > 1) return null;
+      if (controls.length === 1 && !controls[0].closest?.('a[href], time')) return root;
+    }
+    return null;
+  }
+
+  function instagramCollapseDetected(container) {
+    const label = globalThis.AkuCapturePrimitives?.expansionLabel;
+    return typeof label === "function" && instagramCaptionRoots(container).some(root =>
+      [...(root.querySelectorAll?.('[role="button"], button') ?? [])]
+        .some(control => label(control.innerText || control.textContent, "more")));
+  }
+
+  function instagramCaptionRoots(container) {
+    if (!container || container.isConnected === false) return [];
+    const compactText = value => String(value ?? "").replace(/\s+/g, " ").trim();
+    const primary = instagramCaptionSelection(container, compactText);
+    if (!primary) return [];
+    // Expansion is confined to the selected primary caption and its smallest
+    // text-equivalent wrapper, never the article or a neighboring comment/post.
+    const article = container.closest?.('article, [role="article"]');
+    const captionArticle = primary.element.closest?.('article, [role="article"]');
+    if (captionArticle && captionArticle !== article && captionArticle !== container) return [];
+    const roots = [];
+    for (let root = primary.element; root && root !== container; root = root.parentElement) {
+      const comment = root.closest?.('[data-comment-id], [data-commentid], [data-testid*="comment" i]');
+      if (comment && container.contains?.(comment)) return [];
+      if (instagramCaptionText(root, compactText) !== primary.text) break;
+      roots.push(root);
+    }
+    return roots;
   }
 
   function instagramMediaRoots(container, { excludeRoot, uniqueElements }) {

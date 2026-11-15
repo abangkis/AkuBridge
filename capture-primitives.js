@@ -393,11 +393,14 @@
     if (Date.now() >= deadlineAt) return state("deadline_expired");
 
     const initialContainer = getContainer();
+    const hasSourceOwner = typeof policy.ownerIdentity === "function";
+    const sourceOwner = hasSourceOwner ? policy.ownerIdentity(initialContainer) : null;
     const pinXOwner = adapter.source === "x" || requireExactXPermalink;
     const hasIdentity = pinXOwner && typeof adapter.resolveIdentity === "function";
     const initialIdentity = hasIdentity ? adapter.resolveIdentity(initialContainer) : null;
     const pinnedPermalink = pinXOwner ? canonicalizeXPermalink(initialIdentity?.permalink ?? expectedPermalink) : null;
     const preservesOwner = (currentContainer) => {
+      if (hasSourceOwner && (!sourceOwner || policy.ownerIdentity(currentContainer) !== sourceOwner)) return false;
       if (!pinXOwner) return true;
       if (hasIdentity) {
         const currentIdentity = adapter.resolveIdentity(currentContainer);
@@ -413,7 +416,7 @@
     const initialRoot = findContentRoot(initialContainer, adapter);
     const before = readText(initialRoot) || "";
     let button = findExpansionButton(initialContainer, adapter, "more");
-    if (!button) return state("no_collapse_observed", { contentRoot: initialRoot, before });
+    if (!button) return state(policy.isCollapsed?.(initialContainer) === true ? "not_allowed" : "no_collapse_observed", { contentRoot: initialRoot, before });
     if (!preservesOwner(initialContainer) || !canExpandSafely(canExpand, button, { container: initialContainer, contentRoot: initialRoot, route: startRoute })) {
       return state("not_allowed", { button, contentRoot: initialRoot, before });
     }
@@ -602,6 +605,10 @@
   }
 
   function findContentRoot(container, adapter) {
+    if (typeof adapter.contentExpansion?.resolveRoot === "function") {
+      return adapter.contentExpansion.resolveRoot(container, "more")
+        ?? adapter.contentExpansion.resolveRoot(container, "less") ?? container;
+    }
     const quotedRoot = adapter.findQuotedRoot?.(container) ?? null;
     if (adapter.resolveContentRoot) {
       const resolved = adapter.resolveContentRoot(container);
@@ -618,6 +625,13 @@
   function findExpansionButton(container, adapter, direction) {
     const policy = adapter.contentExpansion;
     if (!policy || !container) return null;
+    if (typeof policy.resolveRoot === "function") {
+      const root = policy.resolveRoot(container, direction);
+      if (!root) return null;
+      const matches = [...(root.querySelectorAll?.(policy.buttonSelector) ?? [])]
+        .filter(candidate => expansionLabel(candidate.innerText || candidate.textContent, direction));
+      return matches.length === 1 ? matches[0] : null;
+    }
     const quotedRoot = adapter.findQuotedRoot?.(container) ?? null;
     const legacyButton = policy.buttonSelector && [...(container.querySelectorAll?.(policy.buttonSelector) ?? [])]
       .find((candidate) => !quotedRoot?.contains?.(candidate) &&

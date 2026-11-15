@@ -62,7 +62,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "instagram",
     displayName: "Instagram",
-    adapterVersion: "instagram-dom-v6",
+    adapterVersion: "instagram-dom-v7",
     adapterScript: "adapters/instagram-adapter.js",
     supportScripts: Object.freeze([]),
     ...feedRoutes.instagram,
