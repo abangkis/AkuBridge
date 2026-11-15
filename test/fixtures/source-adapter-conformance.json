@@ -34,7 +34,7 @@
     }
   },
   "linkedin": {
-    "version": "linkedin-dom-v23",
+    "version": "linkedin-dom-v24",
     "selector": "[data-view-name=\"feed-full-update\"]",
     "strategy": "[data-view-name=\"feed-full-update\"]",
     "contentKind": "document",

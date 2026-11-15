@@ -45,7 +45,7 @@
 
   registry.register({
     source: "linkedin",
-    version: "linkedin-dom-v23",
+    version: "linkedin-dom-v24",
     maxBlocksPerSnapshot: 8,
     scrollContext: "nearest_scrollable",
     scrollRootSelectors: Object.freeze(['[data-testid="mainFeed"]', "main", "#workspace"]),

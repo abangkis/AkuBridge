@@ -87,6 +87,8 @@ async function windowedCapture({ send, budget = 1, capturedBlock = persisted.blo
   let source = fs.readFileSync(new URL("content-script.js", root), "utf8");
   if (legacyFallback) {
     // Revert only the quality fallback in memory to prove this fixture detects the original miss.
+    source = source.replace('["x", "linkedin"].includes(source) ? qualityPolicy.observeCandidateFacts',
+      'source === "x" ? qualityPolicy.observeCandidateFacts');
     const previous = source;
     source = source.replace(/expectedKinds: mediaEvidence\?\.expectedKinds \?\? adapter\.mediaAcquisition\.detectExpectedKinds\(container, \{\s*excludeRoot: quotedRoot, uniqueElements,\s*\}\)/,
       "expectedKinds: mediaEvidence?.expectedKinds ?? []");

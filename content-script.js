@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v126";
+  const runtimeRevision = "source-adapters-v127";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -1118,7 +1118,7 @@
     const adapter = sourceAdapters.get(source);
     const selectors = adapter.qualitySelectors ?? {};
     const quotedRoot = adapter.findQuotedRoot?.(container) ?? null;
-    const facts = source === "x" ? qualityPolicy.observeCandidateFacts({ container, adapter, candidate: block, mediaEvidence }) : {
+    const facts = ["x", "linkedin"].includes(source) ? qualityPolicy.observeCandidateFacts({ container, adapter, candidate: block, mediaEvidence }) : {
       contentRootDetected: selectorDetectedOutside(container, selectors.content, quotedRoot),
       authorRootDetected: selectorDetectedOutside(container, selectors.author, quotedRoot),
       primaryAvatarRootDetected: selectorDetectedOutside(container, selectors.avatar, quotedRoot),
