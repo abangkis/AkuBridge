@@ -304,7 +304,7 @@
       : Promise.resolve(null);
 
     const plan = capturePolicy.normalizeCapturePlan(payload);
-    const snapshotPlan = source === "x" && payload.mode === "recapture_media"
+    const snapshotPlan = source === "x" && ["recapture_media", "capture_single_post"].includes(payload.mode)
       ? { ...plan, recaptureTarget: payload.targetUrl ?? "" }
       : plan;
     const captureVisibilityMode =

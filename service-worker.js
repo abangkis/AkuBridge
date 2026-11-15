@@ -1347,7 +1347,7 @@ async function capturePreparedSource(command, prepared, sourceTabRecoveryCount) 
   });
   const sourcePolicy = sourceDefinition(command.payload.source);
   const structuredCollector = structuredMediaCollectors.get(sourcePolicy?.structuredMediaCollector);
-  const xRecaptureTarget = command.type === "recapture_media" && command.payload.source === "x"
+  const xRecaptureTarget = (command.type === "recapture_media" || command.payload.mode === "capture_single_post") && command.payload.source === "x"
     ? command.payload.targetUrl : null;
   const structuredMediaRequestId = structuredCollector
     ? `${command.id}:${sourceTabRecoveryCount}`

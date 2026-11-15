@@ -433,6 +433,18 @@ test("Windowed X recapture selects the exact article before the normal candidate
   assert.equal(Object.hasOwn(snapshot, "xRecaptureSelection"), false);
 });
 
+test("Windowed X single-post session uses the existing exact target selection", async () => {
+  const target = new Article({ wrapperHref: "/owner/status/12345" });
+  const replies = Array.from({ length: 6 }, (_, index) => new Article({
+    primary: true, permalink: `https://x.com/reply/status/${67890 + index}`,
+  }));
+  const { observation, extracted, delays } = await captureXRecaptureFixture([...replies, target], { mode: "capture_single_post" });
+  assert.deepEqual(extracted, [target]);
+  assert.deepEqual(delays, []);
+  assert.equal(observation.snapshots.length, 1);
+  assert.equal(observation.snapshots[0].blocks[0].platformId, "x:status:12345");
+});
+
 test("Windowed X video recapture passes one validated status ID to the MAIN-world resolver", async () => {
   const service = fs.readFileSync(new URL("../service-worker.js", import.meta.url), "utf8");
   const resolverRequests = [];
@@ -603,7 +615,7 @@ async function captureXRecaptureFixture(candidates, options = {}) {
     vm.runInContext(source.slice(source.indexOf(start), source.indexOf(end)), context);
   }
   const observation = await context.collectBoundedObservation({
-    source: "x", mode: "recapture_media", targetUrl: targetURL, scrolls: 0,
+    source: "x", mode: options.mode ?? "recapture_media", targetUrl: targetURL, scrolls: 0,
     maxBlocksPerSnapshot: 5, qualityRetryBudget: 1, qualityRetrySettleMs: 150, sourceFreshness: {},
   });
   return { observation, extracted, delays };

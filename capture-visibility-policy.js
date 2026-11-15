@@ -10,13 +10,13 @@ export function planCaptureVisibility({ policy, mode, foregroundAuthorized = fal
   const windowIsolation = normalizedPolicy === "quiet_multi_window"
     ? "per_source"
     : "shared";
-  if (mode === "recapture_media") {
+  if (mode === "recapture_media" || mode === "capture_single_post") {
     return {
       policy: normalizedPolicy,
       initialMode: "managed_window",
       windowIsolation,
       allowSameWindowFallback: false,
-      foregroundAuthorized: foregroundAuthorized === true,
+      foregroundAuthorized: mode === "recapture_media" && foregroundAuthorized === true,
     };
   }
   if (mode !== "catch_up") {

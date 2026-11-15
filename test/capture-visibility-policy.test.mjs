@@ -78,3 +78,12 @@ test("unknown visibility policies fail closed to single-window Quiet", () => {
     "quiet",
   );
 });
+
+test("single-post sessions use contained managed capture without foreground permission", () => {
+  for (const policy of ["quiet", "quiet_multi_window", "adaptive_fidelity"]) {
+    const plan = planCaptureVisibility({ policy, mode: "capture_single_post", foregroundAuthorized: true });
+    assert.equal(plan.initialMode, "managed_window");
+    assert.equal(plan.allowSameWindowFallback, false);
+    assert.equal(plan.foregroundAuthorized, false);
+  }
+});
