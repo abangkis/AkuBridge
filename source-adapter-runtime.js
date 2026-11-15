@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v17";
+  const runtimeRevision = "source-adapters-v18";
   const supportedContentFamilies = new Set(["feed_post"]);
   const supportedEvidenceModalities = new Set([
     "text",
@@ -69,7 +69,10 @@
       throw new Error(`AkuBridge ${adapter.source} adapter has an invalid headless freshness contract.`);
     }
     if (headlessFreshness?.enabled === true &&
-        (adapter.freshness.revealSupported !== true ||
+        ((adapter.freshness.revealSupported !== true && headlessFreshness.mode !== "settled_current") ||
+          (headlessFreshness.mode !== undefined && !["settled_current", "reveal"].includes(headlessFreshness.mode)) ||
+          (headlessFreshness.mode === "settled_current" &&
+            (!Number.isInteger(adapter.freshness.wakeObservationMs) || adapter.freshness.wakeObservationMs < 500 || adapter.freshness.wakeObservationMs > 4_000)) ||
           typeof headlessFreshness.version !== "string" || !headlessFreshness.version ||
           typeof headlessFreshness.matchesFeedURL !== "function" ||
           typeof headlessFreshness.primaryIdentity !== "function")) {

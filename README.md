@@ -1,7 +1,7 @@
 # AkuBridge
 
 Current source candidate identity: **`0.9.4`** / Chrome manifest
-**`0.9.4.0`** / runtime **`source-adapters-v125`**.
+**`0.9.4.0`** / runtime **`source-adapters-v126`**.
 
 The source candidate is pinned by AkuBrowser/contracts/source-candidate-identity.json.
 It does not qualify an installed or published release; historical release
@@ -92,7 +92,7 @@ flowchart LR
     DOM --> XA["X adapter<br/>x-dom-v24<br/>x-freshness-v1<br/>x-media-acquisition-v2"]
     DOM --> LA["LinkedIn adapter<br/>linkedin-dom-v23<br/>linkedin-freshness-v2<br/>linkedin-media-acquisition-v3"]
     DOM --> FA["Facebook adapter<br/>facebook-dom-v19<br/>facebook-media-acquisition-v2"]
-    DOM --> IA["Instagram adapter<br/>instagram-dom-v7<br/>instagram-media-acquisition-v2"]
+    DOM --> IA["Instagram adapter<br/>instagram-dom-v8<br/>instagram-media-acquisition-v2"]
     XA --> R["Source-adapter registry"]
     LA --> R
     FA --> R

@@ -22,7 +22,7 @@
 
   registry.register({
     source: "instagram",
-    version: "instagram-dom-v7",
+    version: "instagram-dom-v8",
     mediaHosts: Object.freeze(["fbcdn.net", "cdninstagram.com"]),
     structuredMediaEvidence: Object.freeze({
       payloadField: "instagramStructuredMediaEvidence",
@@ -45,7 +45,13 @@
     }),
     freshness: Object.freeze({
       version: "instagram-freshness-v1",
-      headless: Object.freeze({ enabled: false }),
+      headless: Object.freeze({
+        enabled: true,
+        mode: "settled_current",
+        version: "instagram-headless-current-v1",
+        matchesFeedURL: instagramFreshnessFeedURL,
+        primaryIdentity: instagramFreshnessPrimaryIdentity,
+      }),
       wakeWhenBackground: true,
       settledWakeIsCurrent: true,
       wakeObservationMs: 3_500,
@@ -254,6 +260,29 @@
       return `instagram:${match[1].toLowerCase()}:${match[2]}`;
     }
     return null;
+  }
+
+  function instagramFreshnessURL(value) {
+    if (typeof value !== "string" || /[\u0000-\u0020\u007f\\]/.test(value) || /^(?:https:\/\/)[^/]*:/i.test(value)) return null;
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && url.hostname === "www.instagram.com" &&
+        !url.username && !url.password && !url.port ? url : null;
+    } catch { return null; }
+  }
+
+  function instagramFreshnessFeedURL(value) {
+    const url = instagramFreshnessURL(value);
+    return Boolean(url && url.pathname === "/" && !/%|\/\./.test(value.split("?")[0].split("#")[0]));
+  }
+
+  function instagramFreshnessPrimaryIdentity(post) {
+    if (typeof post?.id !== "string") return null;
+    if (typeof post.permalink !== "string" || /%|\/\./.test(post.permalink.split("?")[0].split("#")[0])) return null;
+    const url = instagramFreshnessURL(post.permalink);
+    const match = url?.pathname.match(/^\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/);
+    if (!match || url.search || url.hash || post.id !== `instagram:${match[1]}:${match[2]}`) return null;
+    return { id: post.id, permalink: `https://www.instagram.com/${match[1]}/${match[2]}/` };
   }
 
   function instagramCandidateIdFromContainer(container) {

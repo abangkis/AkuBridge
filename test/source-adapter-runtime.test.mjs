@@ -21,7 +21,7 @@ test("source adapters register independently behind one contract", () => {
       { source: "x", version: "x-dom-v25" },
       { source: "linkedin", version: "linkedin-dom-v23" },
       { source: "facebook", version: "facebook-dom-v19" },
-      { source: "instagram", version: "instagram-dom-v7" },
+      { source: "instagram", version: "instagram-dom-v8" },
     ],
   );
   assert.equal(
@@ -286,7 +286,7 @@ test("a reinjected adapter runtime replaces the stale registry generation", () =
   context.AkuSourceAdapters = previous;
   runScript(context, "source-adapter-runtime.js");
   assert.notEqual(context.AkuSourceAdapters, previous);
-  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v17");
+  assert.equal(context.AkuSourceAdapters.runtimeRevision, "source-adapters-v18");
   assert.deepEqual([...context.AkuSourceAdapters.capabilities()], []);
 });
 
@@ -312,7 +312,7 @@ test("the complete adapter bundle can replace its current registry generation", 
       { source: "x", version: "x-dom-v25" },
       { source: "linkedin", version: "linkedin-dom-v23" },
       { source: "facebook", version: "facebook-dom-v19" },
-      { source: "instagram", version: "instagram-dom-v7" },
+      { source: "instagram", version: "instagram-dom-v8" },
     ],
   );
 });
