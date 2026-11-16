@@ -1,7 +1,7 @@
 # AkuBridge
 
-Current source candidate identity: **`0.9.4`** / Chrome manifest
-**`0.9.4.0`** / runtime **`source-adapters-v129`**.
+Current source candidate identity: **`0.9.5`** / Chrome manifest
+**`0.9.5.0`** / runtime **`source-adapters-v130`**.
 
 The source candidate is pinned by AkuBrowser/contracts/source-candidate-identity.json.
 It does not qualify an installed or published release; historical release
@@ -260,11 +260,20 @@ aggregate fingerprint. Chrome's numeric `version` remains a separate packaging
 field. The command does not write a package artifact or modify the installed
 extension.
 
-Every runtime change must advance both identities: run `npm run version:patch`
-to synchronize `manifest.json`, `package.json`, and `package-lock.json`, then
-advance `akuRuntimeRevision`/`BRIDGE_RUNTIME_REVISION` and the content runtime
-revision together. The heartbeat derives its build ID from extension version
-and runtime revision; AkuSidecar rejects captures from an incompatible build.
+Every runtime delivery must advance the extension version and runtime revision.
+Synchronize `manifest.json`, `package.json`, `package-lock.json`,
+`akuRuntimeRevision`/`BRIDGE_RUNTIME_REVISION`, the content runtime revision,
+AkuBrowser's source candidate identity, and AkuSidecar's expected identity.
+The heartbeat derives its build ID from extension version and runtime revision;
+AkuSidecar rejects captures from an incompatible build.
+
+When replacing a cached background module graph, select a new thin
+`service-worker-entry-vN.js` in the manifest; keep runtime logic in the shared
+worker. A Sidecar or Chrome process restart does not prove that Chrome replaced
+the extension's stored module graph. After a cooperative extension reload,
+verify the expected heartbeat and the cached helper source against the reviewed
+file. Offline assessment-to-fallback tests and loaded-module verification are
+separate delivery checks; neither substitutes for a later live qualification.
 
 AkuSidecar associates each accepted heartbeat with its current non-persisted
 `instanceEpoch`. The AkuBrowser relay requests a fresh capability handshake
