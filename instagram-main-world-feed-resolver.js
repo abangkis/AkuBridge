@@ -367,8 +367,20 @@ export function instagramStructuredFeedObservation(evidence, { capturedAt = new 
 }
 
 export function shouldUseInstagramStructuredFeedFallback({ source, configuredFallback, readiness } = {}) {
+  if (["login_required", "challenge_required", "source_unavailable", "wrong_page", "loading", "feed_hydrating"]
+    .includes(readiness?.state) || readiness?.loadingIndicator === true ||
+    (readiness?.documentReadyState !== undefined && readiness.documentReadyState !== "complete")) return false;
+
+  // This permits a bounded evidence lookup; it does not establish feed readiness.
+  const unverifiedFeed = readiness?.diagnosis === "feed_state_unverified" &&
+    readiness.state === "selector_mismatch" &&
+    readiness.documentReadyState === "complete" &&
+    readiness.loadingIndicator === false &&
+    readiness.selectorCandidateCount === 0 &&
+    readiness.structuralCandidateCount === 0;
   const diagnosisAllowsFallback = readiness?.diagnosis === "feed_shell_unhydrated" ||
-    (readiness?.diagnosis === "dom_contract_mismatch" && readiness?.visualHydrationReady === true);
+    (readiness?.diagnosis === "dom_contract_mismatch" && readiness?.visualHydrationReady === true) ||
+    unverifiedFeed;
   return source === "instagram" &&
     configuredFallback === "instagram_structured_feed_v1" &&
     diagnosisAllowsFallback &&

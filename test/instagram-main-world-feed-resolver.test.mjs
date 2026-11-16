@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import vm from "node:vm";
+import { sourceDefinition } from "../source-catalog.js";
 import {
   instagramStructuredFeedObservation,
   resolveInstagramStructuredFeedInMainWorld,
@@ -44,6 +47,124 @@ test("structured feed fallback is isolated to the exact Instagram empty-shell co
     readiness: { ...valid.readiness, diagnosis: "selector_mismatch" },
   }), false);
 });
+
+test("shared Instagram assessment reaches structured fallback without declaring an empty feed ready", async () => {
+  const readiness = assessInstagramFixture();
+  const before = JSON.stringify(readiness);
+  assert.equal(readiness.state, "selector_mismatch");
+  assert.equal(readiness.diagnosis, "feed_state_unverified");
+  assert.equal(readiness.recovery, null);
+  assert.equal(fallbackAllowed(readiness), true);
+  assert.equal(JSON.stringify(readiness), before);
+
+  const captured = await collectFallbackFixture(readiness, [JSON.stringify({ item: instagramItem({
+    code: "ReadinessFallback_123", username: "aku.example",
+  }) })]);
+  const { observation } = captured.result;
+  assert.equal(captured.executions, 1);
+  assert.equal(captured.result.diagnostics.candidateCount, 1);
+  assert.equal(observation.coverage.captureQuality.verdict, "usable_degraded");
+  assert.equal(observation.snapshots[0].blocks[0].platformId, "instagram:reel:ReadinessFallback_123");
+
+  const empty = await collectFallbackFixture(readiness, []);
+  assert.equal(empty.executions, 1);
+  assert.equal(empty.result.observation, null);
+  assert.equal(empty.result.diagnostics.outcome, "no_candidates");
+  assert.equal(readiness.state, "selector_mismatch");
+});
+
+test("assessment-to-fallback preserves access, loading and candidate blockers", async (t) => {
+  const fixtures = [
+    { name: "login", input: { loginRequired: true }, state: "login_required" },
+    { name: "challenge", input: { availability: { state: "challenge_required" } }, state: "challenge_required" },
+    { name: "unavailable", input: { availability: { state: "source_unavailable" } }, state: "source_unavailable" },
+    { name: "wrong page", input: { availability: { state: "wrong_page" } }, state: "wrong_page" },
+    { name: "loading indicator", input: { loadingIndicator: true }, state: "loading" },
+    { name: "incomplete document", input: { documentReadyState: "interactive" }, state: "loading" },
+    { name: "missing feed", input: { feedRootPresent: false }, state: "page_shell" },
+    { name: "unhydrated post", input: { structuralCandidateCount: 1 }, state: "feed_hydrating" },
+    { name: "offscreen post", input: { selectorCandidateCount: 1 }, state: "feed_not_visible" },
+    { name: "ready post", input: { selectorCandidateCount: 1, visibleSelectorCandidateCount: 1 }, state: "feed_ready" },
+  ];
+  for (const fixture of fixtures) await t.test(fixture.name, async () => {
+    const readiness = assessInstagramFixture(fixture.input);
+    assert.equal(readiness.state, fixture.state);
+    assert.equal(fallbackAllowed(readiness), false);
+    const captured = await collectFallbackFixture(readiness, [JSON.stringify({ item: instagramItem({
+      code: "BlockedEvidence_123", username: "aku.example",
+    }) })]);
+    assert.equal(captured.executions, 0);
+    assert.equal(captured.result, null);
+  });
+});
+
+test("unverified fallback requires complete passive evidence and cannot override stale blocker states", () => {
+  const readiness = assessInstagramFixture();
+  for (const patch of [
+    { state: undefined }, { loadingIndicator: undefined }, { documentReadyState: undefined },
+    { selectorCandidateCount: undefined }, { structuralCandidateCount: undefined },
+    { feedRootPresent: false }, { state: "login_required" }, { state: "loading" },
+  ]) assert.equal(fallbackAllowed({ ...readiness, ...patch }), false, JSON.stringify(patch));
+  assert.equal(fallbackAllowed(readiness, { source: "x" }), false);
+  assert.equal(fallbackAllowed(readiness, { configuredFallback: undefined }), false);
+
+  for (const diagnosis of ["feed_state_unverified", "feed_shell_unhydrated", "dom_contract_mismatch"]) {
+    for (const patch of [
+      { state: "login_required" }, { state: "challenge_required" }, { state: "source_unavailable" },
+      { state: "wrong_page" }, { state: "loading" }, { state: "feed_hydrating" },
+      { loadingIndicator: true }, { documentReadyState: "loading" },
+    ]) assert.equal(fallbackAllowed({ ...readiness, diagnosis, ...patch }), false, `${diagnosis}: ${JSON.stringify(patch)}`);
+  }
+});
+
+function assessInstagramFixture(overrides = {}) {
+  const context = vm.createContext({ URL });
+  for (const file of ["capture-primitives.js", "source-adapter-runtime.js", "adapters/instagram-adapter.js"]) {
+    vm.runInContext(fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8"), context, { filename: file });
+  }
+  const sample = {
+    feedRootPresent: true, documentReadyState: "complete", loadingIndicator: false,
+    selectorCandidateCount: 0, structuralCandidateCount: 0, visibleSelectorCandidateCount: 0,
+    visualHydrationRequired: false, visualHydrationReady: true,
+    ...overrides,
+  };
+  const state = context.AkuCapturePrimitives.sourceReadinessState({
+    availability: sample.availability, loginRequired: sample.loginRequired,
+    visibleCandidateCount: sample.visibleSelectorCandidateCount,
+    candidateCount: sample.selectorCandidateCount, structuralCandidateCount: sample.structuralCandidateCount,
+    feedRootPresent: sample.feedRootPresent, loading: sample.loadingIndicator,
+    documentReady: sample.documentReadyState === "complete",
+  });
+  return { ...sample, ...context.AkuSourceAdapters.assessReadiness("instagram", { ...sample, state }) };
+}
+
+function fallbackAllowed(readiness, overrides = {}) {
+  return shouldUseInstagramStructuredFeedFallback({
+    source: "instagram", configuredFallback: sourceDefinition("instagram").captureFallback.emptyShell,
+    readiness, ...overrides,
+  });
+}
+
+async function collectFallbackFixture(readiness, scripts) {
+  const worker = fs.readFileSync(new URL("../service-worker.js", import.meta.url), "utf8");
+  const start = worker.indexOf("async function collectStructuredFeedFallback(");
+  const end = worker.indexOf("\nfunction isSourceCaptureReady(", start);
+  assert.ok(start >= 0 && end > start);
+  let executions = 0;
+  const context = vm.createContext({
+    sourceDefinition, shouldUseInstagramStructuredFeedFallback,
+    resolveInstagramStructuredFeedInMainWorld, instagramStructuredFeedObservation,
+    chrome: { scripting: { async executeScript(request) {
+      executions += 1;
+      assert.equal(request.world, "MAIN");
+      assert.equal(request.target.tabId, 42);
+      return [{ result: withScripts(scripts, () => request.func(...request.args)) }];
+    } } },
+  });
+  vm.runInContext(worker.slice(start, end), context, { filename: "service-worker.js" });
+  const result = await context.collectStructuredFeedFallback(42, "instagram", readiness);
+  return { result, executions };
+}
 
 test("Instagram structured feed resolver returns bounded native post evidence", () => {
   const organic = instagramItem({ code: "ColdStart_123", username: "aku.example" });
