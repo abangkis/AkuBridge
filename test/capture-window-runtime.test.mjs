@@ -1164,6 +1164,23 @@ test("failed removal retains a retryable cleanup record and strict accounting", 
   assert.equal(empty.cleanup.complete, true);
 });
 
+test("reload inspection preserves live owned surfaces and only retires proven absence", async () => {
+  const chrome = fakeChrome();
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const tab = (await runtime.prepare("instagram", { leaseId: "reload-pending" })).tab;
+  await assert.rejects(runtime.assertReloadReady(), { code: "cleanup_pending" });
+  await chrome.storage.session.clear();
+  await assert.rejects(runtime.assertReloadReady(), { code: "cleanup_pending" });
+  assert.deepEqual(chrome.removedTabIds, []);
+  const query = chrome.tabs.query;
+  chrome.tabs.query = async () => { throw Error("inventory unavailable"); };
+  await assert.rejects(runtime.assertReloadReady(), /inventory unavailable/);
+  chrome.tabs.query = query;
+  await chrome.tabs.remove(tab.id);
+  await runtime.assertReloadReady();
+  assert.deepEqual(chrome.removedTabIds, [tab.id]);
+});
+
 test("browser restart cannot close a reused feed identity or infer its absence", async () => {
   const chrome = fakeChrome();
   const runtime = createManagedCaptureWindowRuntime(chrome);

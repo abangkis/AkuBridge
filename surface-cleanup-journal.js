@@ -142,6 +142,20 @@ export function createSurfaceCleanupJournal(chrome) {
     return { schema: "aku.surface-cleanup.v1", leaseId, source, expected: selected.length, closed, transferred: 0, retained, pending, complete: pending === 0 };
   }
   return {
+    async assertReloadReady() {
+      const rows = await read();
+      await inventory(rows);
+      const bindings = [];
+      await inventory(bindings);
+      // Only successful absence proof may settle a record here. A matching
+      // generation or URL does not authorize reload to dispose of a live tab.
+      const tabs = await chrome.tabs.query({});
+      for (const row of rows) {
+        if (row.status !== "closed" && !tabs.some(tab => tab.id === row.tabId)) row.status = "closed";
+      }
+      await save(rows);
+      if (rows.some(row => row.status !== "closed") || bindings.some(row => tabs.some(tab => tab.id === row.tabId))) throw pendingError();
+    },
     async release(leaseId, source, operation) {
       leaseId ??= null;
       const ownerGeneration = await generation();

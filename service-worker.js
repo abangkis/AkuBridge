@@ -1,5 +1,9 @@
 import { createCaptureSurfaceReporter } from "./capture-surface-reporting.js";
 import { createSplitCaptureClient } from "./split-capture-client.js";
+import { createReloadCoordinator } from "./reload-coordinator.js";
+import "./diagnostics/recorder.js";
+import "./diagnostics/bridge-contract.js";
+import "./diagnostics/chrome-transport.js";
 import { openSourceWindow } from "./source-window-runtime.js";
 import {
   chooseSourceTab,
@@ -163,7 +167,18 @@ const nativeRuntimeScheduler = createNativeRuntimeScheduler({
     timeoutMs: NATIVE_RUNTIME_BACKGROUND_TIMEOUT_MS,
   }),
 });
-const managedCaptureWindow = createManagedCaptureWindowRuntime(chrome);
+const managedCaptureWindow = createManagedCaptureWindowRuntime(chrome, operation => reloadCoordinator.run(operation));
+const reloadCoordinator = createReloadCoordinator({
+  storage: chrome.storage.session,
+  inspect: () => managedCaptureWindow.assertReloadReady(),
+  reload: () => chrome.runtime.reload(),
+});
+const captureDiagnostics = globalThis.AkuChromeDiagnostics.createAttemptCache({
+  extensionId: chrome.runtime.id, sourceForUrl,
+  project: globalThis.AkuBridgeDiagnostics.project,
+  validAttempt: globalThis.AkuBridgeDiagnostics.validAttempt,
+  now: () => performance.now(),
+});
 const readerWindow = createReaderWindowRuntime(chrome);
 const xMediaEvidenceStore = createXMediaEvidenceStore(chrome.storage.local);
 const xAvatarEvidenceStore = createXAvatarEvidenceStore(chrome.storage.local);
@@ -186,11 +201,14 @@ const SOURCE_SCRIPT_FILES = [
 ];
 const NATIVE_RUNTIME_DISTRIBUTION = nativeRuntimeDistribution(BRIDGE_DEPLOYMENT);
 
-const splitCaptureClient = createSplitCaptureClient({ chrome, captureHostOnlyRetirement: true, handlers: {
+const splitCaptureClient = createSplitCaptureClient({ chrome, captureHostOnlyRetirement: true,
+  run: operation => reloadCoordinator.run(operation),
+  reload: { complete: id => reloadCoordinator.complete(id), cancel: id => reloadCoordinator.cancel(id) },
+  handlers: {
   ping: async () => ({ capabilities: await bridgeCapabilitiesWithSourceAccess(), extensionOrigin: chrome.runtime.getURL("").replace(/\/$/, "") }),
-  probe_source_sessions: async () => ({ sessions: await probeSourceSessions() }),
-  open_source: async (a, c) => openSourceFeed(a.source, true, c.sourceIntent),
-  open_native_post: async (a, c) => openNativePostInReaderWindow(a.source, a.url, c.readerIntent),
+  probe_source_sessions: async () => reloadCoordinator.run(async () => ({ sessions: await probeSourceSessions() })),
+  open_source: async (a, c) => reloadCoordinator.run(() => openSourceFeed(a.source, true, c.sourceIntent)),
+  open_native_post: async (a, c) => reloadCoordinator.run(() => openNativePostInReaderWindow(a.source, a.url, c.readerIntent)),
   revoke_source_access: async () => ({ grantedSources: (await revokeAllSourceAccess(chrome))?.grantedSources ?? [] }),
   configure_background: async (_a, c) => {
     await configureBackgroundDispatch(c.endpoint, c.token, 2, true);
@@ -202,10 +220,10 @@ const splitCaptureClient = createSplitCaptureClient({ chrome, captureHostOnlyRet
     if (a.hostOnly === true) return { retired: { hostOnly: true } };
     return { retired: await managedCaptureWindow.closeBackgroundTabsForHandoff(c.tabId) };
   },
-  media_recapture: async (a, c) => ({ recapture: await dispatchMediaRecapture({ ...a, endpoint: c.endpoint, token: c.token }) }),
+  media_recapture: async (a, c) => reloadCoordinator.run(async () => ({ recapture: await dispatchMediaRecapture({ ...a, endpoint: c.endpoint, token: c.token }) })),
   media_evidence: async (a) => ({ evidence: await xMediaEvidenceStore.lookup(a.candidateIds) }),
   dispatch: async (a, c) => {
-    await dispatchRun({ runId: a.runId, endpoint: c.endpoint, token: c.token });
+    await reloadCoordinator.run(() => dispatchRun({ runId: a.runId, endpoint: c.endpoint, token: c.token }));
     void queueBackgroundSessionPump(c.endpoint, c.token).catch(() => undefined);
     return {};
   },
@@ -308,6 +326,10 @@ chrome.permissions.onRemoved.addListener(() => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "AKU_BROWSER_CAPTURE_PROGRESS") {
+    sendResponse({ ok: captureDiagnostics.receive(message, sender) });
+    return false;
+  }
   if (message?.type === "AKU_BRIDGE_SPLIT_CAPTURE_CONNECT") {
     splitCaptureClient.connect(message, sender)
       .then(sendResponse)
@@ -375,7 +397,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, message: "Source session probe rejected: invalid AkuBrowser origin." });
       return false;
     }
-    probeSourceSessions()
+    reloadCoordinator.run(() => probeSourceSessions())
       .then((sessions) => sendResponse({ ok: true, sessions }))
       .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
     return true;
@@ -385,7 +407,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, message: "Open source rejected: invalid AkuBrowser origin." });
       return false;
     }
-    openSourceFeed(message.source)
+    reloadCoordinator.run(() => openSourceFeed(message.source))
       .then((result) => sendResponse({ ok: true, ...result }))
       .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
     return true;
@@ -395,7 +417,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, message: "Open native post rejected: invalid AkuBrowser origin." });
       return false;
     }
-    openNativePostInReaderWindow(message.source, message.url)
+    reloadCoordinator.run(() => openNativePostInReaderWindow(message.source, message.url))
       .then((result) => sendResponse({ ok: true, ...result }))
       .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
     return true;
@@ -426,10 +448,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
     acceptReloadSelf(message, sender.tab?.id)
-      .then(() => {
-        sendResponse({ accepted: true });
-        chrome.runtime.reload();
-      })
+      .then(() => reloadCoordinator.complete(message.actionId, () => sendResponse({ accepted: true })))
       .catch((error) => sendResponse({
         accepted: false,
         message: String(error?.message ?? error),
@@ -454,7 +473,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, message: "Media recapture rejected: invalid AkuBrowser origin." });
       return false;
     }
-    dispatchMediaRecapture(message)
+    reloadCoordinator.run(() => dispatchMediaRecapture(message))
       .then((recapture) => sendResponse({ ok: true, recapture }))
       .catch((error) => sendResponse({ ok: false, message: String(error?.message ?? error) }));
     return true;
@@ -492,7 +511,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: false, message: "Dispatch rejected: invalid AkuBrowser origin." });
     return false;
   }
-  dispatchRun(message)
+  reloadCoordinator.run(() => dispatchRun(message))
     .then(() => {
       void queueBackgroundSessionPump(message.endpoint, message.token).catch((error) => {
         console.warn("AkuBridge session pump deferred after page dispatch.", error);
@@ -674,13 +693,11 @@ async function acceptReloadSelf(message, akuBrowserTabId) {
   if (!Number.isInteger(akuBrowserTabId)) {
     throw new Error("reload_self requires the originating AkuBrowser tab ID.");
   }
-  await chrome.storage.local.set({
-    [PENDING_SELF_RELOAD_KEY]: {
-      tabId: akuBrowserTabId,
-      requestedAt: Date.now(),
-    },
-  });
+  await reloadCoordinator.prepare(message.actionId);
   try {
+    await chrome.storage.local.set({
+      [PENDING_SELF_RELOAD_KEY]: { tabId: akuBrowserTabId, requestedAt: Date.now() },
+    });
     const response = await fetch(
       `${message.endpoint}/api/operations/bridge/actions/${encodeURIComponent(message.actionId)}/accept`,
       {
@@ -693,6 +710,7 @@ async function acceptReloadSelf(message, akuBrowserTabId) {
       throw new Error(payload.message || `reload_self acceptance failed with ${response.status}.`);
     }
   } catch (error) {
+    await reloadCoordinator.cancel(message.actionId);
     await chrome.storage.local.remove(PENDING_SELF_RELOAD_KEY);
     throw error;
   }
@@ -1039,7 +1057,7 @@ async function pollBackgroundDispatch() {
     const runId = (await response.json()).runId;
     if (typeof runId !== "string" || !runId) return;
     try {
-      await dispatchRun({ endpoint: config.endpoint, token: config.token, runId, background: true });
+      await reloadCoordinator.run(() => dispatchRun({ endpoint: config.endpoint, token: config.token, runId, background: true }));
       await queueBackgroundSessionPump(config.endpoint, config.token);
     } catch (error) {
       if (error?.message === "No queued browser command was available for this run.") return;
@@ -1078,12 +1096,12 @@ async function pumpBackgroundSession(endpoint, token) {
     if (!response.ok) return;
     const runId = (await response.json()).runId;
     if (typeof runId === "string" && runId) {
-      await dispatchRun({
+      await reloadCoordinator.run(() => dispatchRun({
         endpoint: config.endpoint,
         token: config.token,
         runId,
         background: true,
-      });
+      }));
     }
   }
 }
@@ -2412,27 +2430,38 @@ async function collectFromTabWithDeadline(tabId, payload) {
     Math.min(60_000, Number(payload.captureTimeoutMs ?? 45_000) + 5_000),
   );
   let timeoutId;
-  let diagnosticsTimeoutId;
-  let diagnosticDetail = "";
-  let settled = false;
+  let diagnostics;
+  let progress;
+  let capturePayload = payload;
+  try {
+    const id = crypto.randomUUID();
+    progress = captureDiagnostics.begin({ id, tabId, source: payload.source });
+    capturePayload = { ...payload, diagnosticAttempt: id };
+  } catch { /* Missing diagnostics never prevents capture. */ }
+  try {
+    diagnostics = globalThis.AkuChromeDiagnostics.createSampler({
+      read: () => progress?.documentId() ? chrome.tabs.sendMessage(tabId,
+        { type: "AKU_BROWSER_CAPTURE_DIAGNOSTICS", attemptId: capturePayload.diagnosticAttempt },
+        { documentId: progress.documentId() }) : null,
+      project: response => progress?.pull(response),
+      schedule: setTimeout, cancel: clearTimeout, delayMs: timeoutMs - 1_000,
+    });
+  } catch { /* Diagnostics cannot prevent capture or its deadline. */ }
   try {
     return await Promise.race([
-      collectFromTab(tabId, payload),
-      new Promise((_, reject) => {
-        // Sample diagnostics before the deadline; a silent receiver must never
-        // postpone rejection of the capture itself.
-        diagnosticsTimeoutId = setTimeout(() => {
+      reloadCoordinator.run(async () => {
+        if (progress) {
           try {
-            void Promise.resolve(chrome.tabs.sendMessage(tabId, {
-              type: "AKU_BROWSER_CAPTURE_DIAGNOSTICS",
-            })).then((response) => {
-              if (!settled && response?.diagnostics) {
-                diagnosticDetail = ` Last content stage: ${JSON.stringify(response.diagnostics)}.`;
-              }
-            }).catch(() => undefined);
-          } catch { /* Diagnostics are best-effort, including a closed tab. */ }
-        }, timeoutMs - 1_000);
+            const frames = await chrome.scripting.executeScript({ target: { tabId }, func: () => true });
+            progress.bind(frames?.[0]?.documentId);
+          } catch { /* Unproved document identity leaves diagnostics unavailable. */ }
+        }
+        return collectFromTab(tabId, capturePayload);
+      }),
+      new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
+          const sample = progress?.latest() ?? diagnostics?.latest();
+          const diagnosticDetail = sample ? ` Last content stage: ${JSON.stringify(sample)}.` : "";
           reject(new Error(
             `AkuBridge content capture exceeded its bounded response deadline.${diagnosticDetail}`,
           ));
@@ -2440,9 +2469,9 @@ async function collectFromTabWithDeadline(tabId, payload) {
       }),
     ]);
   } finally {
-    settled = true;
     clearTimeout(timeoutId);
-    clearTimeout(diagnosticsTimeoutId);
+    diagnostics?.dispose();
+    progress?.dispose();
   }
 }
 

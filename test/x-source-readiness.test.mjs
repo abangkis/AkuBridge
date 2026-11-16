@@ -6,6 +6,7 @@ import { AkuBridgeError, createTabLease, serializeBridgeError } from "../bridge-
 import { emptyCaptureDiagnostics } from "../capture-observation-policy.js";
 import { isNativePostUrl } from "../source-catalog.js";
 import { captureWithParallelStructuredMedia, collectStructuredMediaWithinBudget } from "../structured-media-collection-runtime.js";
+import { DIAGNOSTIC_SCRIPTS } from "../source-access-policy.js";
 
 class Article {
   constructor({ primary = false, author = "", text = "", permalink = "", media = false, visible = true,
@@ -123,7 +124,7 @@ function createProbe(articles, { entries = [], url = "https://x.com/home", subfr
   });
   for (const file of ["capture-primitives.js", "source-adapter-runtime.js", "adapters/x-adapter.js",
     ...(sharedDOM ? ["shared-dom-engine/browser-runtime.js", "adapters/x-dom-shadow.js"] : []),
-    "bounded-capture-policy.js", "content-script.js"]) {
+    "bounded-capture-policy.js", ...DIAGNOSTIC_SCRIPTS, "content-script.js"]) {
     const source = fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
     const fixtureSource = file === "content-script.js"
       ? source.replace(/\}\)\(\);\s*$/, "  globalThis.extractFixtureBlock = extractBlock;\n})();")

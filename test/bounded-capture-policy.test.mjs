@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
-import { registeredScriptsForSources } from "../source-access-policy.js";
+import { registeredScriptsForSources, DIAGNOSTIC_SCRIPTS } from "../source-access-policy.js";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -364,6 +364,7 @@ test("the policy is loaded before the source content script", () => {
     "adapters/x-dom-shadow.js",
     "source-freshness-runtime.js",
     "media-acquisition-engine.js",
+    ...DIAGNOSTIC_SCRIPTS,
     "content-script.js",
   ]);
 

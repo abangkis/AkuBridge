@@ -19,16 +19,18 @@ export function captureWindowPolicyDescriptor() {
   return Object.freeze({ revision: "surface-lifecycle-pending-diagnostics-v2", cleanupSchema: "aku.surface-cleanup.v1" });
 }
 
-export function createManagedCaptureWindowRuntime(chromeApi) {
+export function createManagedCaptureWindowRuntime(chromeApi, run = operation => operation()) {
   const runtime = createUnserializedManagedCaptureWindowRuntime(chromeApi);
   const cleanup = createSurfaceCleanupJournal(chromeApi);
   let operationTail = Promise.resolve();
-  const serialize = (operation) => {
+  const enqueue = (operation) => {
     const result = operationTail.then(operation, operation);
     operationTail = result.catch(() => undefined);
     return result;
   };
+  const serialize = operation => run(() => enqueue(operation));
   return Object.freeze({
+    assertReloadReady: () => enqueue(() => cleanup.assertReloadReady()),
     prepare: (...args) => serialize(async () => {
       await cleanup.assertReady(args[0], args[1]?.leaseId);
       const result = await runtime.prepare(...args);

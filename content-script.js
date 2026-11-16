@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v128";
+  const runtimeRevision = "source-adapters-v129";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -14,6 +14,9 @@
   const freshnessRuntime = globalThis.AkuSourceFreshnessRuntime;
   const mediaAcquisitionEngine = globalThis.AkuMediaAcquisitionEngine;
   const mediaPostProcessor = globalThis.AkuMediaPostProcessor;
+  let captureProgress;
+  const activeProgress = new Map();
+  try { captureProgress = newCaptureProgress(); } catch { /* Diagnostics are optional. */ }
   if (!capturePolicy) throw new Error("AkuBridge bounded-capture policy was not loaded.");
   if (!capturePrimitives) throw new Error("AkuBridge capture primitives were not loaded.");
   if (!qualityPolicy) throw new Error("AkuBridge capture-quality policy was not loaded.");
@@ -26,6 +29,12 @@
 
   const messageHandler = (message, _sender, sendResponse) => {
     if (message?.type === "AKU_BROWSER_CAPTURE_DIAGNOSTICS") {
+      if (message.attemptId !== undefined) {
+        const progress = activeProgress.get(message.attemptId);
+        sendResponse(progress ? { ok: true, attemptId: message.attemptId,
+          sequence: progress.snapshot().sequence, diagnostics: progress.latest() } : { ok: false });
+        return false;
+      }
       sendResponse({ ok: true, diagnostics: globalThis.__akuBrowserCaptureProgress });
       return false;
     }
@@ -85,10 +94,12 @@
       return false;
     }
     if (message?.type !== "AKU_BROWSER_COLLECT_VISIBLE") return undefined;
-    collectBoundedObservation(message.payload)
+    const report = createCaptureReport(message.payload);
+    collectBoundedObservation(message.payload, report.progress)
       .then((observation) => sendResponse({ ok: true, observation }))
       .catch((error) => sendResponse(challengeResponse(error)
-        ?? { ok: false, message: String(error?.message ?? error) }));
+        ?? { ok: false, message: String(error?.message ?? error) }))
+      .finally(() => report.dispose());
     return true;
   };
   globalThis.__akuBrowserSourceBridgeMessageHandler = messageHandler;
@@ -287,7 +298,7 @@
     };
   }
 
-  async function collectBoundedObservation(payload) {
+  async function collectBoundedObservation(payload, reportProgress = updateCaptureProgress) {
     const source = payload.source;
     if (!sourceMatchesPage(source)) {
       throw new Error(`The active source page does not match ${source}.`);
@@ -315,7 +326,7 @@
       : plan;
     const captureVisibilityMode =
       payload.tabAcquisition?.captureVisibilityMode ?? "same_window";
-    updateCaptureProgress("capture_started", { source, scrolls: plan.scrolls });
+    reportProgress("capture_started", { source, scrolls: plan.scrolls });
     const startedAt = performance.now();
     const operationDeadlineAtMs = Date.now() + Math.max(
       1_000,
@@ -368,7 +379,7 @@
           break;
         }
         assertNoXAccessChallenge(source);
-        updateCaptureProgress("snapshot_started", { source, snapshotIndex: index });
+        reportProgress("snapshot_started", { source, snapshotIndex: index });
         const { xRecaptureSelection: selection, ...snapshot } = await captureVisibleSnapshot(
           source,
           snapshotPlan,
@@ -376,6 +387,7 @@
           operationDeadlineAtMs,
           captureVisibilityMode,
           structuredMediaRuntime,
+          reportProgress,
         );
         if (selection) xRecaptureSelection = selection;
         snapshot.index = index;
@@ -395,7 +407,7 @@
           uniqueCandidates,
         );
         snapshots.push(snapshot);
-        updateCaptureProgress("snapshot_completed", {
+        reportProgress("snapshot_completed", {
           source,
           snapshotIndex: index,
           blockCount: snapshot.blocks.length,
@@ -412,7 +424,7 @@
         const adapter = sourceAdapters.get(source);
         const captureTuning = adapter.captureTuning ?? {};
         const scrollStepMultiplier = captureTuning.scrollStepMultiplier ?? 1;
-        updateCaptureProgress("scrolling", { source, afterSnapshotIndex: index });
+        reportProgress("scrolling", { source, afterSnapshotIndex: index });
         const advancedToNextCandidate = captureTuning.scrollStrategy === "next_candidate"
           && scrollNextEligibleCandidateIntoView(adapter, scrollContext);
         if (!advancedToNextCandidate) {
@@ -424,7 +436,7 @@
             ),
           );
         }
-        updateCaptureProgress("scroll_settling", {
+        reportProgress("scroll_settling", {
           source,
           afterSnapshotIndex: index,
           milliseconds: plan.scrollSettleMs,
@@ -441,7 +453,7 @@
       }
     } finally {
       if (plan.restoreScroll) {
-        updateCaptureProgress("restoring_scroll", { source });
+        reportProgress("restoring_scroll", { source });
         restoreAttempted = true;
         restored = await restoreScrollContext(scrollContext, restorePosition);
       }
@@ -492,7 +504,7 @@
     const lastSnapshot = snapshots.at(-1);
     const frontierAnchorKeys = (lastSnapshot?.blocks ?? []).map(blockIdentity).filter(Boolean).slice(0, 20);
     const finalScrollY = Math.round(readScrollPosition(scrollContext).y);
-    updateCaptureProgress("capture_completed", { source, observedBlockCount });
+    reportProgress("capture_completed", { source, observedBlockCount });
     return {
       source,
       pageUrl: window.location.href,
@@ -738,6 +750,7 @@
     operationDeadlineAtMs,
     captureVisibilityMode,
     structuredMediaRuntime,
+    reportProgress = updateCaptureProgress,
   ) {
     assertNoXAccessChallenge(source);
     const capturedAt = new Date().toISOString();
@@ -768,7 +781,7 @@
         adapter.maxBlocksPerSnapshot ?? payload.maxBlocksPerSnapshot,
       ));
     const retryBudget = payload.qualityRetryBudget - (targetSelection?.diagnostics.rescanned ? 1 : 0);
-    updateCaptureProgress("snapshot_candidates_ready", {
+    reportProgress("snapshot_candidates_ready", {
       source,
       visibleContainerCount: containers.length,
       boundedContainerCount: boundedContainers.length,
@@ -783,13 +796,13 @@
       );
     }
 
-    updateCaptureProgress("permalink_recovery_started", { source });
+    reportProgress("permalink_recovery_started", { source });
     const recoveredPermalinks = await (adapter.recoverPermalinks?.(
       boundedContainers,
       operationDeadlineAtMs,
       { findPermalinkDetails, waitForValue, isVisibleInViewport },
     ) ?? new WeakMap());
-    updateCaptureProgress("permalink_recovery_completed", { source });
+    reportProgress("permalink_recovery_completed", { source });
 
     const blocks = [];
     const qualityReports = [];
@@ -798,7 +811,7 @@
         if (targetSelection) targetSelection.diagnostics.outcome = "target_deadline";
         break;
       }
-      updateCaptureProgress("extracting_block", { source, containerIndex });
+      reportProgress("extracting_block", { source, containerIndex });
       const expansion = await expandSourceContent(container, source, operationDeadlineAtMs);
       let block;
       let captureQuality;
@@ -846,7 +859,7 @@
           const attemptsAvailable = retryBudget - qualityAttempt;
           const recoveryOwnerId = block.platformId;
           qualityAttempt += 1;
-          updateCaptureProgress("quality_retry", {
+          reportProgress("quality_retry", {
             source,
             containerIndex,
             attempt: qualityAttempt,
@@ -1920,13 +1933,48 @@
   }
 
   function updateCaptureProgress(stage, details = {}) {
-    globalThis.__akuBrowserCaptureProgress = Object.freeze({
-      runtimeRevision,
-      adapterRuntimeRevision: sourceAdapters.runtimeRevision,
-      stage,
-      ...details,
-      updatedAt: new Date().toISOString(),
+    try {
+      const sample = captureProgress?.update(stage, details);
+      if (sample) globalThis.__akuBrowserCaptureProgress = sample;
+    } catch { /* Progress recording cannot change capture. */ }
+  }
+
+  function newCaptureProgress() {
+    return globalThis.AkuBridgeDiagnostics.createProgress({
+      runtimeRevision, adapterRuntimeRevision: sourceAdapters.runtimeRevision,
+      clock: () => new Date().toISOString(),
     });
+  }
+
+  function createCaptureReport(payload) {
+    let recorder, publisher, attemptId;
+    try {
+      recorder = newCaptureProgress();
+      const id = payload?.diagnosticAttempt;
+      if (globalThis.AkuBridgeDiagnostics.validAttempt(id) && !activeProgress.has(id) && activeProgress.size < 8) {
+        attemptId = id;
+        activeProgress.set(id, recorder);
+        publisher = globalThis.AkuChromeDiagnostics.createPublisher({
+          attemptId: id, validAttempt: globalThis.AkuBridgeDiagnostics.validAttempt,
+          project: globalThis.AkuBridgeDiagnostics.project,
+          send: message => chrome.runtime.sendMessage(message),
+          dropped: () => recorder.incomplete(),
+        });
+      }
+    } catch { /* Capture remains available without diagnostic transport. */ }
+    return {
+      progress(stage, details) {
+        try {
+          const sample = recorder?.update(stage, details);
+          if (sample) globalThis.__akuBrowserCaptureProgress = sample;
+          publisher?.publish(recorder.snapshot().sequence, sample);
+        } catch { /* A failed observation cannot change the capture result. */ }
+      },
+      dispose() {
+        publisher?.dispose();
+        if (attemptId && activeProgress.get(attemptId) === recorder) activeProgress.delete(attemptId);
+      },
+    };
   }
 
   async function delay(milliseconds) {

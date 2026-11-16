@@ -1,5 +1,5 @@
 import "./source-feed-routes.js";
-import { X_DOM_SHADOW_SCRIPTS, INSTAGRAM_DOM_SHADOW_SCRIPTS } from "./source-access-policy.js";
+import { X_DOM_SHADOW_SCRIPTS, INSTAGRAM_DOM_SHADOW_SCRIPTS, DIAGNOSTIC_SCRIPTS } from "./source-access-policy.js";
 
 const { routes: feedRoutes } = globalThis.AkuSourceFeedRoutes;
 const SOURCE_DEFINITIONS = Object.freeze([
@@ -112,7 +112,7 @@ export function sourceAdapterScripts() {
 }
 
 export function sourceRuntimeScripts() {
-  return [...new Set(["capture-primitives.js", ...SOURCE_DEFINITIONS.flatMap((definition) => [
+  return [...new Set(["capture-primitives.js", ...DIAGNOSTIC_SCRIPTS, ...SOURCE_DEFINITIONS.flatMap((definition) => [
     ...(definition.supportScripts ?? []),
     definition.adapterScript,
   ])])];

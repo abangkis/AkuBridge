@@ -2,7 +2,7 @@
 // capture-host page supplies its instance capability or that session is restored.
 import { BRIDGE_CONTRACT_VERSION, BRIDGE_ID } from "./bridge-capabilities.js";
 const SESSION_KEY = "akuWindowsSplitCaptureSession";
-export function createSplitCaptureClient({ chrome, fetch: request = globalThis.fetch, handlers, captureHostOnlyRetirement = false, delay = (ms) => new Promise((r) => setTimeout(r, ms)), setInterval: every = globalThis.setInterval, clearInterval: cancelEvery = globalThis.clearInterval, diagnostic = (event) => console.info("aku_split_capture_poll", event) }) {
+export function createSplitCaptureClient({ chrome, fetch: request = globalThis.fetch, handlers, reload, run = operation => operation(), captureHostOnlyRetirement = false, delay = (ms) => new Promise((r) => setTimeout(r, ms)), setInterval: every = globalThis.setInterval, clearInterval: cancelEvery = globalThis.clearInterval, diagnostic = (event) => console.info("aku_split_capture_poll", event) }) {
   let config = null;
   let polling = false;
   let connecting = null;
@@ -47,6 +47,20 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
     "X-Aku-Bridge-Id": BRIDGE_ID,
   });
   async function execute(action, c, capabilities = {}) {
+    if (action.type === "reload_self") return executeAction(action, c, capabilities);
+    let admitted = false;
+    try { return await run(() => { admitted = true; return executeAction(action, c, capabilities); }); }
+    catch (error) {
+      if (admitted) throw error;
+      if (config !== c) return;
+      // A claimed action rejected before admission still needs a terminal result.
+      await request(`${c.endpoint}/api/bridge/split-capture/results/${encodeURIComponent(action.id)}`, {
+        method: "POST", headers: bridgeHeaders(c), signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ ok: false, message: "Capture admission requires settled reload and operation state." }),
+      });
+    }
+  }
+  async function executeAction(action, c, capabilities = {}) {
     let response;
     try {
       const handler = Object.hasOwn(handlers, action.type) ? handlers[action.type] : null;
@@ -100,11 +114,20 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
       response = { ok: false, message: String(error?.message ?? error).slice(0, 600) };
     }
     // No result/action is retried across a new capture instance or epoch.
-    if (config !== c) return;
-    const result = await request(`${c.endpoint}/api/bridge/split-capture/results/${encodeURIComponent(action.id)}`, {
-      method: "POST", headers: bridgeHeaders(c), body: JSON.stringify(response), signal: AbortSignal.timeout(10_000),
-    });
-    if (!result.ok) throw new Error("Capture result was rejected or expired.");
+    if (config !== c) {
+      if (action.type === "reload_self") await reload?.cancel(action.actionId);
+      return;
+    }
+    let result;
+    try {
+      result = await request(`${c.endpoint}/api/bridge/split-capture/results/${encodeURIComponent(action.id)}`, {
+        method: "POST", headers: bridgeHeaders(c), body: JSON.stringify(response), signal: AbortSignal.timeout(10_000),
+      });
+      if (!result.ok) throw new Error("Capture result was rejected or expired.");
+    } catch (error) {
+      if (action.type === "reload_self") await reload?.cancel(action.actionId);
+      throw error;
+    }
     if (action.type === "close_capture_host" && response.ok) {
       if (config !== c) return;
       const host = await getExactCaptureHost(c);
@@ -122,7 +145,11 @@ export function createSplitCaptureClient({ chrome, fetch: request = globalThis.f
         report({ phase: "capture_host_missing_or_changed" });
       }
     }
-    if (action.type === "reload_self" && response.ok) chrome.runtime.reload();
+    if (action.type === "reload_self" && response.ok) {
+      if (config !== c) { await reload?.cancel(action.actionId); return; }
+      if (!reload) throw new Error("Reload coordinator is unavailable.");
+      await reload.complete(action.actionId);
+    }
   }
   async function readerRequest(phase, action, c) {
     if (config !== c || action.type !== "open_native_post") throw new Error("Reader foreground intent expired.");

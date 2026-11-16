@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import { randomUUID } from "node:crypto";
+import { createReloadCoordinator } from "../reload-coordinator.js";
 
 const worker = readFileSync(new URL("../service-worker.js", import.meta.url), "utf8");
 const start = worker.indexOf("async function collectFromTabWithDeadline(");
@@ -16,14 +18,19 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function fixture(diagnostics = () => new Promise(() => {})) {
+function fixture(diagnostics = () => new Promise(() => {}), coordinator = { run: operation => operation() }) {
   const capture = deferred(), timers = new Map(), requests = [];
   let now = 0, nextId = 0;
   const context = vm.createContext({
-    collectFromTab: () => capture.promise,
-    chrome: { tabs: { sendMessage(tabId, message) {
+    crypto: { randomUUID },
+    reloadCoordinator: coordinator,
+    collectFromTab: (_tabId, payload) => { context.capturePayload = payload; return capture.promise; },
+    chrome: { scripting: { executeScript: async () => [{ documentId: "doc-fixture" }] }, tabs: { sendMessage(tabId, message) {
       requests.push({ tabId, ...message });
-      return diagnostics();
+      return Promise.resolve(diagnostics()).then(response => response ? {
+        ...response, attemptId: message.attemptId, sequence: 1,
+        diagnostics: { source: "instagram", ...response.diagnostics },
+      } : response);
     } } },
     setTimeout(callback, delay) {
       const id = ++nextId;
@@ -32,15 +39,28 @@ function fixture(diagnostics = () => new Promise(() => {})) {
     },
     clearTimeout: id => timers.delete(id),
   });
+  for (const file of ["recorder.js", "bridge-contract.js", "chrome-transport.js"]) {
+    vm.runInContext(readFileSync(new URL(`../diagnostics/${file}`, import.meta.url), "utf8"), context);
+  }
+  context.captureDiagnostics = context.AkuChromeDiagnostics.createAttemptCache({
+    extensionId: "fixture", sourceForUrl: () => "instagram",
+    project: context.AkuBridgeDiagnostics.project, validAttempt: context.AkuBridgeDiagnostics.validAttempt, now: () => now,
+  });
   vm.runInContext(deadline, context);
   const result = { state: "pending" };
-  context.collectFromTabWithDeadline(42, { captureTimeoutMs: 10_000 }).then(
+  context.collectFromTabWithDeadline(42, { captureTimeoutMs: 10_000, source: "instagram" }).then(
     value => Object.assign(result, { state: "fulfilled", value }),
     error => Object.assign(result, { state: "rejected", error }),
   );
   return {
     capture, requests, result, timers,
+    push(stage, sequence = 1) {
+      return context.captureDiagnostics.receive({ schemaVersion: 1, attemptId: context.capturePayload.diagnosticAttempt,
+        sequence, progress: { stage, source: "instagram" } },
+      { id: "fixture", tab: { id: 42 }, frameId: 0, documentId: "doc-fixture", url: "https://www.instagram.com/" });
+    },
     async advance(milliseconds) {
+      await flush();
       const target = now + milliseconds;
       while (true) {
         const next = [...timers.entries()].filter(([, timer]) => timer.at <= target)
@@ -72,10 +92,10 @@ test("silent capture and diagnostics still fail at the capture response deadline
 });
 
 test("available diagnostics retain the last content stage in timeout errors", async () => {
-  const f = fixture(async () => ({ diagnostics: { stage: "extracting" } }));
+  const f = fixture(async () => ({ diagnostics: { stage: "extracting_block" } }));
   await f.advance(15_000);
   assert.equal(f.result.state, "rejected");
-  assert.match(f.result.error.message, /Last content stage: \{"stage":"extracting"\}\./);
+  assert.match(f.result.error.message, /Last content stage: \{"stage":"extracting_block","source":"instagram"\}\./);
 });
 
 test("failed or malformed diagnostics cannot prevent timeout", async t => {
@@ -137,4 +157,31 @@ test("late capture or diagnostics cannot replace the deadline failure", async ()
   assert.equal(f.result.error, failure);
   assert.equal(f.result.error.message, "AkuBridge content capture exceeded its bounded response deadline.");
   assert.equal(f.timers.size, 0);
+});
+
+test("cached pushed progress survives silent content diagnostics until the hard deadline", async () => {
+  const f = fixture();
+  await f.advance(0);
+  assert.equal(f.push("extracting_block"), true);
+  await f.advance(15_000);
+  assert.equal(f.result.state, "rejected");
+  assert.match(f.result.error.message, /Last content stage: \{"stage":"extracting_block","source":"instagram"\}\./);
+  assert.equal(f.push("capture_completed", 2), false, "late producer cannot revive a disposed attempt");
+});
+
+test("actual timed-out capture retains reload activity until its underlying reply settles", async () => {
+  const data = {};
+  let reloads = 0;
+  const coordinator = createReloadCoordinator({
+    storage: { async get(key) { return { [key]: data[key] }; }, async set(value) { Object.assign(data, structuredClone(value)); } },
+    inspect: async () => {}, reload: () => { reloads++; },
+  });
+  const f = fixture(undefined, coordinator);
+  await f.advance(15_000);
+  assert.equal(f.result.state, "rejected");
+  await assert.rejects(coordinator.prepare("underlying-pending"), { code: "reload_busy" });
+  f.capture.resolve({ ok: true }); await flush();
+  await coordinator.prepare("underlying-settled");
+  await coordinator.complete("underlying-settled");
+  assert.equal(reloads, 1);
 });
