@@ -2412,25 +2412,37 @@ async function collectFromTabWithDeadline(tabId, payload) {
     Math.min(60_000, Number(payload.captureTimeoutMs ?? 45_000) + 5_000),
   );
   let timeoutId;
+  let diagnosticsTimeoutId;
+  let diagnosticDetail = "";
+  let settled = false;
   try {
     return await Promise.race([
       collectFromTab(tabId, payload),
       new Promise((_, reject) => {
-        timeoutId = setTimeout(async () => {
-          const diagnostics = await chrome.tabs.sendMessage(tabId, {
-            type: "AKU_BROWSER_CAPTURE_DIAGNOSTICS",
-          }).catch(() => null);
-          const detail = diagnostics?.diagnostics
-            ? ` Last content stage: ${JSON.stringify(diagnostics.diagnostics)}.`
-            : "";
+        // Sample diagnostics before the deadline; a silent receiver must never
+        // postpone rejection of the capture itself.
+        diagnosticsTimeoutId = setTimeout(() => {
+          try {
+            void Promise.resolve(chrome.tabs.sendMessage(tabId, {
+              type: "AKU_BROWSER_CAPTURE_DIAGNOSTICS",
+            })).then((response) => {
+              if (!settled && response?.diagnostics) {
+                diagnosticDetail = ` Last content stage: ${JSON.stringify(response.diagnostics)}.`;
+              }
+            }).catch(() => undefined);
+          } catch { /* Diagnostics are best-effort, including a closed tab. */ }
+        }, timeoutMs - 1_000);
+        timeoutId = setTimeout(() => {
           reject(new Error(
-            `AkuBridge content capture exceeded its bounded response deadline.${detail}`,
+            `AkuBridge content capture exceeded its bounded response deadline.${diagnosticDetail}`,
           ));
         }, timeoutMs);
       }),
     ]);
   } finally {
+    settled = true;
     clearTimeout(timeoutId);
+    clearTimeout(diagnosticsTimeoutId);
   }
 }
 
