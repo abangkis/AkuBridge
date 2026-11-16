@@ -1,5 +1,5 @@
 import "./source-feed-routes.js";
-import { X_DOM_SHADOW_SCRIPTS } from "./source-access-policy.js";
+import { X_DOM_SHADOW_SCRIPTS, INSTAGRAM_DOM_SHADOW_SCRIPTS } from "./source-access-policy.js";
 
 const { routes: feedRoutes } = globalThis.AkuSourceFeedRoutes;
 const SOURCE_DEFINITIONS = Object.freeze([
@@ -64,7 +64,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
     displayName: "Instagram",
     adapterVersion: "instagram-dom-v8",
     adapterScript: "adapters/instagram-adapter.js",
-    supportScripts: Object.freeze([]),
+    supportScripts: INSTAGRAM_DOM_SHADOW_SCRIPTS,
     ...feedRoutes.instagram,
     matchPatterns: Object.freeze(["https://www.instagram.com/*", "https://instagram.com/*"]),
     nativePostPath: /^\/(?:p|reel|tv)\/[A-Za-z0-9_-]+\/?$/,
@@ -112,10 +112,10 @@ export function sourceAdapterScripts() {
 }
 
 export function sourceRuntimeScripts() {
-  return ["capture-primitives.js", ...SOURCE_DEFINITIONS.flatMap((definition) => [
+  return [...new Set(["capture-primitives.js", ...SOURCE_DEFINITIONS.flatMap((definition) => [
     ...(definition.supportScripts ?? []),
     definition.adapterScript,
-  ])];
+  ])])];
 }
 
 export function sourceRequiresVisualHydration(source) {

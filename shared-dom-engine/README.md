@@ -57,9 +57,11 @@ Use `resolveDOMIdentity(claims)` for an identity decision when the caller
 already owns content and visibility checks. It accepts the same bounded
 claims and applies the same primary identity rules as `assessDOM`.
 
-Windowed and Headless X load the generated `browser-runtime.js` from this
+Windowed and Headless X and Instagram load the generated `browser-runtime.js` from this
 directory. Run `npm run build -- --stage-browser` after changing the core to
 refresh that packaged artifact. The test suite verifies its SHA-256 against the
 standalone build. The X evidence binding lives in `adapters/x-dom-shadow.js`
 at the AkuBridge root. It gathers identity claims and emits the bounded
-diagnostic for both controllers.
+diagnostic for both controllers. Instagram uses `adapters/instagram-dom-shadow.js`
+for additive shadow diagnostics only; its capture identity and admission still
+use the existing paths. Both bindings reuse the unchanged evaluator artifact.
