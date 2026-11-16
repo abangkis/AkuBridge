@@ -13,6 +13,10 @@ export const INSTAGRAM_DOM_SHADOW_SCRIPTS = Object.freeze([
   "shared-dom-engine/browser-runtime.js",
   "adapters/instagram-dom-shadow.js",
 ]);
+export const LINKEDIN_DOM_SHADOW_SCRIPTS = Object.freeze([
+  "shared-dom-engine/browser-runtime.js",
+  "adapters/linkedin-dom-shadow.js",
+]);
 
 const SOURCE_ACCESS = Object.freeze({
   x: Object.freeze({
@@ -73,6 +77,7 @@ const SOURCE_ACCESS = Object.freeze({
           "source-adapter-runtime.js",
           "media-post-processor.js",
           "adapters/linkedin-adapter.js",
+          ...LINKEDIN_DOM_SHADOW_SCRIPTS,
           "source-freshness-runtime.js",
           "media-acquisition-engine.js",
           ...DIAGNOSTIC_SCRIPTS,

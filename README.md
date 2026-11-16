@@ -1,7 +1,7 @@
 # AkuBridge
 
-Current source candidate identity: **`0.9.5`** / Chrome manifest
-**`0.9.5.0`** / runtime **`source-adapters-v130`**.
+Current source candidate identity: **`0.9.6`** / Chrome manifest
+**`0.9.6.0`** / runtime **`source-adapters-v131`**.
 
 The source candidate is pinned by AkuBrowser/contracts/source-candidate-identity.json.
 It does not qualify an installed or published release; historical release

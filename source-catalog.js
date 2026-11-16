@@ -1,5 +1,5 @@
 import "./source-feed-routes.js";
-import { X_DOM_SHADOW_SCRIPTS, INSTAGRAM_DOM_SHADOW_SCRIPTS, DIAGNOSTIC_SCRIPTS } from "./source-access-policy.js";
+import { X_DOM_SHADOW_SCRIPTS, INSTAGRAM_DOM_SHADOW_SCRIPTS, LINKEDIN_DOM_SHADOW_SCRIPTS, DIAGNOSTIC_SCRIPTS } from "./source-access-policy.js";
 
 const { routes: feedRoutes } = globalThis.AkuSourceFeedRoutes;
 const SOURCE_DEFINITIONS = Object.freeze([
@@ -29,7 +29,7 @@ const SOURCE_DEFINITIONS = Object.freeze([
     displayName: "LinkedIn",
     adapterVersion: "linkedin-dom-v24",
     adapterScript: "adapters/linkedin-adapter.js",
-    supportScripts: Object.freeze(["linkedin-permalink-policy.js", "linkedin-timestamp-policy.js"]),
+    supportScripts: Object.freeze(["linkedin-permalink-policy.js", "linkedin-timestamp-policy.js", ...LINKEDIN_DOM_SHADOW_SCRIPTS]),
     ...feedRoutes.linkedin,
     matchPatterns: Object.freeze(["https://www.linkedin.com/*"]),
     nativePostPath: /\/(?:posts\/|feed\/update\/)/,

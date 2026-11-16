@@ -1,5 +1,5 @@
 (() => {
-  const runtimeRevision = "source-adapters-v130";
+  const runtimeRevision = "source-adapters-v131";
   const CAPTURE_DEADLINE_RESERVE_MS = 2_000;
   if (globalThis.__akuBrowserSourceBridgeRevision === runtimeRevision) return;
   if (globalThis.__akuBrowserSourceBridgeMessageHandler) {
@@ -245,6 +245,12 @@
   }
 
   function xDOMShadow(source, sample) {
+    if (source === "linkedin") {
+      try {
+        const diagnostic = globalThis.AkuLinkedInDOMShadow?.assess({ adapter: sourceAdapters.get(source), ...sample });
+        return diagnostic ? { sharedDOMShadow: diagnostic } : {};
+      } catch { return {}; }
+    }
     if (source === "instagram") {
       try {
         const diagnostic = globalThis.AkuInstagramDOMShadow?.assess({ adapter: sourceAdapters.get(source), ...sample });
@@ -519,7 +525,7 @@
         browserAdapter: "aku-bridge",
         captureMethod: "native_dom",
         ...(xRecaptureSelection ? { xRecaptureSelection } : {}),
-        ...(["x", "instagram"].includes(source) && payload.sourceReadiness?.sharedDOMShadow
+        ...(["x", "instagram", "linkedin"].includes(source) && payload.sourceReadiness?.sharedDOMShadow
           ? { sharedDOMShadow: payload.sourceReadiness.sharedDOMShadow } : {}),
         adapterVersion: sourceAdapters.get(source).version,
         adapterCapabilities: sourceAdapters.capabilities(),

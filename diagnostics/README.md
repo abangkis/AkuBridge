@@ -18,7 +18,7 @@ controllers.
 The same classic-script files load in isolated content worlds and are imported
 for their initialization by the MV3 worker. Source registration and dynamic
 injection use one script list. No extra build generator or duplicate package is
-required. `source-adapters-v130` is the coherent source candidate; runtime
+required. `source-adapters-v131` is the coherent source candidate; runtime
 activation and live qualification are separate.
 
 ## Attempt and document correlation
