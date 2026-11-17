@@ -508,6 +508,89 @@
   const linkedinDialogSelector = '[role="dialog"], [data-test-modal], .artdeco-modal';
   const compactRecoveryText = value => String(value ?? "").replace(/\s+/g, " ").trim();
 
+  // Observation only: never re-run the guard's visibility predicate or read raw labels/URLs.
+  function recoveryBlockerDiagnostic(menus, dialogs, owner, helpers, candidateIndex) {
+    let complete = menus.length <= 32 && dialogs !== null && dialogs.length <= 32;
+    const read = fn => { try { return fn(); } catch { complete = false; return null; } };
+    const flags = node => {
+      const style = read(() => getComputedStyle(node));
+      return {
+        displayed: read(() => style && typeof style.display === "string" && style.display ? style.display !== "none" : null),
+        cssVisible: read(() => style && typeof style.visibility === "string" && style.visibility ? !["hidden", "collapse"].includes(style.visibility) : null),
+        opacityPositive: read(() => style && typeof style.opacity === "string" && style.opacity !== "" && Number.isFinite(Number(style.opacity)) ? Number(style.opacity) > 0 : null),
+        hiddenAttribute: read(() => node.hasAttribute("hidden")),
+        ariaHidden: read(() => node.getAttribute("aria-hidden")?.trim().toLowerCase() === "true"),
+        inert: read(() => node.hasAttribute("inert")),
+      };
+    };
+    const ancestry = node => {
+      const result = { inspected: 0, complete: true, displayNone: false, visibilityHidden: false,
+        opacityZero: false, hiddenAttribute: false, ariaHidden: false, inert: false };
+      const keys = ["displayNone", "visibilityHidden", "opacityZero", "hiddenAttribute", "ariaHidden", "inert"];
+      let parentUnknown = false;
+      const parent = element => {
+        try { const value = element.parentElement; if (value === undefined) parentUnknown = true; return value; }
+        catch { parentUnknown = true; return null; }
+      };
+      let current = parent(node);
+      while (current && result.inspected < 16) {
+        const value = flags(current);
+        const observed = { displayNone: value.displayed === null ? null : !value.displayed,
+          visibilityHidden: value.cssVisible === null ? null : !value.cssVisible,
+          opacityZero: value.opacityPositive === null ? null : !value.opacityPositive,
+          hiddenAttribute: value.hiddenAttribute, ariaHidden: value.ariaHidden, inert: value.inert };
+        for (const key of keys) {
+          if (observed[key] === true) result[key] = true;
+          else if (observed[key] === null) { if (result[key] !== true) result[key] = null; result.complete = false; }
+        }
+        result.inspected++;
+        current = parent(current);
+      }
+      if (current || parentUnknown) result.complete = false;
+      if (!result.complete) for (const key of keys) if (result[key] === false) result[key] = null;
+      if (!result.complete) complete = false;
+      return result;
+    };
+    // These are independent ARIA reference comparisons, never ownership claims.
+    const reference = (node, attribute, expected) => {
+      try {
+        const value = node.getAttribute(attribute);
+        if (!value?.trim()) return "absent";
+        if (typeof expected !== "string" || !expected) { complete = false; return "unknown"; }
+        return value.trim().split(/\s+/).includes(expected) ? "matches" : "different";
+      } catch { complete = false; return "unknown"; }
+    };
+    const samples = [];
+    for (const [kind, nodes] of [["menu", menus], ["dialog", dialogs ?? []]]) {
+      for (const node of nodes.slice(0, Math.max(0, 4 - samples.length))) {
+        const rect = read(() => node.getBoundingClientRect());
+        const selector = read(() => node.matches('[role="menu"]') ? "role_menu"
+          : node.matches('[role="dialog"]') ? "role_dialog"
+          : node.matches('[data-test-modal]') ? "data_test_modal"
+          : node.matches('.artdeco-modal') ? "artdeco_modal" : "unknown");
+        samples.push({ kind, selector: selector ?? "unknown",
+          aria: { labelledBy: reference(node, "aria-labelledby", read(() => owner.button.id)),
+            controls: reference(owner.button, "aria-controls", read(() => node.id)),
+            owns: reference(owner.button, "aria-owns", read(() => node.id)) },
+          guardVisible: true,
+          hasArea: rect && Number.isFinite(rect.width) && Number.isFinite(rect.height) ? rect.width > 0 && rect.height > 0 : null,
+          intersectsViewport: rect && [rect.top, rect.bottom, rect.left, rect.right, window.innerWidth, window.innerHeight].every(Number.isFinite)
+            ? rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth : null,
+          ...flags(node), ancestors: ancestry(node),
+        });
+      }
+    }
+    if (samples.length < menus.length + (dialogs?.length ?? 0)) complete = false;
+    if (samples.some(sample => Object.values(sample).includes(null) || sample.selector === "unknown")) complete = false;
+    const snapshotIndex = read(() => helpers.diagnosticSnapshotIndex);
+    const position = read(() => helpers.diagnosticCandidateIndex ? helpers.diagnosticCandidateIndex(owner.container) : candidateIndex);
+    return { code: "existing_surface", phase: "pre_recovery_guard",
+      snapshotIndex: Number.isSafeInteger(snapshotIndex) && snapshotIndex >= 0 && snapshotIndex <= 1_000_000 ? snapshotIndex : null,
+      candidateIndex: Number.isSafeInteger(position) && position >= 0 && position <= 1_000_000 ? position : null,
+      menuCount: Math.min(32, menus.length),
+      dialogCount: dialogs === null ? null : Math.min(32, dialogs.length), samples, complete };
+  }
+
   function recoveryOwner(container) {
     const button = container.querySelector(linkedinMenuButtonSelector);
     const body = container.querySelector('[data-testid="expandable-text-box"]') ??
@@ -552,7 +635,9 @@
       '[href], [src], [value], [data-urn], [data-id], input, textarea, code',
     )].map(permalinkEvidenceFromNode).filter(Boolean);
     const unavailable = reason => ({ url: null, source: "unavailable", reason });
+    let candidateIndex = 0;
     for (const container of containers) {
+      const diagnosticCandidateIndex = candidateIndex++;
       if (helpers.findPermalinkDetails(container, "linkedin", container.querySelector("time"))) continue;
       const remainingMs = snapshotDeadlineAtMs - Date.now();
       const owner = recoveryOwner(container);
@@ -564,8 +649,13 @@
       }
       // Never consume or dismiss another interaction's menu/dialog. Hidden
       // portal content is also remembered so a delayed stale URN cannot win.
-      if (visible(allMenus()).length || visible(allDialogs()).length) {
-        recovered.set(container, unavailable("An existing menu or dialog prevents exclusive post recovery."));
+      const visibleMenus = visible(allMenus());
+      let visibleDialogs = null;
+      if (visibleMenus.length || (visibleDialogs = visible(allDialogs())).length) {
+        const result = unavailable("An existing menu or dialog prevents exclusive post recovery.");
+        try { result.blockerDiagnostic = recoveryBlockerDiagnostic(visibleMenus, visibleDialogs, owner, helpers, diagnosticCandidateIndex); }
+        catch { /* Diagnostic reads cannot change the independently blocked operation. */ }
+        recovered.set(container, result);
         continue;
       }
       const oldMenuURLs = new Set(allMenus().flatMap(menu => menuEntries(menu, false)).map(entry => entry.url));

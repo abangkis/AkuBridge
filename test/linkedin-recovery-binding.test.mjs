@@ -42,12 +42,14 @@ function scenario({ block = joel, url = block.permalink, embed = false, onOpen, 
     if (selector === '[role="dialog"], [data-test-modal], .artdeco-modal') return [...dialogs, ...(state.embedClicks ? [dialog] : [])];
     return [];
   } };
-  const context = vm.createContext({ document, window: { document, location }, location, URL, decodeURIComponent, Date });
+  const context = vm.createContext({ document, window: { document, location, innerWidth: 1200, innerHeight: 1000 },
+    getComputedStyle: node => node.style ?? ({display:'block',visibility:'visible',opacity:'1'}), location, URL, decodeURIComponent, Date });
   for (const file of ["source-adapter-runtime.js", "linkedin-permalink-policy.js", "adapters/linkedin-adapter.js"]) {
     vm.runInContext(fs.readFileSync(new URL(file, root), "utf8"), context);
   }
   const adapter = context.AkuSourceAdapters.get("linkedin");
   const helpers = { findPermalinkDetails: () => null, isVisibleInViewport: node => node.visible !== false,
+    diagnosticSnapshotIndex: 0,
     async waitForValue(read, attempts) { for (let n = 0; n < attempts; n++) { const value = read(); if (value) return value; } return null; },
   };
   const api = { state, menu, dialog, menus, dialogs, button, body, container, adapter, helpers, location, link, code,
@@ -76,6 +78,114 @@ for (const embed of [false, true]) {
 test('Hussein never consumes or closes a stale visible Joel menu', async () => {
   const s = scenario({ block: mixed }); s.menus.push({ ...s.menu, visible: true });
   assert.equal((await s.recover()).url, null); assert.equal(s.state.menuClicks, 0); assert.equal(s.state.closeClicks, 0);
+});
+
+function blocker(kind, { ancestorARIAHidden = false, throws = false } = {}) {
+  const ancestor = ancestorARIAHidden ? { parentElement: null, hasAttribute: () => false,
+    getAttribute: name => name === 'aria-hidden' ? 'true' : null } : null;
+  return { visible: true, id: 'Private-dom-id',
+    matches(selector) { if (throws) throw Error('Private DOM error'); return selector === `[role="${kind}"]`; },
+    getAttribute: () => null, hasAttribute: () => false, parentElement: ancestor,
+    getBoundingClientRect: () => ({ width: 200, height: 100, top: 10, bottom: 110, left: 10, right: 210 }),
+  };
+}
+
+test('blocker diagnostics preserve menu short-circuit, unknown dialogs and zero interactions', async () => {
+  const s = scenario(); s.menus.push(blocker('menu'));
+  const calls = []; const query = s.helpers.isVisibleInViewport;
+  s.helpers.isVisibleInViewport = node => { calls.push(node); return query(node); };
+  const result = await s.recover();
+  assert.equal(result.url, null); assert.equal(result.blockerDiagnostic.menuCount, 1);
+  assert.equal(result.blockerDiagnostic.dialogCount, null);
+  assert.equal(result.blockerDiagnostic.complete, false);
+  assert.equal(result.blockerDiagnostic.samples[0].guardVisible, true);
+  assert.equal(result.blockerDiagnostic.samples[0].selector, 'role_menu');
+  assert.equal(calls.length, 1); assert.equal(s.state.menuClicks + s.state.embedClicks + s.state.closeClicks, 0);
+  assert.doesNotMatch(JSON.stringify(result.blockerDiagnostic), /Private|https:|urn:|Joel|Hussein/);
+});
+
+test('blocker diagnostics retain ancestor ARIA evidence separately without relaxing the visible-dialog guard', async () => {
+  const s = scenario(); s.dialogs.push(blocker('dialog', { ancestorARIAHidden: true }));
+  const result = await s.recover();
+  assert.equal(result.url, null); assert.equal(result.blockerDiagnostic.menuCount, 0);
+  assert.equal(result.blockerDiagnostic.dialogCount, 1);
+  const sample = result.blockerDiagnostic.samples[0];
+  assert.equal(sample.ancestors.ariaHidden, true);
+  assert.equal(sample.ancestors.hiddenAttribute, false); assert.equal(sample.ancestors.inert, false);
+  assert.equal(sample.ariaHidden, false);
+  assert.equal(result.blockerDiagnostic.phase, 'pre_recovery_guard');
+  assert.equal(result.blockerDiagnostic.snapshotIndex, 0); assert.equal(result.blockerDiagnostic.candidateIndex, 0);
+  assert.equal(result.blockerDiagnostic.samples[0].guardVisible, true);
+  assert.equal(result.blockerDiagnostic.complete, true);
+  assert.equal(s.state.menuClicks + s.state.closeClicks, 0);
+});
+
+test('throwing diagnostic reads preserve blocked recovery and mark the observation incomplete', async () => {
+  const s = scenario(); s.dialogs.push(blocker('dialog', { throws: true }));
+  const result = await s.recover();
+  assert.equal(result.url, null); assert.equal(result.blockerDiagnostic.complete, false);
+  assert.equal(result.blockerDiagnostic.samples[0].selector, 'unknown');
+  assert.equal(s.state.menuClicks + s.state.closeClicks, 0);
+});
+
+test('blocker diagnostics cap counts and samples without changing the blocking decision', async () => {
+  const s = scenario(); s.menus.push(...Array.from({ length: 40 }, () => blocker('menu')));
+  const result = await s.recover();
+  assert.equal(result.url, null); assert.equal(result.blockerDiagnostic.menuCount, 32);
+  assert.equal(result.blockerDiagnostic.samples.length, 4); assert.equal(result.blockerDiagnostic.complete, false);
+  assert.equal(s.state.menuClicks + s.state.closeClicks, 0);
+});
+
+for (const relation of ['matches', 'different', 'absent']) {
+  test(`ARIA relation ${relation} is diagnostic only and never dismisses an existing dialog`, async () => {
+    const s = scenario(), node = blocker('dialog');
+    node.getAttribute = name => name === 'aria-labelledby' && relation !== 'absent'
+      ? relation === 'matches' ? s.button.id : 'Private-other-control' : null;
+    s.dialogs.push(node);
+    const result = await s.recover();
+    assert.deepEqual(JSON.parse(JSON.stringify(result.blockerDiagnostic.samples[0].aria)), {labelledBy:relation,controls:'absent',owns:'absent'});
+    assert.equal(result.url, null); assert.equal(s.state.menuClicks + s.state.closeClicks, 0);
+    assert.doesNotMatch(JSON.stringify(result.blockerDiagnostic), /Private|post-control/);
+  });
+}
+
+test('conflicting ARIA references remain independent evidence and never confer ownership', async () => {
+  const s = scenario(), node = blocker('dialog'), attributes = s.button.getAttribute;
+  node.getAttribute = name => name === 'aria-labelledby' ? s.button.id : null;
+  s.button.getAttribute = name => name === 'aria-controls' ? 'Private-other-surface'
+    : name === 'aria-owns' ? node.id : attributes(name);
+  s.dialogs.push(node);
+  const result = await s.recover();
+  assert.deepEqual(JSON.parse(JSON.stringify(result.blockerDiagnostic.samples[0].aria)), {labelledBy:'matches',controls:'different',owns:'matches'});
+  assert.equal(result.url, null); assert.equal(s.state.menuClicks + s.state.closeClicks, 0);
+  assert.doesNotMatch(JSON.stringify(result.blockerDiagnostic), /Private|post-control/);
+});
+
+test('ancestor opacity and semantic attributes are observed independently with a bounded traversal', async () => {
+  const s = scenario(), node = blocker('dialog');
+  node.hasAttribute = name => name === 'hidden';
+  node.parentElement = {parentElement:null,style:{display:'block',visibility:'visible',opacity:'0'},
+    hasAttribute:name=>name==='inert',getAttribute:name=>name==='aria-hidden'?'true':null};
+  s.dialogs.push(node);
+  const result = await s.recover(), sample = result.blockerDiagnostic.samples[0];
+  assert.equal(sample.opacityPositive,true); assert.equal(sample.hiddenAttribute,true);
+  assert.equal(sample.ancestors.opacityZero,true); assert.equal(sample.ancestors.ariaHidden,true);
+  assert.equal(sample.ancestors.inert,true); assert.equal(sample.ancestors.hiddenAttribute,false);
+  assert.equal(sample.ancestors.inspected,1); assert.equal(sample.ancestors.complete,true);
+  assert.equal(result.url,null); assert.equal(s.state.menuClicks + s.state.closeClicks,0);
+});
+
+test('ancestor depth limit and throwing reads preserve unknown values and blocked capture', async () => {
+  const s=scenario(),node=blocker('dialog');let current=null;
+  for(let n=0;n<20;n++)current={parentElement:current,hasAttribute:()=>false,getAttribute:()=>null};
+  node.parentElement=current;s.dialogs.push(node);
+  let result=await s.recover(), ancestors=result.blockerDiagnostic.samples[0].ancestors;
+  assert.equal(ancestors.inspected,16);assert.equal(ancestors.complete,false);
+  assert.equal(ancestors.opacityZero,null);assert.equal(result.blockerDiagnostic.complete,false);
+  Object.defineProperty(node,'parentElement',{get(){throw Error('Private ancestor');}});
+  result=await s.recover();ancestors=result.blockerDiagnostic.samples[0].ancestors;
+  assert.equal(ancestors.complete,false);assert.equal(ancestors.hiddenAttribute,null);
+  assert.equal(result.url,null);assert.equal(s.state.menuClicks+s.state.closeClicks,0);
 });
 
 test('a hidden stale Joel URN cannot become Hussein identity', async () => {

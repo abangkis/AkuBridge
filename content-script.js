@@ -370,6 +370,7 @@
     }
     const captureStartPosition = readScrollPosition(scrollContext);
     const snapshots = [];
+    const linkedinRecoveryBlockers = [];
     let xRecaptureSelection = null;
     const uniqueCandidates = new Set();
     const scrollDeltas = [];
@@ -386,7 +387,11 @@
         }
         assertNoXAccessChallenge(source);
         reportProgress("snapshot_started", { source, snapshotIndex: index });
-        const { xRecaptureSelection: selection, ...snapshot } = await captureVisibleSnapshot(
+        const {
+          xRecaptureSelection: selection,
+          linkedinRecoveryBlockers: recoveryBlockers = [],
+          ...snapshot
+        } = await captureVisibleSnapshot(
           source,
           snapshotPlan,
           scrollContext,
@@ -394,6 +399,7 @@
           captureVisibilityMode,
           structuredMediaRuntime,
           reportProgress,
+          index,
         );
         if (selection) xRecaptureSelection = selection;
         snapshot.index = index;
@@ -413,6 +419,7 @@
           uniqueCandidates,
         );
         snapshots.push(snapshot);
+        linkedinRecoveryBlockers.push(...recoveryBlockers.slice(0, 8 - linkedinRecoveryBlockers.length));
         reportProgress("snapshot_completed", {
           source,
           snapshotIndex: index,
@@ -586,6 +593,7 @@
         requestedScrolls: plan.scrolls,
         performedScrolls,
         snapshotCount: snapshots.length,
+        ...(linkedinRecoveryBlockers.length ? { linkedinRecoveryBlockers } : {}),
         scrollDeltas,
         scrollStopReason,
         originalScrollY: Math.round(restorePosition.y),
@@ -757,6 +765,7 @@
     captureVisibilityMode,
     structuredMediaRuntime,
     reportProgress = updateCaptureProgress,
+    snapshotIndex = null,
   ) {
     assertNoXAccessChallenge(source);
     const capturedAt = new Date().toISOString();
@@ -806,7 +815,8 @@
     const recoveredPermalinks = await (adapter.recoverPermalinks?.(
       boundedContainers,
       operationDeadlineAtMs,
-      { findPermalinkDetails, waitForValue, isVisibleInViewport },
+      { findPermalinkDetails, waitForValue, isVisibleInViewport,
+        diagnosticSnapshotIndex: snapshotIndex, diagnosticCandidateIndex: container => selectorCandidates.indexOf(container) },
     ) ?? new WeakMap());
     reportProgress("permalink_recovery_completed", { source });
 
@@ -1003,6 +1013,8 @@
       selectorCandidateCount: selectorCandidates.length,
       structuralCandidateCount: structuralCandidates.length,
       visibleContainerCount: containers.length,
+      ...(source === "linkedin" && boundedContainers.some(container => recoveredPermalinks.get(container)?.blockerDiagnostic)
+        ? { linkedinRecoveryBlockers: boundedContainers.map(container => recoveredPermalinks.get(container)?.blockerDiagnostic).filter(Boolean).slice(0, 8) } : {}),
       ...(targetSelection ? { xRecaptureSelection: targetSelection.diagnostics } : {}),
       candidateDiagnostics: normalizeCandidateDiagnostics(
         discovery.candidateDiagnostics,
