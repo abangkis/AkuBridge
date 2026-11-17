@@ -1,6 +1,7 @@
 import { createCaptureSurfaceReporter } from "./capture-surface-reporting.js";
 import { createSplitCaptureClient } from "./split-capture-client.js";
 import { createReloadCoordinator } from "./reload-coordinator.js";
+import "./diagnostics/state-core.js";
 import "./diagnostics/recorder.js";
 import "./diagnostics/bridge-contract.js";
 import "./diagnostics/chrome-transport.js";

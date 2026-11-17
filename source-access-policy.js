@@ -3,7 +3,7 @@ export const SOURCE_ACCESS_SELECTION_KEY = "akuBrowserSourceAccessSelection";
 export const SOURCE_ACCESS_SELECTION_SCHEMA_VERSION = 2;
 export const SOURCE_DISCLOSURE_VERSION = 1;
 export const DIAGNOSTIC_SCRIPTS = Object.freeze([
-  "diagnostics/recorder.js", "diagnostics/bridge-contract.js", "diagnostics/chrome-transport.js",
+  "diagnostics/state-core.js", "diagnostics/recorder.js", "diagnostics/bridge-contract.js", "diagnostics/chrome-transport.js",
 ]);
 export const X_DOM_SHADOW_SCRIPTS = Object.freeze([
   "shared-dom-engine/browser-runtime.js",

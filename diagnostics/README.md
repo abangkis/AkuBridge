@@ -5,10 +5,14 @@ semantics. They are not an external JavaScript package or an addition to the Go
 library. Capture, cancellation, deadlines and resource ownership remain with the
 controllers.
 
-- `recorder.js` contains generic operation/phase, explicit knownness, sequence,
-  first observed failure, independent cleanup/delivery and completeness values.
-  The caller supplies elapsed observations. Snapshots have independent nested
-  values; the core reads no clock, DOM, storage or network.
+- `state-core.js` is the canonical shared state mechanism: current/completed
+  phase, first observed failure, independent cleanup/delivery and sticky
+  incompleteness. It reads no clock, DOM, storage or network and owns no sequence,
+  budget, validation or operation authority.
+- `recorder.js` is the Bridge adapter. It retains operation/phase validation,
+  explicit knownness, advance-only sequence and read-only snapshots. The caller
+  supplies elapsed observations; the current content projection keeps elapsed
+  unknown and supplies a separate wall-clock `updatedAt` label.
 - `bridge-contract.js` owns the Bridge stage/field vocabulary and privacy limits.
   Its projection retains the existing `runtimeRevision`, `adapterRuntimeRevision`,
   `stage`, allowed detail fields and `updatedAt` response. Unknown is not zero.
@@ -18,8 +22,31 @@ controllers.
 The same classic-script files load in isolated content worlds and are imported
 for their initialization by the MV3 worker. Source registration and dynamic
 injection use one script list. No extra build generator or duplicate package is
-required. `source-adapters-v131` is the coherent source candidate; runtime
-activation and live qualification are separate.
+required. The last prepared v131 development candidate predates this shared-core
+increment. This source change has not been built or activated; release identity,
+module-graph refresh and live qualification remain separate.
+
+## Native Node adapter
+
+Sidecar's `worker/vendor/diagnostic-state-core.js` carries byte-identical runtime
+bytes from `state-core.js`, keeping worker staging and sealed native imports
+project-local. Update that runtime copy with the canonical source. The native
+package builder checks equality before writing a package and fails closed on
+drift. Workspace parity tests compare the two copies and both consumers without
+building packages or opening a browser. This is one implementation with two
+runtime assets, not an extracted shared package.
+
+`native-pilot/diagnostic-trace.mjs` delegates state recording to this core. It
+retains injected monotonic elapsed-time sampling, rounding and bounds, budget
+observation, snapshot-driven sequence, bounded progress and terminal flush,
+native wire projection and validation, and sticky uncertain-cleanup evidence.
+The Instagram adapter still owns its closed catalog and frozen document context.
+Recording completeness and transport delivery completeness remain independent;
+neither one proves operation success, cleanup or capture authority.
+
+From AkuSidecar in the normal sibling workspace, run:
+
+    node --test scripts/shared-diagnostic-recorder-parity.test.mjs
 
 ## Attempt and document correlation
 

@@ -6,33 +6,34 @@
     ? { known: true, value: value.value } : { known: false };
   function create(operation) {
     if (!label(operation)) throw new TypeError("Invalid diagnostic operation.");
-    const value = { location: { operation, phase: "none" }, completed: "none", sequence: 0,
-      elapsed: { known: false }, cause: null, cleanup: { state: "not_started", condition: "none" },
-      delivery: { state: "pending", condition: "none" }, disposition: "not_started", complete: true };
-    function settlement(field, state, condition) {
-      if (!label(state) || !label(condition)) throw new TypeError("Invalid diagnostic settlement.");
-      value[field] = { state, condition };
+    const state = globalThis.AkuDiagnosticState.create();
+    let sequence = 0, elapsedObservation = { known: false };
+    function settlement(field, value, condition) {
+      if (!label(value) || !label(condition)) throw new TypeError("Invalid diagnostic settlement.");
+      state[field](value, condition);
     }
     return Object.freeze({
       advance(phase, elapsed) {
         if (!label(phase)) throw new TypeError("Invalid diagnostic phase.");
-        value.location.phase = phase;
-        value.sequence = Math.min(Number.MAX_SAFE_INTEGER, value.sequence + 1);
-        value.elapsed = observed(elapsed);
+        state.advance(phase);
+        sequence = Math.min(Number.MAX_SAFE_INTEGER, sequence + 1);
+        elapsedObservation = observed(elapsed);
       },
-      completed(phase) { if (label(phase)) value.completed = phase; },
+      completed(phase) { if (label(phase)) state.completed(phase); },
       fail(phase, condition) {
         if (!label(phase) || !label(condition)) throw new TypeError("Invalid diagnostic cause.");
-        value.cause ??= { location: { operation, phase }, condition };
+        state.fail(phase, condition);
       },
       cleanup: (state, condition = "none") => settlement("cleanup", state, condition),
       delivery: (state, condition = "none") => settlement("delivery", state, condition),
-      disposition(state) { if (label(state)) value.disposition = state; },
-      incomplete() { value.complete = false; },
+      disposition(value) { if (label(value)) state.disposition(value); },
+      incomplete() { state.incomplete(); },
       snapshot() {
-        return { ...value, location: { ...value.location }, elapsed: { ...value.elapsed },
-          cleanup: { ...value.cleanup }, delivery: { ...value.delivery },
-          cause: value.cause ? { ...value.cause, location: { ...value.cause.location } } : null };
+        const value = state.snapshot();
+        return { location: { operation, phase: value.phase }, completed: value.completed, sequence,
+          elapsed: { ...elapsedObservation }, cause: value.cause ? {
+            location: { operation, phase: value.cause.phase }, condition: value.cause.condition } : null,
+          cleanup: value.cleanup, delivery: value.delivery, disposition: value.disposition, complete: value.complete };
       },
     });
   }

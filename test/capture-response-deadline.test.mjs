@@ -39,7 +39,7 @@ function fixture(diagnostics = () => new Promise(() => {}), coordinator = { run:
     },
     clearTimeout: id => timers.delete(id),
   });
-  for (const file of ["recorder.js", "bridge-contract.js", "chrome-transport.js"]) {
+  for (const file of ["state-core.js", "recorder.js", "bridge-contract.js", "chrome-transport.js"]) {
     vm.runInContext(readFileSync(new URL(`../diagnostics/${file}`, import.meta.url), "utf8"), context);
   }
   context.captureDiagnostics = context.AkuChromeDiagnostics.createAttemptCache({
