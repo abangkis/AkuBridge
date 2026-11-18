@@ -812,8 +812,11 @@
     }
 
     reportProgress("permalink_recovery_started", { source });
+    const recoveryCandidates = adapter.resolvePostIdentity
+      ? boundedContainers.filter(container => adapter.resolvePostIdentity(container).status === "missing")
+      : boundedContainers;
     const recoveredPermalinks = await (adapter.recoverPermalinks?.(
-      boundedContainers,
+      recoveryCandidates,
       operationDeadlineAtMs,
       { findPermalinkDetails, waitForValue, isVisibleInViewport,
         diagnosticSnapshotIndex: snapshotIndex, diagnosticCandidateIndex: container => selectorCandidates.indexOf(container) },
@@ -1267,8 +1270,10 @@
     const legacyTime = source === "x" && quotedRoot ? ownTimes[0] : container.querySelector("time");
     const time = sharedIdentity ? ownTimes.find((node) =>
       capturePrimitives.canonicalizeXPermalink(node.closest("a[href]")?.href) === sharedIdentity.permalink) : legacyTime;
-    const directPermalink = findPermalinkDetails(container, source, legacyTime);
-    const legacyPermalink = directPermalink?.url ?? recoveredPermalink?.url ?? null;
+    const postIdentity = adapter.resolvePostIdentity?.(container);
+    const directPermalink = findPermalinkDetails(container, source, legacyTime, postIdentity);
+    const usableRecovery = !postIdentity || postIdentity.status === "missing" ? recoveredPermalink : null;
+    const legacyPermalink = directPermalink?.url ?? usableRecovery?.url ?? null;
     const permalink = sharedIdentity ? sharedIdentity.permalink : legacyPermalink;
     const semantics = adapter.extractSemantics(container, {
       compactText,
@@ -1312,7 +1317,7 @@
       capturedAt,
     });
     const quotedPost = normalizeQuotedPost(quoteEvidence);
-    presentation.permalinkSource = sharedIdentity?.source ?? directPermalink?.source ?? recoveredPermalink?.source ?? "unavailable";
+    presentation.permalinkSource = sharedIdentity?.source ?? directPermalink?.source ?? usableRecovery?.source ?? "unavailable";
     presentation.permalinkReason = permalink
       ? ""
       : recoveredPermalink?.reason ?? "No stable native post permalink was exposed by this source.";
@@ -1375,7 +1380,8 @@
       avatarUrl: findAvatar(container, source),
       publishedAt: nativePublishedAt ?? relativeTimestamp?.publishedAt ?? null,
       permalink,
-      platformId: sharedIdentity ? capturePolicy.platformIdFromCandidates(source, [permalink])
+      platformId: postIdentity ? postIdentity.id ?? capturePolicy.platformIdFromCandidates(source, [permalink])
+        : sharedIdentity ? capturePolicy.platformIdFromCandidates(source, [permalink])
         : findPlatformId(container, source, permalink),
       contentKind: media.some((entry) => entry.kind === "video")
         ? "video"
@@ -1625,8 +1631,12 @@
     return findPermalinkDetails(container, source, time)?.url ?? null;
   }
 
-  function findPermalinkDetails(container, source, time) {
+  function findPermalinkDetails(container, source, time, postIdentity) {
     const adapter = sourceAdapters.get(source);
+    if (adapter.resolvePostIdentity) {
+      const identity = postIdentity ?? adapter.resolvePostIdentity(container);
+      return identity.status === "identified" ? identity : null;
+    }
     const normalizePermalink = (value) => adapter.canonicalizePermalink?.(value) ?? normalizeHttpUrl(value);
     const specialized = adapter.findPermalinkDetails?.(container, { normalizeHttpUrl, time });
     if (source === "x" && specialized?.url) return specialized;

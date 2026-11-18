@@ -17,7 +17,8 @@ function scenario({ block = joel, url = block.permalink, embed = false, onOpen, 
     getAttribute: name => name === "aria-label" ? `Open control menu for post by ${state.author}` : null,
     click() { state.menuClicks++; menu.visible = !menu.visible; if (menu.visible) onOpen?.(api); },
   };
-  const container = { isConnected: true,
+  const container = { isConnected: true, contains: node => node === container,
+    querySelectorAll: () => [], getAttribute: () => null, closest: () => null, matches: () => false,
     querySelector(selector) {
       if (selector === 'button[aria-label^="Open control menu for post by"]') return button;
       if (selector === '[data-testid="expandable-text-box"]') return body;
@@ -278,8 +279,8 @@ test('Windowed production extraction rejects stale recovery before binding text 
     normalizeHttpUrl: value => value || null, normalizeHttpsUrl: value => value || null,
     findPermalinkDetails: () => null, normalizeDate: () => null, normalizeQuotedPost: () => null,
     legacyExpansionState: () => 'unknown', capturePrimitives: { textCompleteness: () => 'unknown' },
+    capturePolicy: { platformIdFromCandidates: (_source, values) => adapter.platformIdFromCandidates(values) },
     findContentRoot: () => s.body, findMedia: () => [], findAvatar: () => null,
-    findPlatformId: (_container, _source, url) => url === joel.permalink ? joel.platformId : null,
   });
   const source = fs.readFileSync(new URL('content-script.js', root), 'utf8');
   vm.runInContext(source.slice(source.indexOf('  function extractBlock('), source.indexOf('  function normalizeQuotedPost(')), context);

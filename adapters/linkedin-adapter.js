@@ -62,19 +62,8 @@
       ".update-components-actor img",
       ".feed-shared-actor img",
     ]),
-    permalinkPatterns: Object.freeze([/\/feed\/update\//, /activity-\d+/]),
-    findDomPermalink: (container) => [
-      container.getAttribute("data-urn"),
-      container.getAttribute("data-id"),
-      ...[...container.querySelectorAll("[data-urn], [data-id]")]
-        .slice(0, 20)
-        .flatMap((element) => [element.getAttribute("data-urn"), element.getAttribute("data-id")]),
-    ].filter(Boolean).map((value) => {
-      const canonical = globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEvidence(String(value));
-      if (canonical) return canonical;
-      const activityId = String(value).match(/activity(?::|-)(\d+)/i)?.[1];
-      return activityId ? `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/` : null;
-    }).find(Boolean) ?? null,
+    resolvePostIdentity: container => globalThis.AkuLinkedInPermalinkPolicy?.resolvePostIdentity(container)
+      ?? { status: "unverified" },
     estimateRelativeTimestamp: (timestampText, capturedAt) =>
       globalThis.AkuLinkedInTimestampPolicy?.estimateFromRelativeText(timestampText, capturedAt) ?? null,
     recoverPermalinks: recoverLinkedInPermalinks,

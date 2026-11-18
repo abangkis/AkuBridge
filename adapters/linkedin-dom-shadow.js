@@ -1,8 +1,9 @@
 (() => {
   const engine = globalThis.AkuSharedDOMEngine;
-  if (!engine) return;
+  const permalinkPolicy = globalThis.AkuLinkedInPermalinkPolicy;
+  if (!engine || !permalinkPolicy) return;
   const version = "linkedin-shadow-v1";
-  const maxCandidates = 64, maxNodes = 100, maxClaims = 8;
+  const maxCandidates = 64, maxNodes = 100;
   const policy = Object.freeze({
     version, layouts: ["native-card", "action-ancestor"], postMarkers: [],
     requiredPrimaryFields: ["author"],
@@ -10,18 +11,11 @@
   });
   const compactText = value => String(value ?? "").replace(/\s+/g, " ").trim();
   const uniqueElements = values => [...new Set(values)];
-  const excluded = '[data-comment-id], [data-commentid], [role="comment"], .comments-comment-item, .comments-comments-list, [data-urn*="comment" i], [data-id*="comment" i], [data-testid*="comment" i], .update-components-mini-update-v2, [data-view-name="feed-shared-update-repost-content"]';
-  const card = 'article, [role="article"], [role="listitem"], [data-view-name="feed-full-update"], .feed-shared-update-v2, [data-urn*="activity" i], [data-id*="activity" i]';
   const failed = () => ({ code: "probe_failed",
     counts: { candidates: 0, visibleStructural: 0, accepted: 0, rejected: 0, offscreen: 0 }, rejections: {} });
 
   function primaryView(root, candidates) {
-    const owned = node => {
-      if (!node || !root.contains(node) || node.closest(excluded)) return false;
-      const parent = node.closest(card);
-      if (parent && parent !== root && root.contains(parent)) return false;
-      return !candidates.some(other => other !== root && root.contains(other) && other.contains(node));
-    };
+    const owned = node => permalinkPolicy.ownsPrimaryNode(root, node, candidates);
     const querySelectorAll = selector => {
       const nodes = root.querySelectorAll(selector);
       if (nodes.length > maxNodes) throw new Error("probe_bound");
@@ -40,43 +34,15 @@
     return { owned, text, querySelectorAll, querySelector: selector => querySelectorAll(selector)[0] ?? null };
   }
 
-  function nativeClaim(value, adapter, anchor = false) {
-    if (!value) return null;
-    let evidence = String(value);
-    if (anchor) {
-      const url = new URL(evidence, window.location.href);
-      if (url.protocol !== "https:" || url.hostname !== "www.linkedin.com" ||
-          url.username || url.password || url.port) return null;
-      if (!globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEvidence(url.href) &&
-          (!url.pathname.startsWith("/posts/") || !adapter.permalinkPatterns.some(pattern => pattern.test(url.pathname)))) return null;
-      evidence = url.href;
-    } else if (/^https?:/i.test(evidence)) return null;
-    const key = adapter.platformIdFromCandidates([evidence]);
-    if (!key) return null;
-    const locator = globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEvidence(
-      key.replace(/^linkedin:(activity|share|ugcpost):/, (_, kind) => `urn:li:${kind === "ugcpost" ? "ugcPost" : kind}:`),
-    );
-    const identity = locator && adapter.freshness.headless.primaryIdentity({ id: key, permalink: locator });
-    return identity ? { key: identity.id, locator: identity.permalink, owner: "primary", provenance: "native-post-evidence" } : null;
-  }
-
   function candidateEvidence(root, index, visible, adapter, candidates) {
     const empty = { ref: String(index), visible, layout: null, identityClaims: [], fields: [] };
     if (!visible) return empty;
     try {
       if (root.isConnected === false) throw new Error("detached");
-      const view = primaryView(root, candidates), claims = new Map();
-      const add = (value, anchor) => {
-        let claim;
-        try { claim = nativeClaim(value, adapter, anchor); } catch { return; }
-        if (claim) claims.set(claim.key, claim);
-        if (claims.size > maxClaims) throw new Error("claim_bound");
-      };
-      if (view.owned(root)) for (const name of ["data-urn", "data-id"]) add(root.getAttribute(name));
-      for (const node of view.querySelectorAll("[data-urn], [data-id], a[href]")) {
-        for (const name of ["data-urn", "data-id"]) add(node.getAttribute(name));
-        if (node.matches("a[href]")) add(node.getAttribute("href"), true);
-      }
+      const view = primaryView(root, candidates);
+      const identityClaims = permalinkPolicy.primaryIdentityClaims(root, candidates).map(post => ({
+        key: post.id, locator: post.url, owner: "primary", provenance: "native-post-evidence",
+      }));
       const fields = [], present = name => fields.push({ name, owner: "primary", availability: "present" });
       const authorNode = node => node && ({ getAttribute: name => node.getAttribute(name), innerText: view.text(node) });
       const authorView = { querySelectorAll: selector => view.querySelectorAll(selector).map(authorNode),
@@ -102,7 +68,8 @@
         },
       });
       if (media.length) present("media");
-      return { ...empty, layout: root.matches(card) ? "native-card" : "action-ancestor", identityClaims: [...claims.values()], fields };
+      const layout = root.matches(permalinkPolicy.primaryCardSelector) ? "native-card" : "action-ancestor";
+      return { ...empty, layout, identityClaims, fields };
     } catch { return { ...empty, probeFailed: true }; }
   }
 

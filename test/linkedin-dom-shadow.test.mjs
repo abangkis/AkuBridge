@@ -6,10 +6,12 @@ import {registeredScriptsForSources,LINKEDIN_DOM_SHADOW_SCRIPTS} from '../source
 import {sourceDefinition,sourceRuntimeScripts} from '../source-catalog.js';
 
 const engine=await readFile(new URL('../shared-dom-engine/browser-runtime.js',import.meta.url),'utf8');
+const permalinkPolicy=await readFile(new URL('../linkedin-permalink-policy.js',import.meta.url),'utf8');
 const probe=await readFile(new URL('../adapters/linkedin-dom-shadow.js',import.meta.url),'utf8');
 function runtime(host='https://www.linkedin.com/feed/',failed=false){
   const context=vm.createContext({URL,window:{location:new URL(host)},document:{body:{innerText:'Private text'},querySelector:()=>null}});
   vm.runInContext(engine,context);
+  vm.runInContext(permalinkPolicy,context);
   if(failed)context.AkuSharedDOMEngine={SCHEMA_VERSION:1,assessDOM(){throw Error('Private source evidence');}};
   vm.runInContext(probe,context);return context.AkuLinkedInDOMShadow;
 }
