@@ -45,7 +45,7 @@ function scenario({ block = joel, url = block.permalink, embed = false, onOpen, 
   } };
   const context = vm.createContext({ document, window: { document, location, innerWidth: 1200, innerHeight: 1000 },
     getComputedStyle: node => node.style ?? ({display:'block',visibility:'visible',opacity:'1'}), location, URL, decodeURIComponent, Date });
-  for (const file of ["source-adapter-runtime.js", "linkedin-permalink-policy.js", "adapters/linkedin-adapter.js"]) {
+  for (const file of ["source-adapter-runtime.js", "linkedin-permalink-policy.js", "diagnostics/linkedin-recovery.js", "adapters/linkedin-adapter.js"]) {
     vm.runInContext(fs.readFileSync(new URL(file, root), "utf8"), context);
   }
   const adapter = context.AkuSourceAdapters.get("linkedin");

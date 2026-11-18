@@ -19,6 +19,10 @@ controllers.
 - `chrome-transport.js` owns best-effort sampling, bounded push delivery and a
   volatile receiver cache. It has no capture, retry, navigation or cleanup API.
 
+- `linkedin-recovery.js` owns the bounded pre-recovery menu and dialog sample.
+  It reports allowlisted component and action codes, trigger relations and
+  target hit tests. The adapter retains every recovery decision and effect.
+
 The same classic-script files load in isolated content worlds and are imported
 for their initialization by the MV3 worker. Source registration and dynamic
 injection use one script list. No extra build generator or duplicate package is
