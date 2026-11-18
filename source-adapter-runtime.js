@@ -1,5 +1,6 @@
 (() => {
   const runtimeRevision = "source-adapters-v18";
+  const directContextLimit = 8;
   const supportedContentFamilies = new Set(["feed_post"]);
   const supportedEvidenceModalities = new Set([
     "text",
@@ -114,7 +115,25 @@
     if (adapter.assessReadiness !== undefined && typeof adapter.assessReadiness !== "function") {
       throw new Error(`AkuBridge ${adapter.source} adapter readiness assessment must be a function.`);
     }
-    adapters.set(adapter.source, Object.freeze({ ...adapter }));
+    if (adapter.extractReplyContext !== undefined && typeof adapter.extractReplyContext !== "function") {
+      throw new Error(`AkuBridge ${adapter.source} adapter has an invalid reply extractor.`);
+    }
+    const registered = { ...adapter };
+    if (adapter.extractReplyContext) {
+      // extractReplyContext(container, context) returns null or
+      // { provenance, capturedAt?, observedText?, target: { kind: "post",
+      //   id?, permalink?, availability, author?, text?, hasMedia? } }.
+      // The target must identify the immediate native parent within this source.
+      registered.extractDirectContext = function (container, context) {
+        const relations = adapter.extractDirectContext?.call(this, container, context) ?? [];
+        if (!Array.isArray(relations)) throw new Error("Invalid direct context result");
+        const reply = adapter.extractReplyContext.call(this, container, context);
+        if (reply == null) return relations;
+        if (reply.target?.kind !== "post") throw new Error("Reply context requires a post target");
+        return [...relations.slice(0, directContextLimit - 1), { ...reply, kind: "replies_to" }];
+      };
+    }
+    adapters.set(adapter.source, Object.freeze(registered));
   }
 
   function get(source) {

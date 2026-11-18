@@ -245,6 +245,7 @@
       }),
     }),
     extractDirectContext: extractXDirectContext,
+    extractReplyContext: extractXReplyContext,
     extractQuotedPost: (container, {
       compactText,
       normalizeHttpUrl,
@@ -594,7 +595,7 @@ function imageUrls(image) {
     return { permalink: urls.length === 1 ? urls[0] : "", provenance: "observed_dom", text: compactText(markers[0].innerText) };
   }
 
-  function extractXDirectContext(container, { compactText, structuredText, permalink, quotedPost }) {
+  function extractXDirectContext(_container, { permalink, quotedPost }) {
     const capturedAt = new Date().toISOString();
     const relations = [];
     const ownID = statusID(permalink);
@@ -604,21 +605,23 @@ function imageUrls(image) {
           author: quotedPost.author || "", text: quotedPost.text || "", hasMedia: Boolean(quotedPost.media?.length),
           availability: quotedPost.text || quotedPost.media?.length ? "captured" : "reference_only" } });
     }
-    const reply = replyEvidence(container, compactText);
-    if (reply) {
-      const id = statusID(reply.permalink);
-      if (id && id === ownID) return relations;
-      const candidates = id ? [...(document.querySelectorAll?.('article[data-testid="tweet"]') ?? [])]
-        .filter((node) => node !== container && (!node.getClientRects || node.getClientRects().length > 0) && statusID(ownPostURL(node)) === id) : [];
-      const parent = candidates.length === 1 ? candidates[0] : null;
-      const textNode = parent?.querySelector('[data-testid="tweetText"]');
-      const text = textNode ? (structuredText?.(textNode) || compactText(textNode.innerText)).slice(0, 4000) : "";
-      relations.push({ kind: "replies_to", provenance: reply.provenance, capturedAt, observedText: reply.text,
-        target: { kind: "post", id, permalink: reply.permalink, text,
-          author: compactText(parent?.querySelector('[data-testid="User-Name"]')?.innerText).slice(0, 300),
-          availability: text ? "captured" : "reference_only" } });
-    }
     return relations;
+  }
+
+  function extractXReplyContext(container, { compactText, structuredText, permalink }) {
+    const reply = replyEvidence(container, compactText);
+    if (!reply) return null;
+    const id = statusID(reply.permalink);
+    if (id && id === statusID(permalink)) return null;
+    const candidates = id ? [...(document.querySelectorAll?.('article[data-testid="tweet"]') ?? [])]
+      .filter((node) => node !== container && (!node.getClientRects || node.getClientRects().length > 0) && statusID(ownPostURL(node)) === id) : [];
+    const parent = candidates.length === 1 ? candidates[0] : null;
+    const textNode = parent?.querySelector('[data-testid="tweetText"]');
+    const text = textNode ? (structuredText?.(textNode) || compactText(textNode.innerText)).slice(0, 4000) : "";
+    return { provenance: reply.provenance, capturedAt: new Date().toISOString(), observedText: reply.text,
+      target: { kind: "post", id, permalink: reply.permalink, text,
+        author: compactText(parent?.querySelector('[data-testid="User-Name"]')?.innerText).slice(0, 300),
+        availability: text ? "captured" : "reference_only" } };
   }
 
   function findQuotedPostContainer(container) {
