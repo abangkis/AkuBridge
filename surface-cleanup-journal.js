@@ -2,13 +2,23 @@ import { isBridgeOwnedFeedUrl } from "./source-tab-policy.js";
 import { sourceIds } from "./source-catalog.js";
 
 export const CLEANUP_JOURNAL_KEY = "akuBridgeSurfaceCleanupJournalV1";
+export const CLEANUP_JOURNAL_BACKUP_KEY = "akuBridgeSurfaceCleanupJournalBackupLatest";
 const STATE_KEY = "akuBridgeManagedCaptureWindowV1";
 const LEDGER_KEY = "akuBridgeManagedCaptureSurfaceLedgerV2";
 const GENERATION_KEY = "akuBridgeSurfaceOwnerGenerationV1";
 const MAX_RECORDS = 4096;
+const ARCHIVE_SCHEMA = "aku.surface-cleanup-archive.v1";
+const journalValue = (rows, archive) => archive ? { schema: ARCHIVE_SCHEMA, rows, archive } : rows;
+const hasCapacity = count => count <= MAX_RECORDS - 2;
 const GENERATION_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validGeneration = value => typeof value === "string" && value.length === 36 && GENERATION_PATTERN.test(value);
 const validId = value => Number.isSafeInteger(value) && value >= 0;
+
+// Chrome storage round trips may reorder object keys.
+function canonicalJSON(value) {
+  return JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item)
+    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+}
 
 // Fixed categories only: no tab/window IDs, lease values, URLs, or API messages.
 function diagnostics(phase, rows, leaseId, state = {}) {
@@ -38,19 +48,39 @@ function diagnostics(phase, rows, leaseId, state = {}) {
 
 // Records survive ambiguous navigation, API errors, and service-worker restarts.
 export function createSurfaceCleanupJournal(chrome) {
-  const read = async () => {
+  async function readStored() {
     const stored = await chrome.storage.local.get(CLEANUP_JOURNAL_KEY);
-    const rows = stored[CLEANUP_JOURNAL_KEY];
-    if (rows === undefined) return [];
+    const value = stored[CLEANUP_JOURNAL_KEY];
+    if (value?.schema !== ARCHIVE_SCHEMA) {
+      const rows = value === undefined ? [] : value;
+      validate(rows);
+      return { rows, archive: null };
+    }
+    const { rows, archive } = value;
     validate(rows);
-    return rows.map(row => ({ ...row, ...(!row.ownerGeneration ? { status: "pending" } : {}) }));
+    if (!archive || typeof archive !== "object" || Array.isArray(archive)) throw pendingError("Capture surface archive is invalid.");
+    return { rows, archive };
+  }
+  const read = async () => {
+    const { rows, archive } = await readStored();
+    return { rows: rows.map(row => ({ ...row, ...(!row.ownerGeneration ? { status: "pending" } : {}) })), archive };
   };
-  const save = rows => {
+  const save = (rows, archive) => {
     validate(rows);
-    return chrome.storage.local.set({ [CLEANUP_JOURNAL_KEY]: rows });
+    // One storage item commits the archived tombstones and the new live journal together.
+    return chrome.storage.local.set({ [CLEANUP_JOURNAL_KEY]: journalValue(rows, archive) });
   };
-  function validate(rows) {
-    if (!Array.isArray(rows) || rows.length > MAX_RECORDS || Array.from(rows).some(row =>
+  async function backUpJournal(rows, archive) {
+    const snapshot = journalValue(rows, archive);
+    const expected = canonicalJSON(snapshot);
+    await chrome.storage.local.set({ [CLEANUP_JOURNAL_BACKUP_KEY]: snapshot });
+    const stored = await chrome.storage.local.get(CLEANUP_JOURNAL_BACKUP_KEY);
+    if (canonicalJSON(stored[CLEANUP_JOURNAL_BACKUP_KEY]) !== expected) {
+      throw pendingError("The capture journal backup could not be verified.");
+    }
+  }
+  function validate(rows, max = MAX_RECORDS) {
+    if (!Array.isArray(rows) || rows.length > max || Array.from(rows).some(row =>
       !row || typeof row !== "object" || Array.isArray(row) ||
       !validId(row.tabId) || !(row.windowId === null || validId(row.windowId)) ||
       !(row.leaseId === null || typeof row.leaseId === "string" && row.leaseId.length >= 1 && row.leaseId.length <= 200) ||
@@ -134,16 +164,88 @@ export function createSurfaceCleanupJournal(chrome) {
       : !isBridgeOwnedFeedUrl(tab.url, row.source)) reasons.push("url_not_owned");
     return reasons;
   }
-  function receipt(rows, leaseId, source) {
-    const selected = rows.filter(row => row.leaseId === leaseId && (source === null || row.source === source || row.retainedFor === source));
+  function archivedRows(archive, leaseId) {
+    if (!archive || !Object.hasOwn(archive, leaseId) || leaseId === null) return [];
+    const rows = archive[leaseId];
+    validate(rows, Infinity);
+    if (!rows.every(row => row.leaseId === leaseId && row.status === "closed" && row.ownerGeneration)) {
+      throw pendingError("Archived cleanup receipt is invalid.");
+    }
+    return rows;
+  }
+  function receipt(rows, leaseId, source, archived) {
+    const matchesLeaseAndSource = row => row.leaseId === leaseId && (source === null || row.source === source || row.retainedFor === source);
+    const selected = rows.filter(matchesLeaseAndSource).concat(archived.filter(matchesLeaseAndSource));
     const closed = selected.filter(row => row.status === "closed").length;
     const retained = selected.filter(row => row.status === "retained" && row.role === "lease_placeholder" && source !== null).length;
     const pending = selected.length - closed - retained;
     return { schema: "aku.surface-cleanup.v1", leaseId, source, expected: selected.length, closed, transferred: 0, retained, pending, complete: pending === 0 };
   }
+  function inspectJournal(rows, bindings) {
+    const recorded = new Set(rows.map(row => JSON.stringify([row.tabId, row.leaseId])));
+    const unrecorded = bindings.filter(row => !recorded.has(JSON.stringify([row.tabId, row.leaseId]))).length;
+    return {
+      recordsUsed: rows.length, capacity: MAX_RECORDS,
+      capacityBlocked: !hasCapacity(rows.length + unrecorded),
+      protectedRecords: rows.filter(row => row.status !== "closed" || !row.ownerGeneration).length,
+    };
+  }
+  async function planArchive() {
+    const { rows, archive } = await readStored();
+    const bindings = [];
+    const state = await inventory(bindings);
+    const status = inspectJournal(rows, bindings);
+    const liveTabs = new Set((await chrome.tabs.query({})).map(tab => tab.id));
+    const boundTabs = new Set(bindings.map(row => row.tabId));
+    const blockedLeases = new Set([null, state.leaseId, ...bindings.map(row => row.leaseId)]);
+    for (const row of rows) {
+      if (row.status !== "closed" || !row.ownerGeneration || liveTabs.has(row.tabId) || boundTabs.has(row.tabId)) blockedLeases.add(row.leaseId);
+    }
+    const eligible = status.capacityBlocked ? rows.filter(row => !blockedLeases.has(row.leaseId)) : [];
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonicalJSON([rows, eligible])));
+    const previewToken = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+    const preview = { ...status, protectedRecords: rows.filter(row => blockedLeases.has(row.leaseId)).length,
+      eligibleRecords: eligible.length, previewToken, backupPolicy: "latest_verified" };
+    return { rows, archive, eligible, preview };
+  }
   return {
+    async maintenanceStatus() {
+      const { rows } = await readStored();
+      const bindings = [];
+      await inventory(bindings);
+      return inspectJournal(rows, bindings);
+    },
+    async maintenancePreview() {
+      return (await planArchive()).preview;
+    },
+    async archiveClosed(previewToken) {
+      const plan = await planArchive();
+      if (plan.preview.previewToken !== previewToken || !plan.eligible.length) {
+        return { outcome: "review_required", ...plan.preview };
+      }
+      const archive = Object.assign(Object.create(null), plan.archive);
+      const eligible = new Set(plan.eligible);
+      const archiveLeases = new Set(plan.eligible.map(row => row.leaseId));
+      for (const leaseId of archiveLeases) archive[leaseId] = [...archivedRows(archive, leaseId)];
+      for (const row of plan.eligible) archive[row.leaseId].push(row);
+      const rows = plan.rows.filter(row => !eligible.has(row));
+      await backUpJournal(plan.rows, plan.archive);
+      await save(rows, archive);
+      const verified = await readStored();
+      for (const leaseId of archiveLeases) {
+        const stored = archivedRows(verified.archive, leaseId);
+        if (canonicalJSON(stored) !== canonicalJSON(archive[leaseId])) throw pendingError("Capture surface archive could not be verified.");
+      }
+      if (canonicalJSON(verified.rows) !== canonicalJSON(rows)) throw pendingError("Capture surface journal could not be verified.");
+      const bindings = [];
+      await inventory(bindings);
+      const preserved = Object.fromEntries(["active", "pending", "retained"].map(status =>
+        [status, verified.rows.filter(row => row.status === status).length]));
+      return { outcome: "archived", archivedRecords: eligible.size, backupRecords: plan.rows.length,
+        preserved, ...inspectJournal(verified.rows, bindings) };
+    },
     async assertReloadReady() {
-      const rows = await read();
+      const { rows, archive } = await read();
       await inventory(rows);
       const bindings = [];
       await inventory(bindings);
@@ -153,16 +255,17 @@ export function createSurfaceCleanupJournal(chrome) {
       for (const row of rows) {
         if (row.status !== "closed" && !tabs.some(tab => tab.id === row.tabId)) row.status = "closed";
       }
-      await save(rows);
+      await save(rows, archive);
       if (rows.some(row => row.status !== "closed") || bindings.some(row => tabs.some(tab => tab.id === row.tabId))) throw pendingError();
     },
     async release(leaseId, source, operation) {
       leaseId ??= null;
       const ownerGeneration = await generation();
-      const rows = await read();
+      const { rows, archive } = await read();
+      const historical = archivedRows(archive, leaseId);
       const state = await inventory(rows);
       const diagnostic = diagnostics("release", rows, leaseId, state);
-      await save(rows);
+      await save(rows, archive);
       const selected = rows.filter(row => row.leaseId === leaseId && row.status !== "closed" &&
         (source === null || row.source === source || row.retainedFor === source));
       const differentCurrentLease = Boolean(state.leaseId && state.leaseId !== leaseId);
@@ -185,7 +288,7 @@ export function createSurfaceCleanupJournal(chrome) {
           }
         } catch { diagnostic.note("inventory_unavailable"); unsafe = true; row.status = "pending"; }
       }
-      await save(rows);
+      await save(rows, archive);
       let outcome;
       if (unsafe) outcome = { released: false, reason: "cleanup_pending" };
       else if (differentCurrentLease) {
@@ -249,8 +352,8 @@ export function createSurfaceCleanupJournal(chrome) {
           }
         }
       }
-      await save(rows);
-      const cleanup = receipt(rows, leaseId, source);
+      await save(rows, archive);
+      const cleanup = receipt(rows, leaseId, source, historical);
       if (outcome.reason === "lease_mismatch") diagnostic.note("runtime_lease_mismatch");
       if (!cleanup.complete && diagnostic.project().firstReason === "none") diagnostic.note("close_unverified");
       if (!cleanup.complete && outcome.reason !== "lease_mismatch") outcome = { ...outcome, released: false, reason: "cleanup_pending" };
@@ -273,7 +376,7 @@ export function createSurfaceCleanupJournal(chrome) {
     },
     async assertReady(source = null, leaseId = null) {
       const ownerGeneration = await generation();
-      const rows = await read();
+      const { rows, archive } = await read();
       const state = await inventory(rows);
       const diagnostic = diagnostics("admission", rows, leaseId ?? null, state);
       for (const row of rows.filter(row => row.status !== "closed")) {
@@ -286,22 +389,22 @@ export function createSurfaceCleanupJournal(chrome) {
           } else if (row.status === "pending") diagnostic.note("prior_pending_unresolved");
         } catch { diagnostic.note("inventory_unavailable"); row.status = "pending"; }
       }
-      await save(rows);
+      await save(rows, archive);
       if (rows.some(row => row.status === "pending")) {
         const error = pendingError(undefined, diagnostic.project());
         error.captureSurfaceLifecycle[0].source = sourceIds().includes(source) ? source : null;
         throw error;
       }
       // Reserve room for a new capture and its optional lease placeholder.
-      if (!ownerGeneration || rows.length > MAX_RECORDS - 2) {
+      if (!ownerGeneration || !hasCapacity(rows.length)) {
         diagnostic.note(!ownerGeneration ? "owner_generation_unavailable" : "journal_capacity");
         throw pendingError("Capture surface ownership or journal capacity is unavailable.", diagnostic.project());
       }
     },
     async capture() {
-      const rows = await read();
+      const { rows, archive } = await read();
       await inventory(rows, await generation());
-      await save(rows);
+      await save(rows, archive);
     },
   };
 }

@@ -9,7 +9,7 @@ import {
   normalizeManagedCaptureState,
 } from "../capture-window-runtime.js";
 import { focusPolicyEvidence } from "../capture-surface-telemetry.js";
-import { createSurfaceCleanupJournal, CLEANUP_JOURNAL_KEY } from "../surface-cleanup-journal.js";
+import { createSurfaceCleanupJournal, CLEANUP_JOURNAL_BACKUP_KEY, CLEANUP_JOURNAL_KEY } from "../surface-cleanup-journal.js";
 import { isVerifiedSurfaceCleanupReceipt } from "../surface-cleanup-receipt.js";
 import { AkuBridgeError, serializeBridgeError } from "../bridge-runtime-policy.js";
 import { createCaptureSurfaceReporter } from "../capture-surface-reporting.js";
@@ -1218,6 +1218,101 @@ test("journal capacity blocks new capture without evicting history", async () =>
   await assert.rejects(createManagedCaptureWindowRuntime(chrome).prepare("x", { leaseId: "new" }), { code: "cleanup_pending" });
   assert.equal((await chrome.storage.local.get(key))[key].length, 4095);
   assert.equal(chrome.createdWindowOptionsList.length, 0);
+});
+
+function closedJournalRows(count) {
+  return Array.from({ length: count }, (_, index) => ({ tabId: 10_000 + index, windowId: 10_000,
+    source: index % 2 ? "x" : "linkedin", role: "batch_capture", status: "closed",
+    ownerGeneration: "00000000-0000-4000-8000-000000000000", leaseId: `history-${Math.floor(index / 10)}` }));
+}
+
+test("journal recovery preserves active, pending, retained and still-referenced leases", async () => {
+  const chrome = fakeChrome();
+  const rows = closedJournalRows(4095);
+  rows[4094].status = "active";
+  rows[4093].status = "pending";
+  Object.assign(rows[4092], { status: "retained", role: "lease_placeholder", source: null, retainedFor: "x" });
+  chrome.addTab(1, "https://example.com/adopted", rows[4089].tabId);
+  await chrome.storage.local.set({ [CLEANUP_JOURNAL_KEY]: rows,
+    [CAPTURE_WINDOW_STORAGE_KEY]: { leaseId: rows[4079].leaseId, tabs: { x: rows[4079].tabId }, windowId: 10_000 } });
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  assert.equal((await runtime.journalStatus()).capacityBlocked, true);
+  const preview = await runtime.journalPreview();
+  assert.equal(preview.eligibleRecords, 4070);
+  assert.equal(preview.protectedRecords, 25);
+  assert.deepEqual((await chrome.storage.local.get(CLEANUP_JOURNAL_KEY))[CLEANUP_JOURNAL_KEY], rows);
+
+  const [applied, replayed] = await Promise.all([runtime.archiveJournal(preview.previewToken), runtime.archiveJournal(preview.previewToken)]);
+  assert.equal(applied.outcome, "archived");
+  assert.equal(applied.recordsUsed, 25);
+  assert.equal(applied.archivedRecords, 4070);
+  assert.equal(applied.backupRecords, rows.length);
+  assert.deepEqual(applied.preserved, { active: 1, pending: 1, retained: 1 });
+  assert.equal(replayed.outcome, "review_required");
+  const stored = (await chrome.storage.local.get(CLEANUP_JOURNAL_KEY))[CLEANUP_JOURNAL_KEY];
+  assert.deepEqual(stored.rows, rows.slice(4070));
+  assert.deepEqual(Object.values(stored.archive).flat(), rows.slice(0, 4070));
+  assert.deepEqual((await chrome.storage.local.get(CLEANUP_JOURNAL_BACKUP_KEY))[CLEANUP_JOURNAL_BACKUP_KEY], rows);
+  assert.deepEqual(chrome.removedTabIds, []);
+  assert.deepEqual(chrome.removedWindowIds, []);
+});
+
+test("journal archive verifies backup before writing and replaces the previous snapshot", async () => {
+  const chrome = fakeChrome();
+  const rows = closedJournalRows(4095);
+  await chrome.storage.local.set({ [CLEANUP_JOURNAL_KEY]: rows });
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  const preview = await runtime.journalPreview();
+  const { get, set } = chrome.storage.local;
+  const writes = [];
+  chrome.storage.local.set = async (values) => { writes.push(...Object.keys(values)); await set(values); };
+  chrome.storage.local.get = async (key) => key === CLEANUP_JOURNAL_BACKUP_KEY ? { [key]: [] } : get(key);
+  await assert.rejects(runtime.archiveJournal(preview.previewToken), /backup could not be verified/);
+  assert.deepEqual(writes, [CLEANUP_JOURNAL_BACKUP_KEY]);
+  assert.deepEqual((await get(CLEANUP_JOURNAL_KEY))[CLEANUP_JOURNAL_KEY], rows);
+  chrome.storage.local.get = get;
+  await runtime.archiveJournal(preview.previewToken);
+
+  const previous = (await get(CLEANUP_JOURNAL_KEY))[CLEANUP_JOURNAL_KEY];
+  const next = { ...previous, rows: rows.map(row => ({ ...row, leaseId: `next-${row.leaseId}` })) };
+  await set({ [CLEANUP_JOURNAL_KEY]: next });
+  await runtime.archiveJournal((await runtime.journalPreview()).previewToken);
+  assert.deepEqual(writes, [CLEANUP_JOURNAL_BACKUP_KEY, CLEANUP_JOURNAL_BACKUP_KEY, CLEANUP_JOURNAL_KEY,
+    CLEANUP_JOURNAL_BACKUP_KEY, CLEANUP_JOURNAL_KEY]);
+  assert.deepEqual((await get(CLEANUP_JOURNAL_BACKUP_KEY))[CLEANUP_JOURNAL_BACKUP_KEY], next);
+});
+
+test("journal recovery rejects stale previews, survives storage errors and permits a new capture after verified archival", async () => {
+  const chrome = fakeChrome();
+  const rows = closedJournalRows(4095);
+  await chrome.storage.local.set({ [CLEANUP_JOURNAL_KEY]: rows });
+  const runtime = createManagedCaptureWindowRuntime(chrome);
+  await assert.rejects(runtime.prepare("x", { leaseId: "new" }), { code: "cleanup_pending" });
+  const initial = await runtime.journalPreview();
+  chrome.addTab(1, "https://example.com/adopted", rows[0].tabId);
+  const refreshed = await runtime.archiveJournal(initial.previewToken);
+  assert.equal(refreshed.outcome, "review_required");
+  assert.equal(refreshed.eligibleRecords, 4085);
+  assert.deepEqual((await chrome.storage.local.get(CLEANUP_JOURNAL_KEY))[CLEANUP_JOURNAL_KEY], rows);
+
+  const store = chrome.storage.local.set;
+  chrome.storage.local.set = async () => { throw new Error("fixture: storage unavailable"); };
+  await assert.rejects(runtime.archiveJournal(refreshed.previewToken), /storage unavailable/);
+  assert.deepEqual((await chrome.storage.local.get(CLEANUP_JOURNAL_KEY))[CLEANUP_JOURNAL_KEY], rows);
+  chrome.storage.local.set = async (values) => {
+    const serialized = JSON.stringify(values, (_key, item) => item && typeof item === "object" && !Array.isArray(item)
+      ? Object.fromEntries(Object.entries(item).reverse()) : item);
+    await store(JSON.parse(serialized));
+  };
+  assert.equal((await runtime.archiveJournal(refreshed.previewToken)).capacityBlocked, false);
+
+  const restarted = createManagedCaptureWindowRuntime(chrome);
+  const outcome = await restarted.releaseSource("x", "history-1");
+  assert.equal(outcome.cleanup.expected, 5);
+  assert.equal(outcome.cleanup.closed, 5);
+  assert.ok(isVerifiedSurfaceCleanupReceipt(outcome, "history-1", "x"));
+  assert.equal((await restarted.release("history-1")).cleanup.closed, 10);
+  assert.equal((await restarted.prepare("x", { leaseId: "new" })).opened, true);
 });
 
 test("corrupt persisted cleanup journal never becomes verified empty", async (t) => {

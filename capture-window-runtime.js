@@ -31,6 +31,9 @@ export function createManagedCaptureWindowRuntime(chromeApi, run = operation => 
   const serialize = operation => run(() => enqueue(operation));
   return Object.freeze({
     assertReloadReady: () => enqueue(() => cleanup.assertReloadReady()),
+    journalStatus: () => serialize(() => cleanup.maintenanceStatus()),
+    journalPreview: () => serialize(() => cleanup.maintenancePreview()),
+    archiveJournal: token => serialize(() => cleanup.archiveClosed(token)),
     prepare: (...args) => serialize(async () => {
       await cleanup.assertReady(args[0], args[1]?.leaseId);
       const result = await runtime.prepare(...args);

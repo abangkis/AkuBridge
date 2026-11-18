@@ -335,6 +335,19 @@
       return;
     }
 
+    if (message.type === "AKU_BROWSER_CAPTURE_JOURNAL") {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "AKU_BRIDGE_CAPTURE_JOURNAL", journalOperation: message.journalOperation, previewToken: message.previewToken,
+        });
+        if (!response?.ok) throw new Error(response?.message || "AkuBridge could not read the capture journal.");
+        window.postMessage({ type: "AKU_BROWSER_CAPTURE_JOURNAL_RESULT", requestId: message.requestId, journal: response.journal }, allowedOrigin);
+      } catch (error) {
+        window.postMessage({ type: "AKU_BROWSER_CAPTURE_JOURNAL_FAILED", requestId: message.requestId, message: String(error?.message ?? error) }, allowedOrigin);
+      }
+      return;
+    }
+
     if (message.type === "AKU_BROWSER_REVOKE_SOURCE_ACCESS") {
       try {
         const response = await chrome.runtime.sendMessage({ type: "AKU_BRIDGE_REVOKE_SOURCE_ACCESS" });

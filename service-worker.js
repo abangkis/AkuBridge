@@ -207,6 +207,7 @@ const splitCaptureClient = createSplitCaptureClient({ chrome, captureHostOnlyRet
   reload: { complete: id => reloadCoordinator.complete(id), cancel: id => reloadCoordinator.cancel(id) },
   handlers: {
   ping: async () => ({ capabilities: await bridgeCapabilitiesWithSourceAccess(), extensionOrigin: chrome.runtime.getURL("").replace(/\/$/, "") }),
+  capture_journal: captureJournalOperation,
   probe_source_sessions: async () => reloadCoordinator.run(async () => ({ sessions: await probeSourceSessions() })),
   open_source: async (a, c) => reloadCoordinator.run(() => openSourceFeed(a.source, true, c.sourceIntent)),
   open_native_post: async (a, c) => reloadCoordinator.run(() => openNativePostInReaderWindow(a.source, a.url, c.readerIntent)),
@@ -327,6 +328,16 @@ chrome.permissions.onRemoved.addListener(() => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "AKU_BRIDGE_CAPTURE_JOURNAL") {
+    if (sender.frameId !== 0 || !isAkuBrowserOrigin(sender.url)) {
+      sendResponse({ ok: false, message: "Capture journal request rejected: invalid AkuBrowser page." });
+      return false;
+    }
+    captureJournalOperation(message)
+      .then(result => sendResponse({ ok: true, ...result }))
+      .catch(() => sendResponse({ ok: false, message: "AkuBridge could not verify the capture journal. Refresh its status before retrying." }));
+    return true;
+  }
   if (message?.type === "AKU_BROWSER_CAPTURE_PROGRESS") {
     sendResponse({ ok: captureDiagnostics.receive(message, sender) });
     return false;
@@ -671,6 +682,15 @@ async function clearInstalledAkuBrowserTabRecovery() {
 function isTrustedSourceContentSender(sender) {
   if (!Number.isInteger(sender.tab?.id) || typeof sender.url !== "string") return false;
   return sourceForUrl(sender.url) !== null;
+}
+
+async function captureJournalOperation({ journalOperation, previewToken }) {
+  if (journalOperation === "status") return { journal: await managedCaptureWindow.journalStatus() };
+  if (journalOperation === "preview") return { journal: await managedCaptureWindow.journalPreview() };
+  if (journalOperation === "archive" && typeof previewToken === "string" && /^[a-f0-9]{64}$/.test(previewToken)) {
+    return { journal: await managedCaptureWindow.archiveJournal(previewToken) };
+  }
+  throw new Error("Invalid capture journal operation or preview.");
 }
 
 function isAkuBrowserOrigin(value) {
