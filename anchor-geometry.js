@@ -7,7 +7,7 @@
     const verticalMatch = verticalGap >= minVerticalGapPx && verticalGap <= maxVerticalGapPx;
     const verticalReason = verticalGap > maxVerticalGapPx ? "gap_too_large"
       : verticalGap < minVerticalGapPx ? "overlap_too_large" : null;
-    return { horizontalMatch: horizontalError <= maxHorizontalErrorPx, verticalMatch, verticalReason };
+    return { horizontalMatch: horizontalError <= maxHorizontalErrorPx, verticalMatch, verticalReason, gapY: verticalGap };
   }
 
   globalThis.AkuAnchorGeometry = Object.freeze({ compareAnchorGeometry });

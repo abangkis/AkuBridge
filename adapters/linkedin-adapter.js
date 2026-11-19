@@ -495,6 +495,7 @@
   const permalinkRecoveryOwners = new WeakMap();
   const linkedinMenuButtonSelector = 'button[aria-label^="Open control menu for post by"]';
   const linkedinAnchorTolerance = Object.freeze({ maxHorizontalErrorPx: 4, minVerticalGapPx: -2, maxVerticalGapPx: 16 });
+  const maxLinkedInPopoverMarginPx = 8;
   const linkedinDialogSelector = '[role="dialog"], [data-test-modal], .artdeco-modal';
   const compactRecoveryText = value => String(value ?? "").replace(/\s+/g, " ").trim();
 
@@ -529,11 +530,22 @@
       (!labelledBy || labelledBy.split(" ").includes(trigger.id));
   }
 
-  function recoveryMenuMatches(menu, trigger, expandedBeforeClick) {
-    return recoveryMenuRejection(menu, trigger, expandedBeforeClick) === null;
+  function correctedAboveMenuGap(menu, popover, anchor, panel) {
+    const content = menu.getBoundingClientRect();
+    if (!(content.width > 0 && content.height > 0 && panel.top < anchor.top &&
+        content.bottom <= anchor.top && anchor.top - content.bottom <= linkedinAnchorTolerance.maxVerticalGapPx)) return null;
+    const style = globalThis.getComputedStyle?.(popover);
+    const marginPx = style?.marginTop;
+    if (style?.position !== "fixed" || !marginPx?.endsWith("px")) return null;
+    const marginTop = Number(marginPx.slice(0, -2));
+    if (!(marginTop > 0 && marginTop <= maxLinkedInPopoverMarginPx)) return null;
+    // The top margin moves the wrapper down for both placements. Above the
+    // button, remove that offset from the measured wrapper edge.
+    const gap = anchor.top - (panel.bottom - marginTop);
+    return gap >= linkedinAnchorTolerance.minVerticalGapPx && gap <= linkedinAnchorTolerance.maxVerticalGapPx ? gap : null;
   }
 
-  function recoveryMenuRejection(menu, trigger, expandedBeforeClick, observeGeometry) {
+  function recoveryMenuRejection(menu, trigger, expandedBeforeClick, allowMarginCorrection, observeGeometry) {
     const reference = recoverySurfaceReference(menu, trigger);
     if (reference !== null) return reference ? null : "foreign_reference";
     // LinkedIn's current control opens a Floating UI popover outside the card
@@ -548,10 +560,13 @@
     const anchor = trigger.getBoundingClientRect();
     const panel = popover.getBoundingClientRect();
     if (!(anchor.width > 0 && anchor.height > 0 && panel.width > 0 && panel.height > 0)) return "missing_geometry";
-    const { horizontalMatch, verticalMatch, verticalReason } =
+    const { horizontalMatch, verticalMatch, verticalReason, gapY } =
       globalThis.AkuAnchorGeometry.compareAnchorGeometry(anchor, panel, linkedinAnchorTolerance);
-    observeGeometry?.(menu, horizontalMatch, verticalMatch, verticalReason);
-    return horizontalMatch && verticalMatch ? null : "anchor_mismatch";
+    const correctedGapY = allowMarginCorrection && horizontalMatch && verticalReason === "overlap_too_large"
+      ? correctedAboveMenuGap(menu, popover, anchor, panel) : null;
+    const acceptedVertically = verticalMatch || correctedGapY !== null;
+    observeGeometry?.(menu, horizontalMatch, acceptedVertically, acceptedVertically ? null : verticalReason, gapY, correctedGapY);
+    return horizontalMatch && acceptedVertically ? null : "anchor_mismatch";
   }
 
   function recoveryMenuMatchesAuthorForCleanup(menu, owner, expandedBeforeClick) {
@@ -569,10 +584,14 @@
     if (expanded.length !== 1 || expanded[0] !== owner.button ||
         buttons.filter(button => compactRecoveryText(button.getAttribute("aria-label")).toLowerCase() === ownerLabel).length !== 1) return false;
     const author = ownerLabel.replace(/^open control menu for post by\s+/, "");
-    const authorActions = [...menu.querySelectorAll('[role="menuitem"]')]
-      .map(action => compactRecoveryText(action.getAttribute("aria-label") || action.innerText || action.textContent).toLowerCase())
-      .filter(label => label.startsWith("hide posts by "));
-    return authorActions.length === 1 && authorActions[0] === `hide posts by ${author}`;
+    const actionLabels = [...menu.querySelectorAll('[role="menuitem"]')]
+      .map(action => compactRecoveryText(action.getAttribute("aria-label") || action.innerText || action.textContent).toLowerCase());
+    const hideActions = actionLabels.filter(label => label.startsWith("hide posts by "));
+    if (hideActions.length) return hideActions.length === 1 && hideActions[0] === `hide posts by ${author}`;
+
+    const unfollowActions = actionLabels.filter(label => label.startsWith("unfollow "));
+    return unfollowActions.length === 1 && unfollowActions[0] === `unfollow ${author}` &&
+      actionLabels.some(label => label === "copy link to post" || label === "embed this post");
   }
 
   function isLinkedInSidebarPromotion(menu) {
@@ -623,6 +642,7 @@
     const diagnostic = globalThis.AkuLinkedInRecoveryDiagnostics;
     let failureSamples = 0;
     let anchorSamples = 0;
+    let anchorGeometrySamples = 0;
     const noteFailure = (result, container, index, stage, reason, visibility) => {
       if (!diagnostic || failureSamples >= 8) return;
       result.failureDiagnostic = diagnostic.recordFailure(container, helpers, index, stage, reason,
@@ -669,9 +689,11 @@
       let observedMenu = null;
       let cleanupOnlyMenu = null;
       let ambiguousMenu = false;
+      const freshMenu = menu => !ambiguousMenu && !oldMenus.includes(menu);
       const ownerCurrent = () => recoveryOwnerMatches(owner);
       const expandedBeforeClick = owner.button.getAttribute?.("aria-expanded") ?? null;
-      const anchorPolling = anchorSamples < 8 ? diagnostic?.trackAnchorMismatch?.() : null;
+      const anchorPolling = anchorSamples < 8 || anchorGeometrySamples < 8
+        ? diagnostic?.trackAnchorMismatch?.(helpers.diagnosticScrollRoot, anchorGeometrySamples < 8) : null;
       let stage = "menu";
       let reason = "menu_not_observed";
       const reject = (nextStage, nextReason) => { stage = nextStage; reason = nextReason; return null; };
@@ -685,11 +707,13 @@
       const menuCurrent = () => {
         if (!ownerCurrent() || !boundMenu) return false;
         const menus = visibleRecoveryMenus();
-        return menus.length === 1 && menus[0] === boundMenu && recoveryMenuMatches(boundMenu, owner.button, expandedBeforeClick);
+        return menus.length === 1 && menus[0] === boundMenu &&
+          recoveryMenuRejection(boundMenu, owner.button, expandedBeforeClick, freshMenu(boundMenu)) === null;
       };
       try {
         const visibility = diagnostic && failureSamples < 8
           ? diagnostic.captureButtonVisibility(owner.button, helpers.diagnosticScrollRoot) : null;
+        anchorPolling?.beforeClick();
         owner.button.click();
         const observation = await helpers.waitForValue(() => {
           if (!ownerCurrent()) {
@@ -706,10 +730,11 @@
           if (observedMenu && observedMenu !== menus[0]) ambiguousMenu = true;
           observedMenu = menus[0];
           anchorPolling?.beginPoll();
-          const ownershipRejection = recoveryMenuRejection(menus[0], owner.button, expandedBeforeClick, anchorPolling?.observe);
+          const ownershipRejection =
+            recoveryMenuRejection(observedMenu, owner.button, expandedBeforeClick, freshMenu(observedMenu), anchorPolling?.observe);
           anchorPolling?.endPoll();
           const menuMatches = ownershipRejection === null;
-          if (!menuMatches && !ambiguousMenu && !oldMenus.includes(observedMenu) &&
+          if (!menuMatches && freshMenu(observedMenu) &&
               recoveryMenuMatchesAuthorForCleanup(observedMenu, owner, expandedBeforeClick)) cleanupOnlyMenu = observedMenu;
           try {
             if (menuAttempt && (menuMatches || recoverySurfaceReference(menus[0], owner.button) === null)) {
@@ -760,10 +785,16 @@
           if (evidence || observation?.evidence) reject("revalidation", "binding_or_evidence_changed");
           noteFailure(result, container, diagnosticCandidateIndex, stage, reason, visibility);
         }
-        const anchorMismatchDiagnostic = anchorPolling?.report(container, helpers, diagnosticCandidateIndex);
+        const anchorMismatchDiagnostic = anchorSamples < 8
+          ? anchorPolling?.report(container, helpers, diagnosticCandidateIndex) : null;
         if (anchorMismatchDiagnostic) {
           result.anchorMismatchDiagnostic = anchorMismatchDiagnostic;
           anchorSamples++;
+        }
+        const anchorGeometryDiagnostic = anchorPolling?.geometryReport(container, helpers, diagnosticCandidateIndex);
+        if (anchorGeometryDiagnostic) {
+          result.anchorGeometryDiagnostic = anchorGeometryDiagnostic;
+          anchorGeometrySamples++;
         }
         recovered.set(container, result);
       } finally {

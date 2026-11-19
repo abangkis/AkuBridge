@@ -373,6 +373,7 @@
     const linkedinRecoveryBlockers = [];
     const linkedinPermalinkRecoveryFailures = [];
     const linkedinAnchorMismatchPolls = [];
+    const linkedinAnchorGeometrySamples = [];
     const diagnosticMenuTracker = source === "linkedin" ? globalThis.AkuLinkedInRecoveryDiagnostics?.createMenuTracker?.() : null;
     let xRecaptureSelection = null;
     const uniqueCandidates = new Set();
@@ -395,6 +396,7 @@
           linkedinRecoveryBlockers: recoveryBlockers = [],
           linkedinPermalinkRecoveryFailures: recoveryFailures = [],
           linkedinAnchorMismatchPolls: anchorMismatchPolls = [],
+          linkedinAnchorGeometrySamples: anchorGeometrySamples = [],
           ...snapshot
         } = await captureVisibleSnapshot(
           source,
@@ -428,6 +430,7 @@
         linkedinRecoveryBlockers.push(...recoveryBlockers.slice(0, 8 - linkedinRecoveryBlockers.length));
         linkedinPermalinkRecoveryFailures.push(...recoveryFailures.slice(0, 8 - linkedinPermalinkRecoveryFailures.length));
         linkedinAnchorMismatchPolls.push(...anchorMismatchPolls.slice(0, 8 - linkedinAnchorMismatchPolls.length));
+        linkedinAnchorGeometrySamples.push(...anchorGeometrySamples.slice(0, 8 - linkedinAnchorGeometrySamples.length));
         reportProgress("snapshot_completed", {
           source,
           snapshotIndex: index,
@@ -604,6 +607,7 @@
         ...(linkedinRecoveryBlockers.length ? { linkedinRecoveryBlockers } : {}),
         ...(linkedinPermalinkRecoveryFailures.length ? { linkedinPermalinkRecoveryFailures } : {}),
         ...(linkedinAnchorMismatchPolls.length ? { linkedinAnchorMismatchPolls } : {}),
+        ...(linkedinAnchorGeometrySamples.length ? { linkedinAnchorGeometrySamples } : {}),
         scrollDeltas,
         scrollStopReason,
         originalScrollY: Math.round(restorePosition.y),
@@ -1034,6 +1038,8 @@
         ? { linkedinPermalinkRecoveryFailures: boundedContainers.map(container => recoveredPermalinks.get(container)?.failureDiagnostic).filter(Boolean).slice(0, 8) } : {}),
       ...(source === "linkedin" && boundedContainers.some(container => recoveredPermalinks.get(container)?.anchorMismatchDiagnostic)
         ? { linkedinAnchorMismatchPolls: boundedContainers.map(container => recoveredPermalinks.get(container)?.anchorMismatchDiagnostic).filter(Boolean).slice(0, 8) } : {}),
+      ...(source === "linkedin" && boundedContainers.some(container => recoveredPermalinks.get(container)?.anchorGeometryDiagnostic)
+        ? { linkedinAnchorGeometrySamples: boundedContainers.map(container => recoveredPermalinks.get(container)?.anchorGeometryDiagnostic).filter(Boolean).slice(0, 8) } : {}),
       ...(targetSelection ? { xRecaptureSelection: targetSelection.diagnostics } : {}),
       candidateDiagnostics: normalizeCandidateDiagnostics(
         discovery.candidateDiagnostics,

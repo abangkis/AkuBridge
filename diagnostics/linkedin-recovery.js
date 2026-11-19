@@ -307,7 +307,7 @@
 
   // A sequence follows one exact menu within one attempt. A missing/replaced
   // menu or an ownership check without geometry ends the sequence.
-  function trackAnchorMismatch() {
+  function trackAnchorMismatch(scrollRoot, sampleGeometry) {
     let currentMenu;
     let status;
     let geometryRead = false;
@@ -316,12 +316,34 @@
     let verticalPolls = 0;
     let verticalGapPolls = 0;
     let verticalOverlapPolls = 0;
+    let scrollTopAtClick = null;
+    let geometryMenu;
+    let first = null;
+    let last = null;
+    const readScrollTop = () => {
+      try {
+        const view = typeof window === "object" ? window : globalThis;
+        const value = !scrollRoot || scrollRoot === view ? view.scrollY : scrollRoot.scrollTop;
+        return Number.isFinite(value) && value >= 0 && value <= 10_000_000 ? value : null;
+      } catch { return null; }
+    };
     const interrupt = () => { if (status === "tracking") status = "interrupted"; };
     return {
       interrupt,
+      beforeClick() { if (sampleGeometry) scrollTopAtClick = readScrollTop(); },
       beginPoll() { geometryRead = false; },
-      observe(menu, horizontalMatch, verticalMatch, verticalReason) {
+      observe(menu, horizontalMatch, verticalMatch, verticalReason, gapY, correctedGapY) {
         geometryRead = true;
+        if (sampleGeometry && Number.isFinite(gapY) && Math.abs(gapY) <= 16_384) {
+          const scrollTop = readScrollTop();
+          if (scrollTop !== null) {
+            last = { scrollTop, gapY, ...(Number.isFinite(correctedGapY) ? { correctedGapY } : {}) };
+            if (menu !== geometryMenu) {
+              geometryMenu = menu;
+              first = last;
+            }
+          }
+        }
         if (menu !== currentMenu) interrupt();
         if (horizontalMatch && verticalMatch) {
           if (status === "tracking") status = "resolved";
@@ -341,6 +363,14 @@
         if (verticalReason === "overlap_too_large") verticalOverlapPolls++;
       },
       endPoll() { if (!geometryRead) interrupt(); },
+      geometryReport(container, helpers, candidateIndex) {
+        if (scrollTopAtClick === null) return undefined;
+        try {
+          return { snapshotIndex: diagnosticIndex(helpers.diagnosticSnapshotIndex),
+            candidateIndex: diagnosticIndex(helpers.diagnosticCandidateIndex?.(container)) ?? diagnosticIndex(candidateIndex),
+            scrollTopAtClick, first, last };
+        } catch { return undefined; }
+      },
       report(container, helpers, candidateIndex) {
         if (!mismatchPolls) return undefined;
         try {

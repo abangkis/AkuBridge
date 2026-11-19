@@ -17,6 +17,7 @@ test("signed anchor gap is symmetric above and below and uses inclusive CSS pixe
       const result = compareAnchorGeometry(anchor, panel, linkedInTolerance);
       assert.equal(result.horizontalMatch, true);
       assert.equal(result.verticalMatch, gap >= -2 && gap <= 16);
+      assert.equal(result.gapY, gap);
       assert.equal(result.verticalReason, gap < -2 ? "overlap_too_large" : gap > 16 ? "gap_too_large" : null);
     }
   }
