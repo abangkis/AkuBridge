@@ -34,8 +34,12 @@
     return { owned, text, querySelectorAll, querySelector: selector => querySelectorAll(selector)[0] ?? null };
   }
 
-  function candidateEvidence(root, index, visible, adapter, candidates) {
-    const empty = { ref: String(index), visible, layout: null, identityClaims: [], fields: [] };
+  /**
+   * @param {import("../shared-dom-engine/card-dom-adapter").CardCandidate} card
+   * @returns {import("../shared-dom-engine/card-dom-adapter").CardEvidence}
+   */
+  function readCardEvidence({ root, ref, visible }, { adapter, candidates }) {
+    const empty = { ref, visible, layout: null, identityClaims: [], fields: [] };
     if (!visible) return empty;
     try {
       if (root.isConnected === false) throw new Error("detached");
@@ -86,7 +90,9 @@
         structure: { feedRoot, loading, empty: false, markers: [], visibleStructuralCount: 0, offscreenStructuralCount: 0 }, candidates: [] };
       if (access === "available") {
         const bounded = candidates.slice(0, maxCandidates);
-        current.candidates = bounded.map((root, index) => candidateEvidence(root, index, visible(root), adapter, bounded));
+        current.candidates = bounded.map((root, index) => readCardEvidence(
+          { root, ref: String(index), visible: visible(root) }, { adapter, candidates: bounded },
+        ));
         current.structure.visibleStructuralCount = current.candidates.filter(candidate => candidate.visible).length;
         current.structure.offscreenStructuralCount = current.candidates.length - current.structure.visibleStructuralCount;
       }

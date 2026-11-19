@@ -272,5 +272,134 @@
     return { dialogCount: shownDialogs.length, complete: menus.length <= 2 && dialogs.length <= 8 && shownDialogs.length <= 2, surfaces };
   }
 
-  globalThis.AkuLinkedInRecoveryDiagnostics = Object.freeze({ recordBlocker, inspectSurfaces });
+  const diagnosticIndex = value => Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000 ? value : null;
+
+  function captureButtonVisibility(button, scrollRoot) {
+    const unavailable = { viewport: "unavailable", scrollRoot: "unavailable" };
+    try {
+      if (!button || !Number.isFinite(window.innerWidth) || !Number.isFinite(window.innerHeight)) return unavailable;
+      const rect = button.getBoundingClientRect();
+      const style = getComputedStyle(button);
+      if (!rect.width || !rect.height || style.visibility === "hidden" || style.visibility === "collapse" ||
+          style.display === "none" || Number(style.opacity) === 0) return { viewport: "hidden", scrollRoot: "hidden" };
+      const classify = bounds => {
+        if (rect.right <= bounds.left || rect.left >= bounds.right ||
+            rect.bottom <= bounds.top || rect.top >= bounds.bottom) return "outside";
+        return rect.left >= bounds.left && rect.right <= bounds.right &&
+          rect.top >= bounds.top && rect.bottom <= bounds.bottom ? "visible" : "partial";
+      };
+      const viewport = classify({ left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight });
+      if (!scrollRoot || scrollRoot === window) return { viewport, scrollRoot: viewport };
+      const root = scrollRoot.getBoundingClientRect();
+      const left = root.left + scrollRoot.clientLeft;
+      const top = root.top + scrollRoot.clientTop;
+      return { viewport, scrollRoot: classify({ left, top, right: left + scrollRoot.clientWidth, bottom: top + scrollRoot.clientHeight }) };
+    } catch { return unavailable; }
+  }
+
+  function recordFailure(container, helpers, candidateIndex, stage, reason, buttonVisibility) {
+    try {
+      return { snapshotIndex: diagnosticIndex(helpers.diagnosticSnapshotIndex),
+        candidateIndex: diagnosticIndex(helpers.diagnosticCandidateIndex?.(container)) ?? diagnosticIndex(candidateIndex),
+        stage, reason, ...buttonVisibility };
+    } catch { return undefined; }
+  }
+
+  // A sequence follows one exact menu within one attempt. A missing/replaced
+  // menu or an ownership check without geometry ends the sequence.
+  function trackAnchorMismatch() {
+    let currentMenu;
+    let status;
+    let geometryRead = false;
+    let mismatchPolls = 0;
+    let horizontalPolls = 0;
+    let verticalPolls = 0;
+    let verticalGapPolls = 0;
+    let verticalOverlapPolls = 0;
+    const interrupt = () => { if (status === "tracking") status = "interrupted"; };
+    return {
+      interrupt,
+      beginPoll() { geometryRead = false; },
+      observe(menu, horizontalMatch, verticalMatch, verticalReason) {
+        geometryRead = true;
+        if (menu !== currentMenu) interrupt();
+        if (horizontalMatch && verticalMatch) {
+          if (status === "tracking") status = "resolved";
+          return;
+        }
+        if (status !== "tracking") {
+          currentMenu = menu;
+          status = "tracking";
+          mismatchPolls = horizontalPolls = verticalPolls = 0;
+          verticalGapPolls = verticalOverlapPolls = 0;
+        }
+        if (mismatchPolls >= 32) return;
+        mismatchPolls++;
+        if (!horizontalMatch) horizontalPolls++;
+        if (!verticalMatch) verticalPolls++;
+        if (verticalReason === "gap_too_large") verticalGapPolls++;
+        if (verticalReason === "overlap_too_large") verticalOverlapPolls++;
+      },
+      endPoll() { if (!geometryRead) interrupt(); },
+      report(container, helpers, candidateIndex) {
+        if (!mismatchPolls) return undefined;
+        try {
+          const persistence = status === "tracking" ? (mismatchPolls > 1 ? "repeated" : "single_sample") : status;
+          return { snapshotIndex: diagnosticIndex(helpers.diagnosticSnapshotIndex),
+            candidateIndex: diagnosticIndex(helpers.diagnosticCandidateIndex?.(container)) ?? diagnosticIndex(candidateIndex),
+            mismatchPolls, horizontalPolls, verticalPolls, persistence,
+            ...(verticalGapPolls + verticalOverlapPolls === verticalPolls
+              ? { verticalGapPolls, verticalOverlapPolls } : {}) };
+        } catch { return undefined; }
+      },
+    };
+  }
+
+  // Track only exact DOM nodes seen after our own click, within one capture.
+  // A transition without a binding is correlation, not ownership proof.
+  function createMenuTracker() {
+    const observations = new WeakMap();
+    let remainingAttempts = 32;
+    return {
+      begin(owner, helpers, candidateIndex, expandedBeforeClick) {
+        if (remainingAttempts-- <= 0) return null;
+        const attempt = { button: owner.button, snapshotIndex: diagnosticIndex(helpers.diagnosticSnapshotIndex),
+          candidateIndex: diagnosticIndex(helpers.diagnosticCandidateIndex ? helpers.diagnosticCandidateIndex(owner.container) : candidateIndex) };
+        let remainingMenus = 2;
+        return {
+          observe(menu, bound) {
+            const expanded = (expandedBeforeClick === null || expandedBeforeClick === "false") &&
+              owner.button.getAttribute?.("aria-expanded") === "true";
+            if (!bound && !expanded) return;
+            const prior = observations.get(menu);
+            if (prior?.attempt === attempt) {
+              prior.bound ||= bound;
+              prior.expanded ||= expanded;
+            } else if (remainingMenus > 0) {
+              remainingMenus--;
+              observations.set(menu, { attempt, bound, expanded, cleanup: "not_attempted" });
+            }
+          },
+          cleanup(menu, gone) {
+            const observed = observations.get(menu);
+            if (observed?.attempt !== attempt) return;
+            observed.cleanup = gone ? "not_visible" : "still_visible";
+          },
+        };
+      },
+      correlate(menus, owner) {
+        return menus.slice(0, 2).flatMap((menu, slot) => {
+          const observed = observations.get(menu);
+          if (!observed || observed.cleanup === "not_visible") return [];
+          return [{ slot, attemptSnapshotIndex: observed.attempt.snapshotIndex,
+            attemptCandidateIndex: observed.attempt.candidateIndex, sameButton: observed.attempt.button === owner.button,
+            menuBound: observed.bound, triggerExpanded: observed.expanded, cleanup: observed.cleanup }];
+        });
+      },
+    };
+  }
+
+  globalThis.AkuLinkedInRecoveryDiagnostics = Object.freeze({
+    recordBlocker, inspectSurfaces, createMenuTracker, captureButtonVisibility, recordFailure, trackAnchorMismatch,
+  });
 })();

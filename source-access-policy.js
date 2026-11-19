@@ -6,6 +6,7 @@ export const DIAGNOSTIC_SCRIPTS = Object.freeze([
   "diagnostics/state-core.js", "diagnostics/recorder.js", "diagnostics/bridge-contract.js", "diagnostics/chrome-transport.js",
 ]);
 export const LINKEDIN_RECOVERY_DIAGNOSTIC_SCRIPT = "diagnostics/linkedin-recovery.js";
+export const ANCHOR_GEOMETRY_SCRIPT = "anchor-geometry.js";
 export const X_DOM_SHADOW_SCRIPTS = Object.freeze([
   "shared-dom-engine/browser-runtime.js",
   "adapters/x-dom-shadow.js",
@@ -76,6 +77,7 @@ const SOURCE_ACCESS = Object.freeze({
           "linkedin-permalink-policy.js",
           "linkedin-timestamp-policy.js",
           LINKEDIN_RECOVERY_DIAGNOSTIC_SCRIPT,
+          ANCHOR_GEOMETRY_SCRIPT,
           "source-adapter-runtime.js",
           "media-post-processor.js",
           "adapters/linkedin-adapter.js",

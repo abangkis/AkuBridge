@@ -309,7 +309,7 @@ test("AkuBridge uses LinkedIn's scroll root and one allowlisted fresh-content ac
   assert.match(contentScript, /const captureVisibilityMode =\s*payload\.tabAcquisition\?\.captureVisibilityMode \?\? "same_window"/);
   assert.match(
     contentScript,
-    /operationDeadlineAtMs,\s*captureVisibilityMode,\s*structuredMediaRuntime,\s*reportProgress,\s*index,\s*\);/,
+    /operationDeadlineAtMs,\s*captureVisibilityMode,\s*structuredMediaRuntime,\s*reportProgress,\s*index,\s*diagnosticMenuTracker,\s*\);/,
   );
   assert.doesNotMatch(contentScript, /captureVisibilityMode: payload\.tabAcquisition/);
   assert.match(contentScript, /fallbackUsed: mediaAcquisition\.outcomes\.recovered > 0/);

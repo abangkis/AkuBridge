@@ -494,6 +494,7 @@
 
   const permalinkRecoveryOwners = new WeakMap();
   const linkedinMenuButtonSelector = 'button[aria-label^="Open control menu for post by"]';
+  const linkedinAnchorTolerance = Object.freeze({ maxHorizontalErrorPx: 4, minVerticalGapPx: -2, maxVerticalGapPx: 16 });
   const linkedinDialogSelector = '[role="dialog"], [data-test-modal], .artdeco-modal';
   const compactRecoveryText = value => String(value ?? "").replace(/\s+/g, " ").trim();
 
@@ -517,6 +518,83 @@
     return current.text === owner.text || allowExpansion && prefix.length >= 32 && current.text.startsWith(prefix);
   }
 
+  // Explicit references take precedence over the DOM evidence for a portal.
+  function recoverySurfaceReference(surface, trigger) {
+    const controls = compactRecoveryText(trigger.getAttribute?.("aria-controls"));
+    const owns = compactRecoveryText(trigger.getAttribute?.("aria-owns"));
+    const labelledBy = compactRecoveryText(surface.getAttribute?.("aria-labelledby"));
+    if (!controls && !owns && !labelledBy) return null;
+    return (!controls || controls.split(" ").includes(surface.id)) &&
+      (!owns || owns.split(" ").includes(surface.id)) &&
+      (!labelledBy || labelledBy.split(" ").includes(trigger.id));
+  }
+
+  function recoveryMenuMatches(menu, trigger, expandedBeforeClick) {
+    return recoveryMenuRejection(menu, trigger, expandedBeforeClick) === null;
+  }
+
+  function recoveryMenuRejection(menu, trigger, expandedBeforeClick, observeGeometry) {
+    const reference = recoverySurfaceReference(menu, trigger);
+    if (reference !== null) return reference ? null : "foreign_reference";
+    // LinkedIn's current control opens a Floating UI popover outside the card
+    // without an ARIA reference. Require both the button transition and its anchor.
+    if (expandedBeforeClick !== null && expandedBeforeClick !== "false") return "control_already_expanded";
+    const expanded = document.querySelectorAll(`${linkedinMenuButtonSelector}[aria-expanded="true"]`);
+    if (expanded.length !== 1 || expanded[0] !== trigger) return "control_not_uniquely_expanded";
+
+    const popover = menu.parentElement;
+    if (!popover?.matches?.('[popover="manual"]:popover-open') ||
+        !popover.parentElement?.hasAttribute('data-floating-ui-portal')) return "popover_not_anchored";
+    const anchor = trigger.getBoundingClientRect();
+    const panel = popover.getBoundingClientRect();
+    if (!(anchor.width > 0 && anchor.height > 0 && panel.width > 0 && panel.height > 0)) return "missing_geometry";
+    const { horizontalMatch, verticalMatch, verticalReason } =
+      globalThis.AkuAnchorGeometry.compareAnchorGeometry(anchor, panel, linkedinAnchorTolerance);
+    observeGeometry?.(menu, horizontalMatch, verticalMatch, verticalReason);
+    return horizontalMatch && verticalMatch ? null : "anchor_mismatch";
+  }
+
+  function recoveryMenuMatchesAuthorForCleanup(menu, owner, expandedBeforeClick) {
+    if (recoverySurfaceReference(menu, owner.button) !== null ||
+        (expandedBeforeClick !== null && expandedBeforeClick !== "false")) return false;
+    const popover = menu.parentElement;
+    if (!popover?.matches?.('[popover="manual"]:popover-open') ||
+        !popover.parentElement?.hasAttribute('data-floating-ui-portal')) return false;
+
+    // In a shifted portal, the author-specific action can establish which
+    // control opened the menu. It does not authenticate the permalink.
+    const buttons = [...document.querySelectorAll(linkedinMenuButtonSelector)];
+    const expanded = buttons.filter(button => button.getAttribute("aria-expanded") === "true");
+    const ownerLabel = compactRecoveryText(owner.label).toLowerCase();
+    if (expanded.length !== 1 || expanded[0] !== owner.button ||
+        buttons.filter(button => compactRecoveryText(button.getAttribute("aria-label")).toLowerCase() === ownerLabel).length !== 1) return false;
+    const author = ownerLabel.replace(/^open control menu for post by\s+/, "");
+    const authorActions = [...menu.querySelectorAll('[role="menuitem"]')]
+      .map(action => compactRecoveryText(action.getAttribute("aria-label") || action.innerText || action.textContent).toLowerCase())
+      .filter(label => label.startsWith("hide posts by "));
+    return authorActions.length === 1 && authorActions[0] === `hide posts by ${author}`;
+  }
+
+  function isLinkedInSidebarPromotion(menu) {
+    // LinkedIn renders these inline promotions with menu semantics. Only the
+    // verified single-link wrappers in the feed sidebar can be skipped.
+    if (!menu.matches?.('div:not([id], [aria-labelledby], [aria-controls], [aria-owns])') ||
+        !menu.closest('main aside[aria-label="Sidebar"]') ||
+        menu.closest(`nav, article, [role="article"], [role="listitem"], [popover], ${linkedinDialogSelector}`) ||
+        menu.parentElement?.closest('[role="menu"]')) return false;
+
+    const actions = menu.querySelectorAll('a, button, input, select, textarea, summary, [role^="menuitem"], ' +
+      '[role="option"], [role="link"], [role="button"], [role="menu"], [popover], [contenteditable="true"], [tabindex]');
+    if (actions.length !== 1 || !actions[0].matches('a[href]')) return false;
+    try {
+      const url = new URL(actions[0].href);
+      return url.origin === "https://www.linkedin.com" && !url.username && !url.password &&
+        (url.pathname === "/campaignmanager/claim-promo/" || url.pathname === "/premium/products/");
+    } catch {
+      return false;
+    }
+  }
+
   function validateLinkedInRecoveredPermalink(container, recovered) {
     const proof = permalinkRecoveryOwners.get(recovered);
     if (!proof || proof.url !== recovered.url || proof.owner.container !== container ||
@@ -532,6 +610,7 @@
     const allMenus = () => [...document.querySelectorAll('[role="menu"]')];
     const allDialogs = () => [...document.querySelectorAll(linkedinDialogSelector)];
     const visible = nodes => nodes.filter(node => helpers.isVisibleInViewport(node));
+    const visibleRecoveryMenus = () => visible(allMenus()).filter(menu => !isLinkedInSidebarPromotion(menu));
     const menuEntries = (menu, visibleOnly = true) => [...menu.querySelectorAll('a[href], [role="menuitem"][href]')]
       .filter(node => !visibleOnly || helpers.isVisibleInViewport(node))
       .map(node => ({ url: globalThis.AkuLinkedInPermalinkPolicy?.canonicalFromEvidence(node.href),
@@ -541,6 +620,15 @@
       '[href], [src], [value], [data-urn], [data-id], input, textarea, code',
     )].map(permalinkEvidenceFromNode).filter(Boolean);
     const unavailable = reason => ({ url: null, source: "unavailable", reason });
+    const diagnostic = globalThis.AkuLinkedInRecoveryDiagnostics;
+    let failureSamples = 0;
+    let anchorSamples = 0;
+    const noteFailure = (result, container, index, stage, reason, visibility) => {
+      if (!diagnostic || failureSamples >= 8) return;
+      result.failureDiagnostic = diagnostic.recordFailure(container, helpers, index, stage, reason,
+        visibility ?? diagnostic.captureButtonVisibility(null, helpers.diagnosticScrollRoot));
+      if (result.failureDiagnostic) failureSamples++;
+    };
     let candidateIndex = 0;
     for (const container of containers) {
       const diagnosticCandidateIndex = candidateIndex++;
@@ -548,75 +636,116 @@
       const remainingMs = snapshotDeadlineAtMs - Date.now();
       const owner = recoveryOwner(container);
       if (remainingMs <= 0 || !owner) {
-        recovered.set(container, unavailable(remainingMs <= 0
+        const result = unavailable(remainingMs <= 0
           ? "LinkedIn permalink recovery budget was exhausted for this snapshot."
-          : "Post author, body, and control ownership were not exposed."));
+          : "Post author, body, and control ownership were not exposed.");
+        noteFailure(result, container, diagnosticCandidateIndex, "candidate", remainingMs <= 0 ? "snapshot_budget" : "owner_missing",
+          diagnostic && failureSamples < 8 ? diagnostic.captureButtonVisibility(owner?.button, helpers.diagnosticScrollRoot) : null);
+        recovered.set(container, result);
         continue;
       }
       // Never consume or dismiss another interaction's menu/dialog. Hidden
       // portal content is also remembered so a delayed stale URN cannot win.
-      const visibleMenus = visible(allMenus());
+      const visibleMenus = visibleRecoveryMenus();
       let visibleDialogs = null;
       if (visibleMenus.length || (visibleDialogs = visible(allDialogs())).length) {
         const result = unavailable("An existing menu or dialog prevents exclusive post recovery.");
         try {
-          const diagnostic = globalThis.AkuLinkedInRecoveryDiagnostics;
           result.blockerDiagnostic = diagnostic?.recordBlocker(visibleMenus, visibleDialogs, owner, helpers, diagnosticCandidateIndex,
             () => diagnostic.inspectSurfaces(visibleMenus, visibleDialogs ?? allDialogs(), owner));
+          const priorRecoveryMenus = helpers.diagnosticMenuTracker?.correlate(visibleMenus, owner);
+          if (priorRecoveryMenus?.length && result.blockerDiagnostic) result.blockerDiagnostic.priorRecoveryMenus = priorRecoveryMenus;
         }
         catch { /* Diagnostic reads cannot change the independently blocked operation. */ }
         recovered.set(container, result);
         continue;
       }
-      const oldMenuURLs = new Set(allMenus().flatMap(menu => menuEntries(menu, false)).map(entry => entry.url));
+      const oldMenus = allMenus();
+      const oldMenuURLs = new Set(oldMenus.flatMap(menu => menuEntries(menu, false)).map(entry => entry.url));
       const oldDialogURLs = new Set(allDialogs().flatMap(dialogEntries).map(entry => entry.url));
       const candidateDeadline = Math.min(snapshotDeadlineAtMs, Date.now() + 1_200);
       let boundMenu = null;
       let boundDialog = null;
+      let observedMenu = null;
+      let cleanupOnlyMenu = null;
+      let ambiguousMenu = false;
       const ownerCurrent = () => recoveryOwnerMatches(owner);
-      const associated = (surface, trigger) => {
-        const controls = compactRecoveryText(trigger.getAttribute?.("aria-controls") || trigger.getAttribute?.("aria-owns"));
-        const labelledBy = compactRecoveryText(surface.getAttribute?.("aria-labelledby"));
-        if (controls && !controls.split(" ").includes(surface.id)) return false;
-        if (labelledBy && !labelledBy.split(" ").includes(trigger.id)) return false;
-        return true;
-      };
+      const expandedBeforeClick = owner.button.getAttribute?.("aria-expanded") ?? null;
+      const anchorPolling = anchorSamples < 8 ? diagnostic?.trackAnchorMismatch?.() : null;
+      let stage = "menu";
+      let reason = "menu_not_observed";
+      const reject = (nextStage, nextReason) => { stage = nextStage; reason = nextReason; return null; };
+      let menuAttempt;
+      try { menuAttempt = helpers.diagnosticMenuTracker?.begin(owner, helpers, diagnosticCandidateIndex, expandedBeforeClick); }
+      catch { /* Diagnostic reads must not affect recovery. */ }
       const uniqueEvidence = entries => {
         const urls = new Set(entries.map(entry => entry.url));
         return urls.size === 1 ? entries[0] : null;
       };
-      const menuCurrent = () => ownerCurrent() && boundMenu &&
-        visible(allMenus()).length === 1 && visible(allMenus())[0] === boundMenu && associated(boundMenu, owner.button);
+      const menuCurrent = () => {
+        if (!ownerCurrent() || !boundMenu) return false;
+        const menus = visibleRecoveryMenus();
+        return menus.length === 1 && menus[0] === boundMenu && recoveryMenuMatches(boundMenu, owner.button, expandedBeforeClick);
+      };
       try {
+        const visibility = diagnostic && failureSamples < 8
+          ? diagnostic.captureButtonVisibility(owner.button, helpers.diagnosticScrollRoot) : null;
         owner.button.click();
         const observation = await helpers.waitForValue(() => {
-          if (!ownerCurrent() || Date.now() >= candidateDeadline) return null;
-          const menus = visible(allMenus());
-          if (menus.length !== 1 || !associated(menus[0], owner.button)) return null;
-          if (boundMenu && boundMenu !== menus[0]) return null;
+          if (!ownerCurrent()) {
+            anchorPolling?.interrupt();
+            return reject("candidate", "owner_changed");
+          }
+          if (Date.now() >= candidateDeadline) return null;
+          const menus = visibleRecoveryMenus();
+          if (menus.length > 1 || observedMenu && menus.length === 0) ambiguousMenu = true;
+          if (menus.length !== 1) {
+            anchorPolling?.interrupt();
+            return reject("menu", menus.length ? "multiple_menus" : "menu_not_observed");
+          }
+          if (observedMenu && observedMenu !== menus[0]) ambiguousMenu = true;
+          observedMenu = menus[0];
+          anchorPolling?.beginPoll();
+          const ownershipRejection = recoveryMenuRejection(menus[0], owner.button, expandedBeforeClick, anchorPolling?.observe);
+          anchorPolling?.endPoll();
+          const menuMatches = ownershipRejection === null;
+          if (!menuMatches && !ambiguousMenu && !oldMenus.includes(observedMenu) &&
+              recoveryMenuMatchesAuthorForCleanup(observedMenu, owner, expandedBeforeClick)) cleanupOnlyMenu = observedMenu;
+          try {
+            if (menuAttempt && (menuMatches || recoverySurfaceReference(menus[0], owner.button) === null)) {
+              menuAttempt.observe(menus[0], menuMatches);
+            }
+          } catch { /* Diagnostic reads must not affect recovery. */ }
+          if (!menuMatches) return reject("ownership", ownershipRejection);
+          if (boundMenu && boundMenu !== menus[0]) return reject("ownership", "menu_replaced");
           boundMenu = menus[0];
           const entries = menuEntries(boundMenu);
-          if (entries.some(entry => oldMenuURLs.has(entry.url))) return null;
+          if (entries.some(entry => oldMenuURLs.has(entry.url))) return reject("menu_evidence", "stale_urn");
           const evidence = uniqueEvidence(entries);
           if (evidence) return { evidence };
-          if (entries.length) return null; // Conflicting native URNs are not resolved by DOM order.
+          if (entries.length) return reject("menu_evidence", "conflicting_urns");
           const actions = [...boundMenu.querySelectorAll('[role="menuitem"], button')]
             .filter(node => helpers.isVisibleInViewport(node) && /\bembed this post\b/i.test(elementLabel(node)));
-          return actions.length === 1 ? { action: actions[0] } : null;
+          return actions.length === 1 ? { action: actions[0] }
+            : reject("menu_evidence", actions.length ? "multiple_embed_actions" : "no_visible_urn_or_embed_action");
         }, Math.max(1, Math.ceil(Math.max(0, candidateDeadline - Date.now()) / 50)), 50);
         let evidence = menuCurrent() ? observation?.evidence : null;
+        if (observation?.action) reject("embed_dialog", "dialog_not_started");
         if (!evidence && observation?.action && menuCurrent() && !visible(allDialogs()).length) {
           const action = observation.action;
+          reject("embed_dialog", "dialog_not_observed");
           action.click();
           evidence = await helpers.waitForValue(() => {
-            if (!ownerCurrent() || Date.now() >= candidateDeadline) return null;
+            if (!ownerCurrent()) return reject("candidate", "owner_changed");
+            if (Date.now() >= candidateDeadline) return null;
             const dialogs = visible(allDialogs());
-            if (dialogs.length !== 1 || !associated(dialogs[0], action)) return null;
-            if (boundDialog && boundDialog !== dialogs[0]) return null;
+            if (dialogs.length !== 1) return reject("embed_dialog", dialogs.length ? "multiple_dialogs" : "dialog_not_observed");
+            if (recoverySurfaceReference(dialogs[0], action) === false) return reject("embed_dialog", "foreign_reference");
+            if (boundDialog && boundDialog !== dialogs[0]) return reject("embed_dialog", "dialog_replaced");
             boundDialog = dialogs[0];
             const entries = dialogEntries(boundDialog);
-            if (entries.some(entry => oldDialogURLs.has(entry.url))) return null;
-            return uniqueEvidence(entries);
+            if (entries.some(entry => oldDialogURLs.has(entry.url))) return reject("embed_dialog", "stale_urn");
+            return uniqueEvidence(entries) ?? reject("embed_dialog", entries.length ? "conflicting_urns" : "no_urn");
           }, Math.max(1, Math.ceil(Math.max(0, candidateDeadline - Date.now()) / 50)), 50);
         }
         const surfaceEvidence = boundDialog
@@ -627,6 +756,15 @@
           ? { url: evidence.url, source: evidence.source, reason: "" }
           : unavailable("No fresh, unambiguous native URN was bound to this post interaction.");
         if (result.url) permalinkRecoveryOwners.set(result, { owner, url: result.url });
+        else {
+          if (evidence || observation?.evidence) reject("revalidation", "binding_or_evidence_changed");
+          noteFailure(result, container, diagnosticCandidateIndex, stage, reason, visibility);
+        }
+        const anchorMismatchDiagnostic = anchorPolling?.report(container, helpers, diagnosticCandidateIndex);
+        if (anchorMismatchDiagnostic) {
+          result.anchorMismatchDiagnostic = anchorMismatchDiagnostic;
+          anchorSamples++;
+        }
         recovered.set(container, result);
       } finally {
         // Cleanup only the exact surfaces opened for an unchanged owner.
@@ -636,9 +774,17 @@
           close?.click();
           await helpers.waitForValue(() => !visible(allDialogs()).includes(boundDialog), 4, 25);
         }
-        if (menuCurrent()) {
+        let menuToClose = menuCurrent() ? boundMenu : null;
+        if (!menuToClose && cleanupOnlyMenu && !ambiguousMenu && ownerCurrent()) {
+          const menus = visibleRecoveryMenus();
+          if (menus.length === 1 && menus[0] === cleanupOnlyMenu && !visible(allDialogs()).length &&
+              recoveryMenuMatchesAuthorForCleanup(cleanupOnlyMenu, owner, expandedBeforeClick)) menuToClose = cleanupOnlyMenu;
+        }
+        if (menuToClose) {
           owner.button.click();
-          await helpers.waitForValue(() => !visible(allMenus()).includes(boundMenu), 4, 25);
+          const gone = await helpers.waitForValue(() => !visibleRecoveryMenus().includes(menuToClose), 4, 25);
+          try { menuAttempt?.cleanup(menuToClose, gone === true); }
+          catch { /* Diagnostic reads must not affect cleanup. */ }
         }
       }
     }

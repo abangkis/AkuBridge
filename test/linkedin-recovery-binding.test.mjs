@@ -31,7 +31,7 @@ function scenario({ block = joel, url = block.permalink, embed = false, onOpen, 
   const action = { id: "embed-control", innerText: "Embed this post", visible: true, getAttribute: () => null,
     click() { state.embedClicks++; menu.visible = false; dialog.visible = true; onEmbed?.(api); } };
   const menu = { id: "post-menu", visible: false, links: embed ? [] : [link(url)], actions: [action],
-    getAttribute: () => null,
+    getAttribute: name => name === "aria-labelledby" ? button.id : null,
     querySelectorAll(selector) { return selector === 'a[href], [role="menuitem"][href]' ? this.links : this.actions; },
   };
   const code = value => ({ value: `<iframe src="${value.replace('/feed/update/', '/embed/feed/update/')}"></iframe>`, getAttribute: () => null });
@@ -45,7 +45,7 @@ function scenario({ block = joel, url = block.permalink, embed = false, onOpen, 
   } };
   const context = vm.createContext({ document, window: { document, location, innerWidth: 1200, innerHeight: 1000 },
     getComputedStyle: node => node.style ?? ({display:'block',visibility:'visible',opacity:'1'}), location, URL, decodeURIComponent, Date });
-  for (const file of ["source-adapter-runtime.js", "linkedin-permalink-policy.js", "diagnostics/linkedin-recovery.js", "adapters/linkedin-adapter.js"]) {
+  for (const file of ["source-adapter-runtime.js", "linkedin-permalink-policy.js", "diagnostics/linkedin-recovery.js", "anchor-geometry.js", "adapters/linkedin-adapter.js"]) {
     vm.runInContext(fs.readFileSync(new URL(file, root), "utf8"), context);
   }
   const adapter = context.AkuSourceAdapters.get("linkedin");
@@ -216,6 +216,18 @@ test('a hidden stale embed dialog cannot supply Joel URL to Hussein', async () =
 test('a menu labelled for another post is neither accepted nor closed', async () => {
   const s = scenario(); s.menu.getAttribute = name => name === 'aria-labelledby' ? 'another-control' : null;
   assert.equal((await s.recover()).url, null); assert.equal(s.state.menuClicks, 1);
+});
+
+test('a matching menu reference cannot override a conflicting ownership reference', async () => {
+  const s = scenario();
+  const getAttribute = s.button.getAttribute;
+  s.button.getAttribute = name => {
+    if (name === 'aria-controls') return s.menu.id;
+    if (name === 'aria-owns') return 'foreign-menu';
+    return getAttribute(name);
+  };
+  assert.equal((await s.recover()).url, null);
+  assert.equal(s.state.menuClicks, 1);
 });
 
 test('an explicitly foreign dialog is neither accepted nor closed', async () => {

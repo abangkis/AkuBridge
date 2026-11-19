@@ -371,6 +371,9 @@
     const captureStartPosition = readScrollPosition(scrollContext);
     const snapshots = [];
     const linkedinRecoveryBlockers = [];
+    const linkedinPermalinkRecoveryFailures = [];
+    const linkedinAnchorMismatchPolls = [];
+    const diagnosticMenuTracker = source === "linkedin" ? globalThis.AkuLinkedInRecoveryDiagnostics?.createMenuTracker?.() : null;
     let xRecaptureSelection = null;
     const uniqueCandidates = new Set();
     const scrollDeltas = [];
@@ -390,6 +393,8 @@
         const {
           xRecaptureSelection: selection,
           linkedinRecoveryBlockers: recoveryBlockers = [],
+          linkedinPermalinkRecoveryFailures: recoveryFailures = [],
+          linkedinAnchorMismatchPolls: anchorMismatchPolls = [],
           ...snapshot
         } = await captureVisibleSnapshot(
           source,
@@ -400,6 +405,7 @@
           structuredMediaRuntime,
           reportProgress,
           index,
+          diagnosticMenuTracker,
         );
         if (selection) xRecaptureSelection = selection;
         snapshot.index = index;
@@ -420,6 +426,8 @@
         );
         snapshots.push(snapshot);
         linkedinRecoveryBlockers.push(...recoveryBlockers.slice(0, 8 - linkedinRecoveryBlockers.length));
+        linkedinPermalinkRecoveryFailures.push(...recoveryFailures.slice(0, 8 - linkedinPermalinkRecoveryFailures.length));
+        linkedinAnchorMismatchPolls.push(...anchorMismatchPolls.slice(0, 8 - linkedinAnchorMismatchPolls.length));
         reportProgress("snapshot_completed", {
           source,
           snapshotIndex: index,
@@ -594,6 +602,8 @@
         performedScrolls,
         snapshotCount: snapshots.length,
         ...(linkedinRecoveryBlockers.length ? { linkedinRecoveryBlockers } : {}),
+        ...(linkedinPermalinkRecoveryFailures.length ? { linkedinPermalinkRecoveryFailures } : {}),
+        ...(linkedinAnchorMismatchPolls.length ? { linkedinAnchorMismatchPolls } : {}),
         scrollDeltas,
         scrollStopReason,
         originalScrollY: Math.round(restorePosition.y),
@@ -766,6 +776,7 @@
     structuredMediaRuntime,
     reportProgress = updateCaptureProgress,
     snapshotIndex = null,
+    diagnosticMenuTracker = null,
   ) {
     assertNoXAccessChallenge(source);
     const capturedAt = new Date().toISOString();
@@ -819,7 +830,8 @@
       recoveryCandidates,
       operationDeadlineAtMs,
       { findPermalinkDetails, waitForValue, isVisibleInViewport,
-        diagnosticSnapshotIndex: snapshotIndex, diagnosticCandidateIndex: container => selectorCandidates.indexOf(container) },
+        diagnosticMenuTracker, diagnosticScrollRoot: scrollContext, diagnosticSnapshotIndex: snapshotIndex,
+        diagnosticCandidateIndex: container => selectorCandidates.indexOf(container) },
     ) ?? new WeakMap());
     reportProgress("permalink_recovery_completed", { source });
 
@@ -1018,6 +1030,10 @@
       visibleContainerCount: containers.length,
       ...(source === "linkedin" && boundedContainers.some(container => recoveredPermalinks.get(container)?.blockerDiagnostic)
         ? { linkedinRecoveryBlockers: boundedContainers.map(container => recoveredPermalinks.get(container)?.blockerDiagnostic).filter(Boolean).slice(0, 8) } : {}),
+      ...(source === "linkedin" && boundedContainers.some(container => recoveredPermalinks.get(container)?.failureDiagnostic)
+        ? { linkedinPermalinkRecoveryFailures: boundedContainers.map(container => recoveredPermalinks.get(container)?.failureDiagnostic).filter(Boolean).slice(0, 8) } : {}),
+      ...(source === "linkedin" && boundedContainers.some(container => recoveredPermalinks.get(container)?.anchorMismatchDiagnostic)
+        ? { linkedinAnchorMismatchPolls: boundedContainers.map(container => recoveredPermalinks.get(container)?.anchorMismatchDiagnostic).filter(Boolean).slice(0, 8) } : {}),
       ...(targetSelection ? { xRecaptureSelection: targetSelection.diagnostics } : {}),
       candidateDiagnostics: normalizeCandidateDiagnostics(
         discovery.candidateDiagnostics,

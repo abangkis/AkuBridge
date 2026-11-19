@@ -6,6 +6,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const postControlID = "fixture-post-control";
 
 test("LinkedIn recovers a native permalink through bounded embed dialog evidence", async () => {
   let menuVisible = false;
@@ -15,6 +16,7 @@ test("LinkedIn recovers a native permalink through bounded embed dialog evidence
   let closeClicks = 0;
 
   const menuButton = {
+    id: postControlID,
     getAttribute: name => name === "aria-label" ? "Open control menu for post by Fixture author" : null,
     click() {
       menuClicks += 1;
@@ -51,7 +53,10 @@ test("LinkedIn recovers a native permalink through bounded embed dialog evidence
       return [embedCode];
     },
   };
-  const menu = { querySelectorAll: selector => selector === 'a[href], [role="menuitem"][href]' ? [] : [embedAction] };
+  const menu = {
+    getAttribute: name => name === "aria-labelledby" ? postControlID : null,
+    querySelectorAll: selector => selector === 'a[href], [role="menuitem"][href]' ? [] : [embedAction],
+  };
   const document = {
     querySelectorAll(selector) {
       if (selector === '[role="menu"] a[href], [role="menu"] [role="menuitem"][href]') return [];
@@ -68,6 +73,7 @@ test("LinkedIn recovers a native permalink through bounded embed dialog evidence
   const context = browserContext(document);
   run(context, "source-adapter-runtime.js");
   run(context, "linkedin-permalink-policy.js");
+  run(context, "anchor-geometry.js");
   run(context, path.join("adapters", "linkedin-adapter.js"));
   const adapter = context.AkuSourceAdapters.get("linkedin");
   const container = candidate(menuButton);
@@ -95,6 +101,7 @@ test("LinkedIn keeps direct menu URN recovery ahead of embed interaction", async
   let menuClicks = 0;
   let embedClicks = 0;
   const menuButton = {
+    id: postControlID,
     getAttribute: name => name === "aria-label" ? "Open control menu for post by Fixture author" : null,
     click() {
       menuClicks += 1;
@@ -109,7 +116,10 @@ test("LinkedIn keeps direct menu URN recovery ahead of embed interaction", async
     getAttribute() { return null; },
     click() { embedClicks += 1; },
   };
-  const menu = { querySelectorAll: selector => selector === 'a[href], [role="menuitem"][href]' ? [direct] : [embedAction] };
+  const menu = {
+    getAttribute: name => name === "aria-labelledby" ? postControlID : null,
+    querySelectorAll: selector => selector === 'a[href], [role="menuitem"][href]' ? [direct] : [embedAction],
+  };
   const document = {
     querySelectorAll(selector) {
       if (selector === '[role="menu"] a[href], [role="menu"] [role="menuitem"][href]') {
@@ -126,6 +136,7 @@ test("LinkedIn keeps direct menu URN recovery ahead of embed interaction", async
   const context = browserContext(document);
   run(context, "source-adapter-runtime.js");
   run(context, "linkedin-permalink-policy.js");
+  run(context, "anchor-geometry.js");
   run(context, path.join("adapters", "linkedin-adapter.js"));
   const adapter = context.AkuSourceAdapters.get("linkedin");
   const container = candidate(menuButton);

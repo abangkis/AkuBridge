@@ -19,7 +19,7 @@ test('LinkedIn shadow registration shares the engine without changing permission
   const entries=registeredScriptsForSources(['linkedin']);assert.equal(entries.length,1);
   assert.deepEqual(entries[0].matches,['https://www.linkedin.com/feed/*','https://www.linkedin.com/posts/*']);
   for(const file of LINKEDIN_DOM_SHADOW_SCRIPTS)assert.ok(entries[0].js.includes(file));
-  assert.deepEqual(sourceDefinition('linkedin').supportScripts,['linkedin-permalink-policy.js','linkedin-timestamp-policy.js','diagnostics/linkedin-recovery.js',...LINKEDIN_DOM_SHADOW_SCRIPTS]);
+  assert.deepEqual(sourceDefinition('linkedin').supportScripts,['linkedin-permalink-policy.js','linkedin-timestamp-policy.js','diagnostics/linkedin-recovery.js','anchor-geometry.js',...LINKEDIN_DOM_SHADOW_SCRIPTS]);
   const scripts=sourceRuntimeScripts();assert.equal(scripts.length,new Set(scripts).size);
   for(const source of ['x','facebook','instagram'])assert.equal(registeredScriptsForSources([source]).some(e=>e.js.includes('adapters/linkedin-dom-shadow.js')),false);
 });
